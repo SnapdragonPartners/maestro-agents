@@ -400,6 +400,16 @@ object store rather than in tables of its own.
   a daemon whose state need not outlive the process), files (JSON files
   written by atomic rename, so no database driver is needed), and
   Postgres (in an adapter package, P-7).
+- **STORE-5 Must: one Postgres database, schemas side by side.** The
+  Postgres store shares its database with `maestro-llms`' token bucket
+  (`bucket/postgres`), which standalone mode always includes (memory or
+  Postgres backend, LLM-4). Each keeps its own Postgres schema. Following
+  the bucket's pattern (maestro-llms ADR 0025), the store exports its
+  migrations in golang-migrate's format and a required schema version,
+  never runs DDL itself, and refuses to start against an older schema; the
+  standalone host applies both sets of migrations. The stack is the one
+  buggrit uses: golang-migrate for migrations, sqlc for queries, pgx as the
+  driver.
 
 ## 5. Run modes (MODE)
 
@@ -582,6 +592,8 @@ and the three-mode wrapping.
 
 ## 9. Open questions
 
-- **Q-1 Shared Postgres schema.** Do the Postgres reference stores share a
-  database or migrations with buggrit's telemetry and `maestro-llms`'
-  bucket limiter, or stand alone?
+- **Q-1 buggrit's telemetry schema.** Should the Postgres store reuse or
+  share buggrit's telemetry schema (runs, events stored as request
+  deltas, idempotent writes) for HOST-1's events? Likely yes; to be
+  confirmed during design. (Sharing a database with `maestro-llms`' bucket
+  is settled: STORE-5.)
