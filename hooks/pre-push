@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Git pre-push hook for maestro-agents.
+# Runs lint and unit tests before allowing a push. Install with
+# `make install-hooks`. Never bypass it with --no-verify (see CLAUDE.md,
+# Durable Rules, for the one documentation-only exception).
+
+set -e
+
+echo "Running pre-push checks..."
+
+echo "1. Linting..."
+if ! make lint; then
+    echo "Lint failed. Fix the issues before pushing."
+    exit 1
+fi
+
+echo "2. Unit tests..."
+if ! make test; then
+    echo "Unit tests failed. Fix them before pushing."
+    exit 1
+fi
+
+echo "All pre-push checks passed."
+exit 0

@@ -1,0 +1,38 @@
+name: buggrit
+
+# Automated PR review by buggrit (https://github.com/SnapdragonPartners/buggrit).
+# It posts each finding as its own review thread and re-verifies earlier
+# findings on every push. The job itself lives in buggrit's reusable
+# workflow, pinned to a release's commit so that it, the actions it runs and
+# the binary it installs are that release's alone (buggrit ADR 0001).
+# Dependabot bumps the SHA and its version comment.
+#
+# buggrit reads .github/buggrit.json from the PR's base branch, never from
+# the PR, and runs no PR code. Only a push (or a dispatch) runs it: comments
+# and reviews start no runs, since resolving a thread is what settles a
+# finding (buggrit design §2, §3 "Callers").
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to review
+        required: true
+
+concurrency:
+  group: buggrit-${{ github.event.pull_request.number || inputs.pr }}
+  # A push cancels the pass in flight; a dispatch waits its turn.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  # buggrit's optional database (buggrit design §3 "Database"): a keyless
+  # Google Cloud login for the rate limit shared with other repositories.
+  # Without it, buggrit warns on the PR and runs without the database.
+  id-token: write
+
+jobs:
+  buggrit:
+    uses: SnapdragonPartners/buggrit/.github/workflows/review.yml@cf26ce678b9218f23794b86506546dd00e62e32c # v0.6.0
+    secrets: inherit

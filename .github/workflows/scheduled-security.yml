@@ -1,0 +1,47 @@
+name: Scheduled security scans
+
+# Weekly govulncheck against the default branch. PR-time govulncheck
+# (in ci.yml) only catches CVEs known when the PR ran; new CVEs are
+# disclosed against existing, untouched dependencies between PRs.
+# Failing this job is the signal — the workflow goes red and the
+# maintainer notification fires.
+#
+# Cron: Mondays 14:00 UTC (~Monday morning US hours), to pick up
+# weekend disclosures before the dev week starts.
+
+on:
+  schedule:
+    - cron: "0 14 * * 1"
+  # Lets a maintainer trigger the scan manually from the Actions UI.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-security
+  cancel-in-progress: false
+
+# Keep in sync by hand with ci.yml and the Makefile; GitHub
+# Actions has no native cross-workflow env share.
+env:
+  GOVULNCHECK_VERSION: v1.1.4
+
+jobs:
+  govulncheck:
+    name: govulncheck (weekly)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+
+      - name: Run govulncheck
+        run: govulncheck ./...

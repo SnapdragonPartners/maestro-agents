@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "models": {
+    "default": {
+      "provider": "openai-compatible",
+      "base_url": "https://gw.lunaroute.com/v1",
+      "model": "deepseek-4.1-flash",
+      "api_key_env": "LUNAROUTE_API_KEY",
+      "max_output_tokens": 32768,
+      "reasoning_effort": "medium"
+    }
+  },
+  "limits": {
+    "pass_deadline": "55m",
+    "max_concurrency": 1
+  },
+  "review": {
+    "exclude": ["**/*.lock", "**/go.sum", "**/*.pb.go", "vendor/**", "**/*_gen.go"],
+    "instruction_files": ["CLAUDE.md"],
+    "instructions": "CLAUDE.md states the repository's durable rules and workflow. The ADRs in docs/adr are the rationale of record. Each PR body lists what it intentionally does not do. A decision documented in CLAUDE.md or an ADR is not a defect; drift between the code and those documents is."
+  }
+}
