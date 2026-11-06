@@ -42,6 +42,7 @@ Known consumers:
 | Standalone executables (`cmd/<agent>/`) | Run an agent type as a command-line tool or a daemon, driven by a config file, with no orchestrator. **The first consumer**: the standalone capital-statement intake agent (section 6). |
 | Morris | Compiles agent types into its private worker service, which runs on serverless infrastructure, and runs them in-process. Morris owns persistence, auth, credentials, UI and audit. Its chat loop should share the library's tool registry, policy layer and loop. Its first agent is the same capital-statement intake agent (morris#569). |
 | Maestro v2 | Plans to run agents as separate processes speaking a versioned wire contract (ADR 0032). Maestro has not built its side; the wire protocol is deferred (MODE-8). |
+| buggrit | Ideally moves onto the library once it exists; not a requirement. |
 
 ## 2. Principles
 
@@ -241,12 +242,13 @@ Known consumers:
 - **TOOL-5 Must: idempotency keys.** Every write call carries an
   idempotency key. The runtime derives a stable key per (run, step) so a
   retried run does not repeat a side effect. (morris#568 item 9)
-- **TOOL-6 Must: MCP tools.** The registry can hold tools served by an
-  external MCP server (the intake agent's PDF tools wrap Poppler this way)
-  alongside in-process Go tools, with the same grants, policy, middleware
-  and events. **Plan for** the reverse: exposing the registry over MCP or
-  the wire protocol. Registry, policy and transport stay separate so
-  neither direction changes tools.
+- **TOOL-6 Should: MCP tools.** The registry can hold tools served by an
+  external MCP server alongside in-process Go tools, with the same grants,
+  policy, middleware and events. The MCP client itself comes from
+  `maestro-llms`, not from this library (section 7). The MVP does not
+  depend on it (section 6). **Plan for** the reverse: exposing the
+  registry over MCP or the wire protocol. Registry, policy and transport
+  stay separate so neither direction changes tools.
 - **TOOL-7 Must: tool middleware.** Cross-cutting behavior (policy,
   idempotency, redaction, the visible clock, output caps, per-tool circuit
   breaking) composes by wrapping a tool's execution, not by editing each
@@ -473,10 +475,20 @@ Morris's acceptance test.
 
 **Departs from** the intake draft's recommendation to prototype in Python.
 Its one advantage was PDF tooling; as in Morris (Morris ADR 0047), the PDF
-work goes to an external tool (Poppler) behind an MCP wrapper (TOOL-6).
-The wrapper must provide what `maestro-cms`' `pdftotext` engine does not:
-word positions per page (for the grounding check) and page rendering, or
-the PDF itself, for visual reading.
+work goes to an external tool, Poppler, run as a subprocess. That
+capability belongs in `maestro-cms`, which already runs Poppler's
+`pdftotext` for Morris (`extract/pdf/pdftotext`) and is where other
+consumers will look for it. It needs extending with what the intake agent
+requires and the engine does not yet provide: word positions per page (for
+the grounding check) and page rendering (section 7). The intake agent calls
+it in-process, as Go tools. An MCP server over the same package, for
+consumers outside Go, is a thin wrapper `maestro-cms` can add when one is
+wanted; the MVP does not wait for it.
+
+The intake agent's review UI is a web UI embedded in the `cmd/addepar`
+binary (`go:embed`) and served on localhost: it must show page images with
+highlighted evidence, which rules out a terminal UI, and a separate
+application would duplicate the store access the binary already has.
 
 What the intake agent requires of the library, all covered above:
 
@@ -484,7 +496,7 @@ What the intake agent requires of the library, all covered above:
 |---|---|
 | One run per arriving PDF; folder drop or command line | MODE-4, RUN-1 |
 | PDF sent to the model; `get_document` returns the PDF | LLM-2, TOOL-11 |
-| Poppler tools over MCP | TOOL-6 |
+| PDF text with word positions, page rendering (Poppler, through `maestro-cms`) | Section 7 |
 | `submit_extraction` verified in code, with reasons on failure and a resubmission cap | LOOP-2, STM-3 |
 | Run complete when every statement is verified, set aside or sent to manual review | STM-4 |
 | Approval and export are human actions outside the agent | TOOL-4 (propose and finish) |
@@ -505,14 +517,18 @@ authentication, UI, an MCP server, and knowledge of any particular host.
 packages.) Maestro-style agent-to-agent messaging and container sandboxing
 are not requirements; they may return if a consumer needs them.
 
-**Upstream work.** The library must not work around these locally:
+**Upstream work.** The library does not work around these locally.
+Each is proposed to the owning team only where it would serve that
+library's other consumers too, not this library alone; anything specific
+to agents stays here.
 
 | Need | Gap | Requirement |
 |---|---|---|
 | Image and document content | `maestro-llms`' `ContentPart` has only text, tool call, tool result and reasoning parts | LLM-2 |
 | Non-text tool results | `maestro-llms`' `toolloop.ToolResult.Content` is a string | TOOL-11 |
 | Forced wrap-up, a turn-boundary stop that still runs sibling calls, a pre-request hook that may fail | Not in `maestro-llms`' `toolloop`; Maestro's wishlist items 1 and 2 | LOOP-1, LOOP-3 |
-| An MCP client | No first-party one; the official Go MCP SDK is the candidate, confined to an adapter package, justified in its PR under *Dependency Discipline* | TOOL-6 |
+| An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 |
+| PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | Section 6 |
 
 ## 8. Lessons from buggrit and maestro
 
@@ -566,14 +582,6 @@ and the three-mode wrapping.
 
 ## 9. Open questions
 
-- **Q-1 Review UI.** The intake agent needs a review UI (record review
-  with page evidence, corrections, approval, export). Is it part of
-  `cmd/addepar` (for example, a local web UI served by the same binary) or
-  a separate application over the same stores?
-- **Q-2 Poppler wrapper.** Is the MCP wrapper around Poppler a separate
-  program in this repository, part of `maestro-cms`' extraction engine, or
-  its own repository? Other agents will want it.
-- **Q-3 Shared Postgres schema.** Do the Postgres reference stores share a
+- **Q-1 Shared Postgres schema.** Do the Postgres reference stores share a
   database or migrations with buggrit's telemetry and `maestro-llms`'
   bucket limiter, or stand alone?
-- **Q-4 buggrit.** Does buggrit move onto the library once it exists?
