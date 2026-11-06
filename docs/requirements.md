@@ -28,12 +28,22 @@ an agent type configures only what it changes.
 `maestro-agents` is a Go foundation for building LLM agents as **state
 machines**. An *agent type* is first-party Go code built on the library: a
 set of states, the transitions between them, and the tools, skills and
-prompts its model-driven states use. An *agent instance* is one configured
-deployment of an agent type; a *run* is one stretch of an instance's
-execution, from receiving an input to reaching a terminal state or
-stopping at a step boundary. The library supplies the runtime around the
-agent type's logic: the state machine engine, the model loop, tools,
-skills, budgets, events and the seams to whatever hosts the run.
+prompts its model-driven states use. Three more terms, and only three:
+
+- An *agent instance* is one serial execution stream of a configured agent
+  type, with its own checkpoint sequence and at most one owner at a time
+  ([ADR 0002](adr/0002-serial-execution-within-an-agent-instance.md)).
+- A *run* is the work an instance does for one trigger, from receiving it
+  to a terminal outcome. A run keeps its identity, consumed budgets,
+  resolved configuration and action identities for its whole life, however
+  many workers it passes through.
+- An *activation* is one worker's stretch of a run: from acquiring
+  ownership to stopping at a step boundary, or losing ownership. A run may
+  take one activation (a daemon) or many (a serverless host).
+
+The library supplies the runtime around the agent type's logic: the state
+machine engine, the model loop, tools, skills, budgets, the execution
+record, events and the seams to whatever hosts the run.
 
 Known consumers:
 
@@ -105,66 +115,92 @@ Known consumers:
 - **STM-6 Must: step boundaries.** A step boundary is a completed model
   turn or a state transition. At every step boundary the instance's state
   (current state, state data, and the transcript of a model state in
-  progress) can be checkpointed and later restored, so a run can resume
-  from its last boundary in a new process. A model turn is recorded,
-  including the tool calls it requested, before any of those calls
-  execute; a run resumed after that point executes the recorded calls and
-  does not ask the model to repeat the turn.
-- **STM-7 Must: the host decides how many steps one process covers.** A
+  progress) can be checkpointed and later restored, so a run can continue
+  from its last boundary in a new activation, in another process. A model
+  turn is recorded in the execution record (REC-1), including the tool
+  calls it requested, before any of those calls execute; an activation
+  that continues after that point executes the recorded calls and does not
+  ask the model to repeat the turn.
+- **STM-7 Must: the host decides how many steps one activation covers.** A
   serverless host may checkpoint and stop at every boundary; a daemon may
   run indefinitely, checkpointing as it goes. A daemon is therefore not a
-  different kind of agent: it is the same state machine with a process
-  lifetime long enough to be effectively unbounded. **Departs from**
-  morris#568 item 1 ("bounded runs, not daemons") in wording, not
-  substance: what Morris needs is state restorable at bounded intervals,
-  which STM-6 gives every agent.
+  different kind of agent: it is the same state machine with an activation
+  long enough to be effectively unbounded. **Departs from** morris#568
+  item 1 ("bounded runs, not daemons") in wording, not substance: what
+  Morris needs is state restorable at bounded intervals, which STM-6 gives
+  every agent.
 - **STM-8 Must: waiting is a state.** An instance waiting for external
   input (the next trigger, an approval) sits in a non-terminal state that
   names what it waits for. A daemon waits in-process; a serverless host
-  stops the run as `suspended` (RUN-3) and starts a new one when the input
-  arrives.
+  ends the activation with the run `waiting` (RUN-3) and starts another
+  activation of the same run when the input arrives.
+- **STM-9 Must: serial execution within an instance.** State processing,
+  model turns and tool calls execute one at a time, including sibling tool
+  calls from one model response, in their recorded order. Only the
+  instance's current owner advances its checkpoint sequence. Independent
+  instances run concurrently. Heartbeats, cancellation and transport
+  handling may run alongside the execution stream but never advance
+  workflow state. ([ADR 0002](adr/0002-serial-execution-within-an-agent-instance.md))
+- **STM-10 Plan for: subagents.** Parallelism within an agent's work uses
+  separately identified child instances, spawned through the host (which
+  controls admission and authority), each with its own state, checkpoints
+  and owner, with facilities to collect their results and cancel them.
+  Post-MVP: the intake agent must not acquire this machinery.
 
 ### 3.2 Runs (RUN)
 
-- **RUN-1 Must: inputs and outputs.** A run takes a trigger payload, the
-  instance configuration and the previous checkpoint, and returns a
-  result, artifacts and a new checkpoint. (morris#568 item 1)
-- **RUN-2 Must: cancellation through `context`.** Cancelling the run's
-  context stops it at the next safe point, with the host's reason taken
-  from the context's cause (`context.WithCancelCause`). A cancelled run
-  leaves a well-formed transcript: a tool call interrupted mid-flight is
-  either completed or recorded as interrupted, never left dangling (buggrit
-  repairs this itself in `wellFormed`; the library owns it).
-- **RUN-3 Must: a typed result with four statuses**, each carrying a reason
-  that is valid only for that status, so an invalid combination cannot be
-  constructed:
+- **RUN-1 Must: inputs and outputs.** An activation takes the run's
+  identity, the trigger payload, the resolved configuration and the latest
+  checkpoint, and returns an outcome (RUN-3), artifacts and a new
+  checkpoint. The run's identity, consumed budgets, resolved configuration
+  and action identities survive every handover between activations, so a
+  new worker never resets the work. (morris#568 item 1)
+- **RUN-2 Must: cancellation through `context`.** Cancelling an
+  activation's context stops it at the next safe point, with the host's
+  reason taken from the context's cause (`context.WithCancelCause`). A
+  stopped activation leaves a well-formed transcript: a tool call
+  interrupted mid-flight is either completed or recorded as interrupted,
+  never left dangling (buggrit repairs this itself in `wellFormed`; the
+  library owns it). Stopping a worker is not cancelling the work: a
+  shutdown ends the activation with the run's actual disposition (RUN-3).
+- **RUN-3 Must: a typed outcome per activation**, in two groups. Each
+  status carries a reason valid only for that status, so an invalid
+  combination cannot be constructed:
 
-  | Status | Reason | Maestro ADR 0032 equivalent |
-  |---|---|---|
-  | `succeeded` | `changed` or `no_change` | completed, with disposition changed or already_satisfied |
-  | `failed` | `budget_exhausted` (naming the budget), `model_error`, `tool_error` or `invalid_output`; each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the wall-clock budget |
-  | `cancelled` | the cause the host supplied: superseded, operator, shutdown or lease lost | cancelled, with cancel reason |
-  | `suspended` | the input the instance is waiting for (STM-8), including any pending actions (TOOL-4) | blocked |
+  | Group | Status | Reason | Maestro ADR 0032 equivalent |
+  |---|---|---|---|
+  | Not terminal | `runnable` | more work is ready now; the activation stopped at a boundary (the host's step limit, or a shutdown while working) | none: an incarnation ending without a result |
+  | Not terminal | `waiting` | the input the run waits for (STM-8): the next trigger, or approval of pending actions in *suspend and resume* mode (TOOL-4) | blocked |
+  | Terminal | `succeeded` | `changed` or `no_change`; a *propose and finish* run (TOOL-4) succeeds with its pending actions in its output | completed, with disposition changed or already_satisfied |
+  | Terminal | `failed` | `budget_exhausted` (naming the budget), `model_error`, `tool_error`, `invalid_output` or `wrap_up_failed` (LOOP-3); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
+  | Terminal | `cancelled` | the cause the host supplied: superseded or operator | cancelled, with cancel reason |
 
-  A daemon returns only when it stops: `cancelled` with cause shutdown,
-  its checkpoint intact, or a terminal status if its agent type has a
-  terminal state. **Departs from** morris#568 item 1, which lists
-  budget-exhausted as its own terminal state: it is a failure here, but its
-  checkpoint stays valid, so a host can resume it with a larger budget.
-  **Departs from** ADR 0032's four axes, which this table maps onto with
-  fewer moving parts.
+  A shutdown preserves the disposition: a worker shutting down while the
+  run waits for approval reports `waiting`, not `runnable`. An activation
+  that loses ownership reports nothing authoritative about the run (RUN-4,
+  HOST-6); the run's status is whatever its last owner committed. A daemon
+  reports only when it stops. **Departs from** morris#568 item 1, which
+  lists budget-exhausted as its own terminal state: it is a failure here,
+  and final in the MVP. **Plan for** extending a budget-exhausted run with
+  more budget; that must continue the same run, keeping its identity and
+  action identities, never start a new run from its checkpoint, which
+  would give its recorded write calls new idempotency keys (TOOL-5).
+  **Departs from** ADR 0032's four axes, which
+  this table maps onto with fewer moving parts.
 - **RUN-4 Must: the result is a claim.** The run reports what it believes
   happened; the host records the outcome and may override it with its own
-  observations (for example, a run that reports success after its lease
-  was revoked). The result carries enough for the host to tell.
+  observations (for example, an activation that reports success after its
+  lease was revoked). The outcome carries enough for the host to tell.
+  Changing a reported outcome afterwards cannot undo a committed write,
+  which is why ownership is enforced at the commit itself (HOST-6).
 - **RUN-5 Must: checkpoints are opaque to the host.** The host stores and
   returns them but does not read their contents. A checkpoint carries a
   version so an agent type can refuse or migrate an old one.
-- **RUN-6 Must: a run is reproducible from its record.** Trigger, config,
-  checkpoint, the content identities of the manifest, prompts, skills and
-  tool definitions, and the model responses are sufficient to replay a run
-  (TEST-1). Explaining a past result never requires calling the model
-  again.
+- **RUN-6 Must: a run is explainable and replayable from its execution
+  record** (REC-1), without calling the model or repeating any external
+  read or write. Model responses alone are not enough: tool results,
+  policy decisions, approvals and every other input the runtime could not
+  reproduce are recorded too.
 
 ### 3.3 Agent types and manifests (MAN)
 
@@ -201,8 +237,11 @@ Known consumers:
 - **LLM-4 Must: rate limiting is the host's limiter, and waiting is not a
   result.** The library uses `maestro-llms`' limiter (the `bucket` package,
   in-memory or Postgres) as injected by the host. A call held by the
-  limiter blocks until capacity is free or the run's context or wall-clock
-  budget ends; being rate limited never fails a run on its own.
+  limiter blocks until capacity is free or the activation's context or
+  time budget ends; being rate limited never fails a run on its own. A
+  request the limiter can never admit (larger than the configured
+  capacity, which the bucket reports as permanent) fails at once instead
+  of waiting.
 
 ### 3.5 Tools (TOOL)
 
@@ -212,10 +251,10 @@ Known consumers:
   agent type may register dedicated tools only it can use. (morris#568
   item 6)
 - **TOOL-2 Must: effect classification.** Every tool is classified `read`
-  or `write`. **Plan for** Maestro's richer classification: where the
-  effect happens (host side, inside the agent's resource, external) and the
-  commit point, so a host can reconcile a write whose outcome is unknown
-  (Maestro v2 `boundary/family`).
+  or `write`, and every write declares its write contract (TOOL-12).
+  **Plan for** Maestro's fuller classification of where the effect happens
+  (host side, inside the agent's resource, external) (Maestro v2
+  `boundary/family`).
 - **TOOL-3 Must: one mandatory policy boundary.** Every tool call,
   including an agent type's dedicated tools and MCP tools, passes through a
   host-supplied policy hook before its effect. The hook answers `allow`,
@@ -228,14 +267,15 @@ Known consumers:
   digest of the exact tool name and arguments, and does not execute it.
   The agent type declares, per tool or per state, which of two things
   follows:
-  - *Propose and finish.* The pending action is part of the run's output;
-    approving and carrying it out happen outside the agent, which never
-    sees the outcome. (The intake agent works this way: approval and export
-    are human actions in its app.)
-  - *Suspend and resume.* The run checkpoints and ends `suspended`. When
-    the host later starts a run with the decision as input, the runtime
-    executes the approved action, with its original idempotency key, only
-    if the digest still matches, and returns the result to the model.
+  - *Propose and finish.* The pending action is part of the run's output,
+    and the run can succeed (RUN-3); approving and carrying it out happen
+    outside the agent, which never sees the outcome. (The intake agent
+    works this way: approval and export are human actions in its app.)
+  - *Suspend and resume.* The run checkpoints and the activation ends with
+    the run `waiting`. When the host later starts another activation of the
+    same run with the decision as input, the runtime executes the approved
+    action, with its original action identity and idempotency key, only if
+    the digest still matches, and returns the result to the model.
 
   A host that can get a decision quickly (a chat user) may simply block
   inside the hook and return `allow` or `deny`; the library needs nothing
@@ -247,12 +287,16 @@ Known consumers:
   stable across redelivery, so a retried run does not repeat a side effect
   and two writes in one model turn (two `submit_extraction` calls for
   different statements, say) never share a key. The runtime derives it
-  from the run, the step, and the call's identity within that step (for
-  example, its position in the recorded turn), never from the step alone.
-  Write calls execute only from a model turn already recorded (STM-6), so
-  a redelivered run re-issues the same calls with the same keys rather
-  than asking the model again. **Departs from** morris#568 item 9, which
-  asks for one key per (run, step): a step can hold several writes.
+  from the run's identity, which survives activations (RUN-1), the step,
+  and the call's identity within that step (for example, its position in
+  the recorded turn), never from the step alone. Write calls execute only
+  from a model turn already recorded (STM-6), so a continued run re-issues
+  the same calls with the same keys rather than asking the model again.
+  Reusing an action identity with different arguments is rejected.
+  Idempotency prevents repeating the same action; it does not stop a stale
+  worker from making a different one, which is fencing's job (HOST-6).
+  **Departs from** morris#568 item 9, which asks for one key per (run,
+  step): a step can hold several writes.
 - **TOOL-6 Should: MCP tools.** The registry can hold tools served by an
   external MCP server alongside in-process Go tools, with the same grants,
   policy, middleware and events. The MCP client itself comes from
@@ -266,7 +310,7 @@ Known consumers:
   tool (buggrit `clock.go`; Maestro's per-tool circuit breaker).
 - **TOOL-8 Must: credentials at call time, through the host.** Every tool
   call carries an opaque run context, issued by the host and identifying
-  the run and its principal. The tool asks the host for whatever credential
+  the run (or chat turn, LOOP-4) and its principal. The tool asks the host for whatever credential
   that principal needs when it executes. Where a tool executes, in-process
   or forwarded, is the host's choice. (morris#568 item 4)
 - **TOOL-9 Must: result redaction.** The host has a hook to redact tool
@@ -276,6 +320,15 @@ Known consumers:
 - **TOOL-11 Must: non-text results.** A tool can return document or image
   content, not only text (section 7). The intake agent's `get_document`
   returns the PDF itself for visual reading.
+- **TOOL-12 Must: an enforceable write contract.** Every write tool states
+  how it prevents a duplicate effect: idempotency supported by the
+  destination, an atomic local transaction, or a reconciliation probe that
+  can find out whether the effect happened (Maestro v2's `Reconcile`). A
+  write that may have committed before its acknowledgement was lost is
+  never blindly repeated: its outcome is recorded as *unknown*, distinct
+  from *known not to have happened*, and stays so until the probe or a
+  person resolves it. A write tool that can offer none of the three is
+  refused registration unless the agent type explicitly accepts the risk.
 
 ### 3.6 Skills and prompts (SKL)
 
@@ -302,61 +355,106 @@ Known consumers:
   (buggrit `findings.go`). The agent type can cap resubmissions; reaching
   the cap is a transition the agent type defines (the intake agent sends
   the document to manual review).
-- **LOOP-3 Must: the loop can force progress.** After a text-only or empty
-  answer the loop nudges the model once; when the state's budget nears its
-  end the loop forces the tools that leave the state, and the agent type
-  can relax validation for that wrap-up turn. A model state never ends
-  silently without a transition (buggrit `stage.go`; Maestro issue #317,
-  where an architect deadlocked because the model never called its exit
-  tool).
+- **LOOP-3 Must: explicit completion policies.** One loop engine serves
+  every consumer, and each use declares what completes it. A model state's
+  policy requires a transition: after a text-only or empty answer the loop
+  nudges the model once, and when the state's budget nears its end the
+  loop forces the tools that leave the state, letting the agent type relax
+  validation for that wrap-up turn (buggrit `stage.go`; Maestro issue
+  #317, where an architect deadlocked because the model never called its
+  exit tool). Forced wrap-up has a bounded number of attempts; if the
+  provider or model cannot comply, the run fails with `wrap_up_failed`
+  rather than looping. A chat policy completes on a valid text answer and
+  never nudges.
 - **LOOP-4 Must: usable by a host's chat loop.** The same registry, policy
   layer and loop serve a host's chat, so a host has one tool path, not
-  two. (morris#568 item 7) A chat turn is not a run: it has no state
-  machine or checkpoint, but it shares tools, policy, events and budgets.
+  two. (morris#568 item 7) A chat turn has no state machine or checkpoint,
+  but it has a lightweight identity the host supplies (a conversation and
+  turn ID) that stands in for the run wherever a contract needs one: the
+  run context (TOOL-8), action identities and idempotency keys (TOOL-5),
+  event identity (HOST-1) and the execution record (REC-1).
 - **LOOP-5 Must: summarization is available, off by default.** An agent
   type can enable `maestro-llms`' compaction per model state. Compaction
-  never separates a tool call from its result (maestro-llms ADR 0038), and
-  the event stream records each compaction.
+  never separates a tool call from its result (maestro-llms ADR 0030, as
+  amended by ADR 0038), its model calls count against the run's budgets
+  (BUD-1), and the execution record and event stream record each
+  compaction.
 
 ### 3.8 Budgets (BUD)
 
-- **BUD-1 Must: budgets are totals**: tokens, model turns, wall clock and,
-  when the host supplies prices, cost. Defaults come from the manifest;
-  the host can override them per run. The runtime enforces every budget it
-  is given; a configured budget that is not enforced is a defect (buggrit's
-  `MaxTokensPerPass` is the counterexample). Zero means no limit.
-  Exhausting a budget fails the run with `budget_exhausted` (RUN-3). Rate
-  limits are not budgets (LLM-4).
-- **BUD-2 Must: wall clock is a first-class budget**, with a reserve for
-  wrap-up, and the model is shown the clock (buggrit design §9: slow
-  reasoning models spent whole budgets on single turns).
-- **BUD-3 Must: the library does not price.** It reports tokens per
-  model; a cost budget uses a pricing function the host supplies. An
-  unpriced model is an explicit unknown, never $0 (Maestro's wishlist).
+- **BUD-1 Must: budgets are totals per run**: tokens, model turns, active
+  time, an elapsed-time deadline and, when the host supplies prices, cost.
+  Defaults come from the manifest; the host can override them per run.
+  Consumption is part of the run's state and carries across activations
+  (RUN-1). The runtime enforces every budget it is given; a configured
+  budget that is not enforced is a defect (buggrit's `MaxTokensPerPass` is
+  the counterexample). Zero means no limit. Exhausting a budget fails the
+  run with `budget_exhausted` (RUN-3). Rate limits are not budgets
+  (LLM-4).
+- **BUD-2 Must: two clocks.** *Active time*, the default time budget,
+  counts while a worker is executing the run, including model calls, tool
+  execution and limiter waits; it excludes checkpointed waits between
+  activations. A separate optional *deadline* bounds elapsed calendar time
+  across waits. Active time keeps a reserve for wrap-up, and the model is
+  shown the clock (buggrit design §9: slow reasoning models spent whole
+  budgets on single turns).
+- **BUD-3 Must: hard budgets are enforced by admission before each
+  provider attempt**, not only by observing usage afterwards. Before every
+  attempt, including each retry, the runtime reserves the attempt's worst
+  case (its input estimate plus its output cap, with the output cap
+  lowered to what the budget leaves) and refuses an attempt that cannot
+  fit. After the attempt, observed usage replaces the reservation. A failed
+  attempt whose consumption is unknown is charged its full reservation.
+  Compaction and wrap-up calls are admitted the same way. Because
+  `maestro-llms` retries inside the injected client, the injected-client
+  contract must give the runtime a hook at each attempt (section 7).
+- **BUD-4 Must: the library does not price, and unknowns stay explicit.**
+  It reports tokens per model; a cost budget uses a pricing function the
+  host supplies. Unknown usage or an unpriced model is an explicit unknown,
+  never zero. A hard budget whose consumption cannot be determined fails
+  closed rather than silently becoming unenforceable.
 
 ### 3.9 Host seams (HOST)
 
 The host implements these; the library calls them. (morris#568 item 8)
 
-- **HOST-1 Must: event stream.** State transitions, model turns, tool
-  calls, policy decisions, usage and compactions are emitted as events the
-  host persists as the transcript. Events have a stable identity (run,
-  sequence) so a host can deduplicate redelivered events. A nil sink
-  records nothing.
-- **HOST-2 Must: event redaction.** The host can classify or redact event
-  content before it leaves the run, so a transcript can carry hashes and
-  IDs instead of document text or amounts (the intake agent's
-  confidentiality requirement, its N-5).
+- **HOST-1 Must: telemetry events.** State transitions, model turns, tool
+  calls, policy decisions, usage and compactions are emitted as events for
+  observation. Events have a stable identity (run, sequence, unbroken
+  across activations) so a host can deduplicate redelivered events. A nil
+  sink records nothing. Telemetry is optional and may be redacted,
+  disabled or delivered with weaker guarantees; it is never the recovery
+  record (REC).
+- **HOST-2 Must: redaction of telemetry and logs.** The host can classify
+  or redact event content before it leaves the run, so telemetry can carry
+  hashes and IDs instead of document text or amounts (the intake agent's
+  confidentiality requirement, its N-5). The same rule covers logs: the
+  library logs through a logger the host injects (`log/slog`), never
+  writes tool arguments, tool results or model content to a log itself,
+  and gives agent types and tools the same injected logger, so one host
+  policy governs every log line.
 - **HOST-3 Must: stores**, defined in section 4: checkpoints, artifacts,
   run records and a per-instance object store.
 - **HOST-4 Must: control plane** for lease, heartbeat and cancellation.
   Liveness comes from heartbeats, not from output silence.
 - **HOST-5 Must: credential provider** (TOOL-8) and **policy hook**
   (TOOL-3), both keyed by the opaque run context.
-- **HOST-6 Must: fencing.** Before each write's effect, the runtime checks
-  that the run still holds its lease and refuses the effect if not (buggrit
-  `fence.go` re-reads the PR head before each mutation; ADR 0032 binding
-  item 9).
+- **HOST-6 Must: ownership is enforced at the durable commit.** A
+  separate check before the effect is not enough: a worker can pass it,
+  lose ownership, and then commit. So ownership is validated together with
+  every durable commit an activation makes: tool effects, checkpoint
+  publication and execution-record appends. For a database effect, the
+  ownership check and the effect are serialized against ownership
+  transfer, for example by locking the ownership row or comparing an owner
+  epoch within the same transaction at an isolation level that actually
+  serializes them; placing both statements in one transaction is not by
+  itself enough. A checkpoint is published only by compare-and-set on
+  (instance, owner, sequence). For an external effect, the destination or
+  the host must provide an equivalent guarantee, such as accepting a
+  fencing token; where none can be established, the write declares it and
+  the outcome reports the uncertainty explicitly. Fencing and idempotency
+  (TOOL-5) are separate guarantees and both are required (buggrit
+  `fence.go`; ADR 0032 binding item 9).
 - **HOST-7 Should: cancellation order.** A forced end closes admission of
   new tool calls, lets admitted calls finish or reach their deadline, and
   only then emits the result (ADR 0032 binding item 8).
@@ -364,19 +462,48 @@ The host implements these; the library calls them. (morris#568 item 8)
 ### 3.10 Delivery (DEL)
 
 - **DEL-1 Must: at-least-once runs.** A run may be delivered more than
-  once. Idempotency keys (TOOL-5), fencing (HOST-6) and conditional writes
-  to the object store (STORE-2) keep a retried run from repeating a side
-  effect.
-- **DEL-2 Should: event delivery guarantees by kind.** Usage and
-  provenance events are delivered at least once; heartbeat and progress are
-  best effort. Incomplete event delivery is reported, not hidden (buggrit's
+  once. Idempotency keys (TOOL-5), the write contract (TOOL-12), fencing
+  (HOST-6) and conditional writes to the object store (STORE-2) keep a
+  retried run from repeating a side effect.
+- **DEL-2 Should: telemetry delivery guarantees by kind.** Usage events
+  are delivered at least once; heartbeat and progress are best effort.
+  Incomplete telemetry delivery is reported, not hidden (buggrit's
   telemetry writer marks a run complete only if every event was written).
 
-### 3.11 Testability (TEST)
+### 3.11 The execution record (REC)
 
-- **TEST-1 Must: replay harness.** Drive an agent type from recorded model
-  responses against fake host seams, deterministically and without network.
-  (morris#568 item 10)
+- **REC-1 Must: a protected execution record per run**, separate from
+  telemetry. It contains, or references by content identity, everything
+  needed to recover and to explain the run: the trigger, the resolved
+  configuration, the content of the manifest, prompts, skills and tool
+  definitions in force, every model request and response, every tool call
+  and result, policy decisions and approvals, action identities with their
+  outcomes (including *unknown*, TOOL-12), budget consumption, and any
+  other input the runtime cannot reproduce. Content identities point at
+  content that is retained and retrievable, not just at hashes.
+- **REC-2 Must: write-ahead.** A required step boundary is durably recorded
+  before any effect that depends on it. If recording fails, dependent
+  effects do not proceed. (buggrit's telemetry writer deliberately drops
+  events under failure; that delivery behavior is acceptable for
+  telemetry and never for this record.)
+- **REC-3 Must: protected, not redacted.** Telemetry redaction (HOST-2)
+  does not apply to the execution record, which keeps the content recovery
+  needs. The host protects it as sensitive data (access control,
+  encryption at rest, retention policy).
+- **REC-4 Must: replay consumes the record.** Replaying or reconstructing
+  a run uses the recorded observations instead of repeating model calls or
+  external reads and writes (TEST-1).
+
+### 3.12 Testability (TEST)
+
+- **TEST-1 Must: replay harness.** Drive an agent type from an execution
+  record (model responses, tool results, policy decisions) against fake
+  host seams, deterministically and without network. (morris#568 item 10)
+- **TEST-5 Must: crash-recovery tests.** The harness can stop an
+  activation at any durable boundary (after an effect commits but before
+  its acknowledgement or the next checkpoint is recorded, for instance),
+  continue the run in a new activation, and assert that no effect is
+  duplicated and no work is lost.
 - **TEST-2 Must: fakes for every seam**, usable by agent-type authors and
   hosts, built on `maestro-llms/testllm`.
 - **TEST-3 Should: record mode.** A live run can record its model exchange
@@ -394,16 +521,20 @@ reference implementations (MODE-3). An agent type's own data goes in the
 object store rather than in tables of its own.
 
 - **STORE-1 Must: fixed records.** *Runs*: ID, agent type and version,
-  instance, status and reason, trigger, timestamps. *Checkpoints*: per
-  instance, versioned, opaque. *Events*: run, sequence, kind, payload.
-  *Artifacts*: content-addressed blobs with metadata.
-- **STORE-2 Must: a per-instance object store.** Keys map to JSON or
-  bytes, in one namespace per agent instance; an instance cannot read
-  another's namespace. Every write is conditional on a version number
-  (compare-and-set), because redelivered runs are normal (DEL-1). Keys can
-  be listed by prefix. That covers the intake agent's needs: "has this file
-  hash been seen?" is a lookup, and "records awaiting review" is a prefix
-  listing.
+  instance, status and reason, trigger, consumed budgets, timestamps.
+  *Instance ownership*: current owner and epoch, the subject of HOST-6's
+  commit-time check. *Checkpoints*: per instance, sequenced, opaque.
+  *Execution records* (REC). *Telemetry events*: run, sequence, kind,
+  payload. *Artifacts*: content-addressed blobs with metadata.
+- **STORE-2 Must: an object store per namespace.** Keys map to JSON or
+  bytes, in a namespace the host assigns. Instances of the same configured
+  agent may share a namespace (several documents processed at once are
+  several instances, ADR 0002); an instance cannot read a namespace it was
+  not given. Every write is conditional on a version number
+  (compare-and-set), because redelivered runs and concurrent instances are
+  normal (DEL-1). Keys can be listed by prefix. That covers the intake
+  agent's needs: "has this file hash been seen?" is a lookup, and "records
+  awaiting review" is a prefix listing.
 - **STORE-3 Must: the object store stays simple.** No secondary indexes or
   query language. An agent type that needs relational queries owns a store
   outside the library, behind its own interface.
@@ -452,10 +583,11 @@ pluggable stores hold inputs, state and output.
   host implements the credential provider from environment variables or a
   secrets file. Only the host reads them; agent types and tools still go
   through TOOL-8.
-- **MODE-6 Must: graceful shutdown.** SIGINT and SIGTERM cancel runs
-  through their contexts (cause: shutdown), checkpointing at the last step
-  boundary, with exit codes distinguishing complete, incomplete and usage
-  errors (buggrit's `0/1/2`).
+- **MODE-6 Must: graceful shutdown.** SIGINT and SIGTERM stop activations
+  through their contexts (cause: shutdown) at the next step boundary,
+  reporting each run's actual disposition (`runnable` or `waiting`, RUN-3),
+  with exit codes distinguishing complete, incomplete and usage errors
+  (buggrit's `0/1/2`).
 - **MODE-7 Should: optional infrastructure degrades.** A failing optional
   sink (telemetry, a shared limiter) is a warning, not a failed run; a
   required one fails before the run starts.
@@ -488,8 +620,10 @@ The first agent built on the library is the standalone capital-statement
 intake agent: one PDF statement in, a verified valuation record and an
 Addepar import row out. Its requirements are drafted separately (the
 *Capital Statement Intake* requirements; not in this repository). It is the
-MVP because it has no external blockers and has users waiting for it. It
-lives in this repository as `cmd/addepar`, both as a usable tool and as
+MVP because it has users waiting for it and exercises the hard parts of the
+library (recovery, idempotent writes, multimodal input) on a small surface.
+It is not free of outside dependencies: it needs three upstream changes
+(listed under *Delivery plan* below). It lives in this repository as `cmd/addepar`, both as a usable tool and as
 the reference implementation of an agent type; it may move later. The
 same agent type later runs compiled into Morris (morris#569), which is
 Morris's acceptance test.
@@ -501,7 +635,8 @@ capability belongs in `maestro-cms`, which already runs Poppler's
 `pdftotext` for Morris (`extract/pdf/pdftotext`) and is where other
 consumers will look for it. It needs extending with what the intake agent
 requires and the engine does not yet provide: word positions per page (for
-the grounding check) and page rendering (section 7). The intake agent calls
+highlighting evidence in the review UI) and page rendering (section 7). The
+intake agent calls
 it in-process, as Go tools. An MCP server over the same package, for
 consumers outside Go, is a thin wrapper `maestro-cms` can add when one is
 wanted; the MVP does not wait for it.
@@ -521,14 +656,44 @@ What the intake agent requires of the library, all covered above:
 | `submit_extraction` verified in code, with reasons on failure and a resubmission cap | LOOP-2, STM-3 |
 | Run complete when every statement is verified, set aside or sent to manual review | STM-4 |
 | Approval and export are human actions outside the agent | TOOL-4 (propose and finish) |
+| A submitted record is never stored twice, even after a crash | TOOL-5, TOOL-12, HOST-6, REC-2 |
 | Hash-based duplicate detection; records accumulate until export | STORE-2 |
-| Logs carry hashes and IDs, never amounts or text | HOST-2 |
-| Extraction stored with model ID, prompt version and transcript; no re-run to explain a value | RUN-6, MAN-4 |
-| Several statements at once; token use recorded | LLM-4, HOST-1 |
+| Logs and telemetry carry hashes and IDs, never amounts or text | HOST-2 |
+| Extraction stored with model ID, prompt version and transcript; no re-run to explain a value | REC-1, RUN-6, MAN-4 |
+| Several statements at once | Several instances sharing a namespace (STM-9, STORE-2) |
+| Token use recorded per statement | REC-1, HOST-1 |
 | Scoring against an answer key | TEST-4 |
 
 The intake agent's review UI, verifier, exporter and decimal handling are
 the agent's own code, not library requirements.
+
+### Delivery plan
+
+**Prerequisites from other repositories** (section 7): image and document
+content and non-text tool results in `maestro-llms`; forced wrap-up and
+the per-attempt budget hook in `maestro-llms`' tool loop and client
+contract; word positions and page rendering in `maestro-cms`. These gate
+LLM-2, TOOL-11, LOOP-3, BUD-3 and the review UI's evidence highlighting.
+
+**Prove the difficult vertical slice first**, before filling out every
+store and the review UI:
+
+1. Read one representative statement through its text layer, which
+   `maestro-cms`' existing `pdftotext` engine already provides (the
+   grounding check needs the page text, not word positions).
+2. Extract a record, verify it in code, and commit the submission durably.
+3. Interrupt the activation after the commit but before its
+   acknowledgement and checkpoint are recorded (TEST-5).
+4. Continue the run in a new activation and show the submission is not
+   duplicated and no work is lost.
+
+The slice proves the state machine, execution record, write contract,
+fencing and recovery while the upstream multimodal work proceeds. Visual
+extraction (the PDF sent to the model) and evidence highlighting then
+need their own acceptance evidence once their prerequisites land; passing
+the text-layer slice does not stand in for it. The file store, the
+Postgres store and the review UI follow. MCP tools, the wire protocol and
+subagents remain later work.
 
 ## 7. Out of scope, and upstream dependencies
 
@@ -548,6 +713,7 @@ to agents stays here.
 | Image and document content | `maestro-llms`' `ContentPart` has only text, tool call, tool result and reasoning parts | LLM-2 |
 | Non-text tool results | `maestro-llms`' `toolloop.ToolResult.Content` is a string | TOOL-11 |
 | Forced wrap-up, a turn-boundary stop that still runs sibling calls, a pre-request hook that may fail | Not in `maestro-llms`' `toolloop`; Maestro's wishlist items 1 and 2 | LOOP-1, LOOP-3 |
+| Budget admission before each provider attempt, including retries, with per-attempt usage | Retries run inside the injected client; the existing attempt observer reports after the fact but cannot refuse an attempt. Whether the rate-limit middleware's per-attempt position can carry this, or a new hook is needed, is to be worked out with `maestro-llms` | BUD-3 |
 | An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 |
 | PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | Section 6 |
 
@@ -566,7 +732,9 @@ What is adopted is decided per piece in an ADR when the work starts
   (`clock.go`).
 - Telemetry: nil-safe recorder, requests stored as deltas, a `Sink`
   interface with idempotent writes and honest completeness
-  (`internal/telemetry`).
+  (`internal/telemetry`). For telemetry only: its writer drops events
+  under failure by design, so it cannot serve as the execution record
+  (REC-2).
 - Prompt and tool content hashing (`identity.go`).
 - The head fence before each side effect (`internal/github/fence.go`).
 - The replay and benchmark harness (`internal/bench`).
@@ -577,7 +745,8 @@ What is adopted is decided per piece in an ADR when the work starts
 **Avoid from buggrit:** the agent reading its own API key
 (`internal/llm/llm.go`); a fixed stage set; configured but unenforced
 budgets; durable state in side channels instead of explicit checkpoints;
-results passed through closure side effects.
+results passed through closure side effects; a fence checked before the
+effect rather than with it (HOST-6).
 
 **Adopt from maestro:** the state machine engine (Maestro v2 retains it)
 with declared transitions; tools that cause transitions; the v2 execution
@@ -597,14 +766,15 @@ credential lookup in the agent factory; drop-oldest compaction;
 iteration-only budgets.
 
 **New design work** (neither repository has it): manifests, embedded
-skills, approval as a policy outcome, read/write classification,
-recorded-response replay of an agent type, the per-instance object store,
-and the three-mode wrapping.
+skills, approval as a policy outcome, read/write classification and the
+write contract, the execution record and replay from it, per-attempt
+budget admission, the object store, and the three-mode wrapping.
 
 ## 9. Open questions
 
 - **Q-1 buggrit's telemetry schema.** Should the Postgres store reuse or
   share buggrit's telemetry schema (runs, events stored as request
-  deltas, idempotent writes) for HOST-1's events? Likely yes; to be
-  confirmed during design. (Sharing a database with `maestro-llms`' bucket
-  is settled: STORE-5.)
+  deltas, idempotent writes) for HOST-1's telemetry events? Likely yes; to
+  be confirmed during design. It does not serve as the execution record
+  (REC-2). (Sharing a database with `maestro-llms`' bucket is settled:
+  STORE-5.)

@@ -21,6 +21,12 @@ an empty root package; no API is defined yet. The requirements are in
 [docs/requirements.md](docs/requirements.md); the design arrives in later
 PRs, each with its ADR.
 
+Load-bearing decisions so far:
+
+- An agent instance executes serially, with one execution owner; parallelism
+  comes from separate instances, and later from subagents
+  ([ADR 0002](docs/adr/0002-serial-execution-within-an-agent-instance.md))
+
 ### Related repositories
 
 Sibling checkouts live next to this one (`../<name>`):
