@@ -129,13 +129,16 @@ Known consumers:
   item 1 ("bounded runs, not daemons") in wording, not substance: what
   Morris needs is state restorable at bounded intervals, which STM-6 gives
   every agent.
-- **STM-8 Must: waiting is a state, and there are two kinds of wait.**
+- **STM-8 Must: two kinds of wait.**
   - *A run waiting for input it needs to continue* (an approval in
-    *suspend and resume* mode, or other external input mid-run) sits in a
-    non-terminal state that names what it waits for. A daemon waits
-    in-process; a serverless host ends the activation with the run
-    `waiting` (RUN-3) and starts another activation of the same run when
-    the input arrives.
+    *suspend and resume* mode, or other external input mid-run) has the
+    status `waiting` (RUN-3), with the input it waits for named in the
+    checkpoint. Waiting is a status, not a state transition: the run stays
+    in the state it was in, a model state in progress keeps its transcript
+    (STM-6), and the step is unchanged, so the resumed action keeps its
+    original action identity and idempotency key (TOOL-4, TOOL-5). A
+    daemon waits in-process; a serverless host ends the activation and
+    starts another activation of the same run when the input arrives.
   - *An idle instance waiting for its next trigger* has no run in flight.
     This is not a run status: when the trigger arrives, a new run starts
     (one run per trigger, section 1; MODE-4).
@@ -394,25 +397,36 @@ Known consumers:
   Consumption is part of the run's state and carries across activations
   (RUN-1). Zero means no limit. Rate limits are not budgets (LLM-4).
   Budgets come in two kinds, and only two:
-  - *Hard* (the default): enforced by admission before each provider
-    attempt (BUD-3), so consumption never exceeds the budget. A configured
-    hard budget that is not enforced is a defect (buggrit's
-    `MaxTokensPerPass` is the counterexample).
+  - *Hard* (the default): enforced so consumption never exceeds the
+    budget. Token and cost budgets are enforced by admission before each
+    provider attempt (BUD-3); the turn budget by counting turns before each
+    one; the time budgets by deadlines (BUD-2). A configured hard budget
+    that is not enforced is a defect (buggrit's `MaxTokensPerPass` is the
+    counterexample).
   - *Estimated*: the single exception, chosen explicitly by the host for
     a token or cost budget when no safe input bound exists (BUD-3). It is
     admitted on the estimate, reported as estimated wherever it appears,
     and may overshoot by at most one attempt's error.
 
-  Exhausting either kind fails the run with `budget_exhausted` (RUN-3):
-  a hard budget when an attempt cannot be admitted, an estimated one when
-  observed consumption reaches it.
+  Exhausting either kind fails the run with `budget_exhausted` (RUN-3),
+  naming the budget: a token, cost or turn budget when the next attempt or
+  turn cannot be admitted, an estimated budget when observed consumption
+  reaches it, a time budget when its deadline passes (BUD-2).
 - **BUD-2 Must: two clocks.** *Active time*, the default time budget,
   counts while a worker is executing the run, including model calls, tool
   execution and limiter waits; it excludes checkpointed waits between
   activations. A separate optional *deadline* bounds elapsed calendar time
   across waits. Active time keeps a reserve for wrap-up, and the model is
   shown the clock (buggrit design §9: slow reasoning models spent whole
-  budgets on single turns).
+  budgets on single turns). Both are enforced as deadlines, not by
+  admission: each activation runs under a context deadline set from the
+  remaining active time or the deadline, whichever comes first, so a slow
+  model call, tool call or limiter wait is cut off rather than overshooting
+  (tool calls receive that context). A run that is `waiting` between
+  activations has no worker to notice its deadline, so the host enforces
+  it: when a waiting run's deadline passes, the host fails it with
+  `budget_exhausted` naming the deadline, and an activation that starts
+  after the deadline fails the run before doing any work.
 - **BUD-3 Must: hard budgets are enforced by admission before each
   provider attempt**, not only by observing usage afterwards. Before every
   attempt, including each retry, the runtime reserves the attempt's worst
@@ -437,11 +451,11 @@ Known consumers:
 - **BUD-4 Must: the library does not price, and unknowns stay explicit.**
   It reports tokens per model; a cost budget uses a pricing function the
   host supplies. Unknown usage or an unpriced model is an explicit unknown,
-  never zero. For either kind of budget (BUD-1), an attempt whose
-  consumption is unknown is charged its full reservation (BUD-3), and a
-  budget for which no reservation can be computed at all (a cost budget
-  with no price for the model, say) fails closed rather than silently
-  becoming unenforceable.
+  never zero. An attempt whose consumption is unknown is charged the
+  amount admitted for it: the worst-case reservation for a hard budget,
+  the estimate for an estimated one (BUD-1, BUD-3). A budget for which no
+  amount at all can be computed (a cost budget with no price for the
+  model, say) fails closed rather than silently becoming unenforceable.
 
 ### 3.9 Host seams (HOST)
 
@@ -616,7 +630,12 @@ pluggable stores hold inputs, state and output.
 - **MODE-4 Must: triggers.** One-shot (process one input and exit, for
   command-line and CI use) and long-running (wait for triggers such as a
   schedule or a new file in a folder, idle between them, and start a new
-  run on each, per STM-7 and STM-8).
+  run on each, per STM-7 and STM-8). A trigger that arrives while the
+  instance has a run in flight is never dropped: the host either queues it
+  for that instance, starting its run when the instance is idle, or starts
+  it on a new instance (STM-9). The standalone host queues by default; a
+  queued trigger survives a restart exactly as far as the configured store
+  does (STORE-4: the in-memory store does not).
 - **MODE-5 Must: credentials stay outside agent code.** The standalone
   host implements the credential provider from environment variables or a
   secrets file. Only the host reads them; agent types and tools still go
