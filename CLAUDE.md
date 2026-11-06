@@ -41,14 +41,14 @@ differences from the original recorded.
 
 - Create a branch and pull request for all code changes, and follow the
   **Branch And Review Workflow** below: **review before push**, and Claude
-  never merges. Approval for a branch's first push, opening a PR or
-  commenting on GitHub may come from any human operator with GitHub
-  credentials for the repository; after the first push, review fixes are
-  pushed without asking once the tests and Codex pass, whichever reviewer
-  raised them; only Dan merges
+  never merges. Every human approval in this guide may come from any human
+  operator; GitHub credentials for the repository are what qualify one.
+  After a branch's first push, review fixes are pushed without asking once
+  the tests and Codex pass, whichever reviewer raised them; a human
+  operator merges
 - Never bypass hooks with `--no-verify`; fix failures. The only exception,
-  **push only**: a documentation-only push (zero code changes) that Dan
-  confirms for that specific push (approval is not reusable; one line of
+  **push only**: a documentation-only push (zero code changes) that a human
+  operator confirms for that specific push (approval is not reusable; one line of
   code voids it)
 - Prefer Go standard library patterns over framework-heavy choices
 - If a new technical decision materially affects security, isolation, data
@@ -122,9 +122,8 @@ automated checks are a lighter final proofread.
 
 - **Claude** authors: docs, ADRs, plans, specs, code and fixes.
 - **Codex** is the primary reviewer; it reviews committed local artifacts and code **before push** (this is where the heavy lifting happens).
-- **Dan** orchestrates, resolves contention, accepts and merges.
-- **Any human operator with GitHub credentials for the repository** may authorize the other external effects: a branch's first push, opening a PR and commenting on GitHub. After the first push, fixes for review findings are pushed without asking once the tests and Codex pass (step 9). Only Dan merges.
-- A PR is **Accepted** only after both Codex and Dan approve.
+- **A human operator** orchestrates, resolves contention, accepts and merges. Any human with GitHub credentials for the repository is a human operator; those credentials are the qualification and the enforcement. A human operator authorizes the external effects: a branch's first push, opening a PR, commenting on GitHub and merging. After the first push, fixes for review findings are pushed without asking once the tests and Codex pass (step 9).
+- A PR is **Accepted** only after both Codex and a human operator approve.
 - Claude↔Codex communication goes through the **Counterpoint** review tool (`mcp__counterpoint__review`) when it is available in the session; otherwise it routes through the human operator manually. Do not ask for a relay when the tool is available.
 
 If Claude and Codex do not converge after reasoned attempts, preserve both
@@ -142,11 +141,11 @@ cycling indefinitely.
 7. **Stop for a human's approval.** Quote Codex's approval (or remaining findings) to the human operator you are working with. **Do not make a branch's first push before Codex and a human operator both approve; that push is a human gate, not a routine step.**
 8. After authorization, push and open the PR to `main` per the PR Body Conventions below. The **post-push** automated checks (CI, GitHub code scanning via CodeQL, and a [buggrit](https://github.com/SnapdragonPartners/buggrit) review, which runs automatically on every push to a PR) are a lighter **final proofread**: treat their findings substantively, but the heavy review has already happened pre-push. buggrit (`.github/workflows/buggrit.yml`, configured by `.github/buggrit.json`) posts each finding as its own thread and re-checks its findings on every push. Its pass is finished when the `buggrit / review` check completes; a pass can take up to about an hour.
 9. Address every post-push review thread with a fix or a reasoned reply. Push any fix once the verification step 2 names for it and Codex pass, without asking a human, whichever reviewer raised the finding (buggrit, code scanning, Copilot, a human). Reply to the thread and mark it resolved (except a buggrit thread you fixed, which stays open for buggrit to verify), then check again for new feedback (see *Post-push reviewer feedback* below). Every buggrit finding gets a response, not necessarily a fix (see *buggrit findings* below).
-10. **Dan gives final approval and merges. Claude never merges**, not even an approved, green PR, unless Dan explicitly says to.
+10. **A human operator gives final approval and merges. Claude never merges**, not even an approved, green PR, unless a human operator explicitly says to.
 
 Keep at most **one feature/development branch open at a time**; parallel
-branches are allowed only for bug fixes, or when Dan explicitly authorizes
-parallel work.
+branches are allowed only for bug fixes, or when a human operator
+explicitly authorizes parallel work.
 
 ### Responding to findings
 
