@@ -38,7 +38,8 @@ prompts its model-driven states use. Three more terms, and only three:
   resolved configuration and action identities for its whole life, however
   many workers it passes through.
 - An *activation* is one worker's stretch of a run: from acquiring
-  ownership to stopping at a step boundary, or losing ownership. A run may
+  ownership to stopping at a step boundary (including a stop to wait for
+  input, STM-8), or losing ownership. A run may
   take one activation (a daemon) or many (a serverless host).
 
 The library supplies the runtime around the agent type's logic: the state
@@ -113,7 +114,9 @@ Known consumers:
   not an untyped map (Maestro v1's `StateData map[string]any` is the
   counterexample).
 - **STM-6 Must: step boundaries.** A step boundary is a completed model
-  turn or a state transition. At every step boundary the instance's state
+  turn, a state transition, or a stop to wait for input (STM-8). A wait
+  boundary does not complete the step or change its identity; the
+  checkpoint sequence still advances there. At every step boundary the instance's state
   (current state, state data, and the transcript of a model state in
   progress) can be checkpointed and later restored, so a run can continue
   from its last boundary in a new activation, in another process. A model
@@ -132,8 +135,12 @@ Known consumers:
 - **STM-8 Must: two kinds of wait.**
   - *A run waiting for input it needs to continue* (an approval in
     *suspend and resume* mode, or other external input mid-run) has the
-    status `waiting` (RUN-3), with the input it waits for named in the
-    checkpoint. Waiting is a status, not a state transition: the run stays
+    status `waiting` (RUN-3). The input it waits for is named in the
+    run's status reason, which the host can read (RUN-3, STORE-1), not in
+    the checkpoint's opaque contents (RUN-5). The wait is checkpointed as a
+    step boundary that does not complete the step (STM-6), and the next
+    activation continues from it. Waiting is a status, not a state
+    transition: the run stays
     in the state it was in, a model state in progress keeps its transcript
     (STM-6), and the step is unchanged, so the resumed action keeps its
     original action identity and idempotency key (TOOL-4, TOOL-5). A
@@ -180,7 +187,7 @@ Known consumers:
   | Not terminal | `runnable` | more work is ready now; the activation stopped at a boundary (the host's step limit, or a shutdown while working) | none: an incarnation ending without a result |
   | Not terminal | `waiting` | the input the run needs to continue (STM-8): approval of pending actions in *suspend and resume* mode (TOOL-4), or other external input mid-run; never "the next trigger", which starts a new run | blocked |
   | Terminal | `succeeded` | `changed` or `no_change`; a *propose and finish* run (TOOL-4) succeeds with its pending actions in its output | completed, with disposition changed or already_satisfied |
-  | Terminal | `failed` | `budget_exhausted` (naming the budget), `model_error`, `tool_error`, `invalid_output` or `wrap_up_failed` (LOOP-3); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
+  | Terminal | `failed` | `budget_exhausted` (naming the budget), `budget_unenforceable` (a hard budget configured where it cannot be enforced, BUD-3 and BUD-4: a configuration error, so retrying as-is cannot help), `model_error`, `tool_error`, `invalid_output` or `wrap_up_failed` (LOOP-3); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
   | Terminal | `cancelled` | the cause the host supplied: superseded or operator | cancelled, with cancel reason |
 
   A shutdown preserves the disposition: a worker shutting down while the
@@ -414,19 +421,22 @@ Known consumers:
   reaches it, a time budget when its deadline passes (BUD-2).
 - **BUD-2 Must: two clocks.** *Active time*, the default time budget,
   counts while a worker is executing the run, including model calls, tool
-  execution and limiter waits; it excludes checkpointed waits between
-  activations. A separate optional *deadline* bounds elapsed calendar time
+  execution and limiter waits. It excludes every wait for external input
+  (STM-8), whether the activation ends (serverless) or is held in-process
+  (a daemon, or a host blocking inside the policy hook, TOOL-4). A separate optional *deadline* bounds elapsed calendar time
   across waits. Active time keeps a reserve for wrap-up, and the model is
   shown the clock (buggrit design §9: slow reasoning models spent whole
   budgets on single turns). Both are enforced as deadlines, not by
   admission: each activation runs under a context deadline set from the
   remaining active time or the deadline, whichever comes first, so a slow
   model call, tool call or limiter wait is cut off rather than overshooting
-  (tool calls receive that context). A run that is `waiting` between
-  activations has no worker to notice its deadline, so the host enforces
-  it: when a waiting run's deadline passes, the host fails it with
-  `budget_exhausted` naming the deadline, and an activation that starts
-  after the deadline fails the run before doing any work.
+  (tool calls receive that context); the active-time part of that
+  deadline is paused during an in-process wait for input. The elapsed-time
+  deadline keeps running through every wait: during an in-process wait the
+  worker fails the run with `budget_exhausted` naming the deadline when it
+  passes; a run that is `waiting` between activations has no worker, so
+  the host does the same; and an activation that starts after the
+  deadline fails the run before doing any work.
 - **BUD-3 Must: hard budgets are enforced by admission before each
   provider attempt**, not only by observing usage afterwards. Before every
   attempt, including each retry, the runtime reserves the attempt's worst
@@ -441,7 +451,9 @@ Known consumers:
   provider's token-counting endpoint, a conservative bound valid for the
   model's tokenizer, a provider's documented formula for images and
   pages) is a design decision. When no adequate bound is available, a hard
-  budget fails closed and refuses the attempt; the host's alternative is
+  budget fails closed, refusing the attempt and failing the run with
+  `budget_unenforceable` (RUN-3), not `budget_exhausted`, since nothing
+  was consumed; the host's alternative is
   to configure that budget as *estimated* (BUD-1). After
   the attempt, observed usage replaces the reservation. A failed attempt
   whose consumption is unknown is charged its full reservation.
@@ -455,7 +467,8 @@ Known consumers:
   amount admitted for it: the worst-case reservation for a hard budget,
   the estimate for an estimated one (BUD-1, BUD-3). A budget for which no
   amount at all can be computed (a cost budget with no price for the
-  model, say) fails closed rather than silently becoming unenforceable.
+  model, say) fails closed with `budget_unenforceable` (RUN-3) rather than
+  silently becoming unenforceable.
 
 ### 3.9 Host seams (HOST)
 
@@ -477,9 +490,9 @@ The host implements these; the library calls them. (morris#568 item 8)
   and gives agent types and tools the same injected logger, so one host
   policy governs every log line.
 - **HOST-3 Must: stores**, defined in section 4: checkpoints, artifacts,
-  run records, execution records, instance ownership, and an object store
-  per namespace the host assigns, which several instances may share
-  (STORE-2).
+  run records, execution records, instance ownership, queued triggers,
+  and an object store per namespace the host assigns, which several
+  instances may share (STORE-2).
 - **HOST-4 Must: control plane** for lease, heartbeat and cancellation.
   Liveness comes from heartbeats, not from output silence.
 - **HOST-5 Must: credential provider** (TOOL-8) and **policy hook**
@@ -577,7 +590,10 @@ object store rather than in tables of its own.
   *Instance ownership*: current owner and epoch, the subject of HOST-6's
   commit-time check. *Checkpoints*: per instance, sequenced, opaque.
   *Execution records* (REC). *Telemetry events*: run, sequence, kind,
-  payload. *Artifacts*: content-addressed blobs with metadata.
+  payload. *Artifacts*: content-addressed blobs with metadata. *Queued
+  triggers*: per instance, in arrival order, for triggers that arrive while
+  a run is in flight (MODE-4); each is removed only when its run's record
+  is created, so a restart neither loses nor duplicates it.
 - **STORE-2 Must: an object store per namespace.** Keys map to JSON or
   bytes, in a namespace the host assigns. Instances of the same configured
   agent may share a namespace (several documents processed at once are
@@ -634,8 +650,9 @@ pluggable stores hold inputs, state and output.
   instance has a run in flight is never dropped: the host either queues it
   for that instance, starting its run when the instance is idle, or starts
   it on a new instance (STM-9). The standalone host queues by default; a
-  queued trigger survives a restart exactly as far as the configured store
-  does (STORE-4: the in-memory store does not).
+  queued trigger is held in the queued-trigger record (STORE-1), so it
+  survives a restart with the file and Postgres stores but not with the
+  in-memory one (STORE-4).
 - **MODE-5 Must: credentials stay outside agent code.** The standalone
   host implements the credential provider from environment variables or a
   secrets file. Only the host reads them; agent types and tools still go
