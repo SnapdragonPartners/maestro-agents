@@ -129,11 +129,16 @@ Known consumers:
   item 1 ("bounded runs, not daemons") in wording, not substance: what
   Morris needs is state restorable at bounded intervals, which STM-6 gives
   every agent.
-- **STM-8 Must: waiting is a state.** An instance waiting for external
-  input (the next trigger, an approval) sits in a non-terminal state that
-  names what it waits for. A daemon waits in-process; a serverless host
-  ends the activation with the run `waiting` (RUN-3) and starts another
-  activation of the same run when the input arrives.
+- **STM-8 Must: waiting is a state, and there are two kinds of wait.**
+  - *A run waiting for input it needs to continue* (an approval in
+    *suspend and resume* mode, or other external input mid-run) sits in a
+    non-terminal state that names what it waits for. A daemon waits
+    in-process; a serverless host ends the activation with the run
+    `waiting` (RUN-3) and starts another activation of the same run when
+    the input arrives.
+  - *An idle instance waiting for its next trigger* has no run in flight.
+    This is not a run status: when the trigger arrives, a new run starts
+    (one run per trigger, section 1; MODE-4).
 - **STM-9 Must: serial execution within an instance.** State processing,
   model turns and tool calls execute one at a time, including sibling tool
   calls from one model response, in their recorded order. Only the
@@ -170,7 +175,7 @@ Known consumers:
   | Group | Status | Reason | Maestro ADR 0032 equivalent |
   |---|---|---|---|
   | Not terminal | `runnable` | more work is ready now; the activation stopped at a boundary (the host's step limit, or a shutdown while working) | none: an incarnation ending without a result |
-  | Not terminal | `waiting` | the input the run waits for (STM-8): the next trigger, or approval of pending actions in *suspend and resume* mode (TOOL-4) | blocked |
+  | Not terminal | `waiting` | the input the run needs to continue (STM-8): approval of pending actions in *suspend and resume* mode (TOOL-4), or other external input mid-run; never "the next trigger", which starts a new run | blocked |
   | Terminal | `succeeded` | `changed` or `no_change`; a *propose and finish* run (TOOL-4) succeeds with its pending actions in its output | completed, with disposition changed or already_satisfied |
   | Terminal | `failed` | `budget_exhausted` (naming the budget), `model_error`, `tool_error`, `invalid_output` or `wrap_up_failed` (LOOP-3); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
   | Terminal | `cancelled` | the cause the host supplied: superseded or operator | cancelled, with cancel reason |
@@ -179,7 +184,8 @@ Known consumers:
   run waits for approval reports `waiting`, not `runnable`. An activation
   that loses ownership reports nothing authoritative about the run (RUN-4,
   HOST-6); the run's status is whatever its last owner committed. A daemon
-  reports only when it stops. **Departs from** morris#568 item 1, which
+  reports each run's outcome when that run ends, or when the daemon stops
+  mid-run. **Departs from** morris#568 item 1, which
   lists budget-exhausted as its own terminal state: it is a failure here,
   and final in the MVP. **Plan for** extending a budget-exhausted run with
   more budget; that must continue the same run, keeping its identity and
@@ -386,11 +392,20 @@ Known consumers:
   time, an elapsed-time deadline and, when the host supplies prices, cost.
   Defaults come from the manifest; the host can override them per run.
   Consumption is part of the run's state and carries across activations
-  (RUN-1). The runtime enforces every budget it is given; a configured
-  budget that is not enforced is a defect (buggrit's `MaxTokensPerPass` is
-  the counterexample). Zero means no limit. Exhausting a budget fails the
-  run with `budget_exhausted` (RUN-3). Rate limits are not budgets
-  (LLM-4).
+  (RUN-1). Zero means no limit. Rate limits are not budgets (LLM-4).
+  Budgets come in two kinds, and only two:
+  - *Hard* (the default): enforced by admission before each provider
+    attempt (BUD-3), so consumption never exceeds the budget. A configured
+    hard budget that is not enforced is a defect (buggrit's
+    `MaxTokensPerPass` is the counterexample).
+  - *Estimated*: the single exception, chosen explicitly by the host for
+    a token or cost budget when no safe input bound exists (BUD-3). It is
+    admitted on the estimate, reported as estimated wherever it appears,
+    and may overshoot by at most one attempt's error.
+
+  Exhausting either kind fails the run with `budget_exhausted` (RUN-3):
+  a hard budget when an attempt cannot be admitted, an estimated one when
+  observed consumption reaches it.
 - **BUD-2 Must: two clocks.** *Active time*, the default time budget,
   counts while a worker is executing the run, including model calls, tool
   execution and limiter waits; it excludes checkpointed waits between
@@ -412,9 +427,8 @@ Known consumers:
   provider's token-counting endpoint, a conservative bound valid for the
   model's tokenizer, a provider's documented formula for images and
   pages) is a design decision. When no adequate bound is available, a hard
-  budget fails closed and refuses the attempt. A host may instead
-  configure a budget as *estimated*: it is admitted on the estimate, is
-  labeled as estimated wherever it is reported, and may overshoot. After
+  budget fails closed and refuses the attempt; the host's alternative is
+  to configure that budget as *estimated* (BUD-1). After
   the attempt, observed usage replaces the reservation. A failed attempt
   whose consumption is unknown is charged its full reservation.
   Compaction and wrap-up calls are admitted the same way. Because
@@ -423,8 +437,11 @@ Known consumers:
 - **BUD-4 Must: the library does not price, and unknowns stay explicit.**
   It reports tokens per model; a cost budget uses a pricing function the
   host supplies. Unknown usage or an unpriced model is an explicit unknown,
-  never zero. A hard budget whose consumption cannot be determined fails
-  closed rather than silently becoming unenforceable.
+  never zero. For either kind of budget (BUD-1), an attempt whose
+  consumption is unknown is charged its full reservation (BUD-3), and a
+  budget for which no reservation can be computed at all (a cost budget
+  with no price for the model, say) fails closed rather than silently
+  becoming unenforceable.
 
 ### 3.9 Host seams (HOST)
 
@@ -446,7 +463,9 @@ The host implements these; the library calls them. (morris#568 item 8)
   and gives agent types and tools the same injected logger, so one host
   policy governs every log line.
 - **HOST-3 Must: stores**, defined in section 4: checkpoints, artifacts,
-  run records and a per-instance object store.
+  run records, execution records, instance ownership, and an object store
+  per namespace the host assigns, which several instances may share
+  (STORE-2).
 - **HOST-4 Must: control plane** for lease, heartbeat and cancellation.
   Liveness comes from heartbeats, not from output silence.
 - **HOST-5 Must: credential provider** (TOOL-8) and **policy hook**
@@ -596,8 +615,8 @@ pluggable stores hold inputs, state and output.
 - **MODE-3 Must: pluggable stores** from STORE-4, chosen in the config.
 - **MODE-4 Must: triggers.** One-shot (process one input and exit, for
   command-line and CI use) and long-running (wait for triggers such as a
-  schedule or a new file in a folder, and run the instance on each, per
-  STM-7 and STM-8).
+  schedule or a new file in a folder, idle between them, and start a new
+  run on each, per STM-7 and STM-8).
 - **MODE-5 Must: credentials stay outside agent code.** The standalone
   host implements the credential provider from environment variables or a
   secrets file. Only the host reads them; agent types and tools still go
