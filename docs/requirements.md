@@ -106,7 +106,10 @@ Known consumers:
   turn or a state transition. At every step boundary the instance's state
   (current state, state data, and the transcript of a model state in
   progress) can be checkpointed and later restored, so a run can resume
-  from its last boundary in a new process.
+  from its last boundary in a new process. A model turn is recorded,
+  including the tool calls it requested, before any of those calls
+  execute; a run resumed after that point executes the recorded calls and
+  does not ask the model to repeat the turn.
 - **STM-7 Must: the host decides how many steps one process covers.** A
   serverless host may checkpoint and stop at every boundary; a daemon may
   run indefinitely, checkpointing as it goes. A daemon is therefore not a
@@ -240,8 +243,16 @@ Known consumers:
   their own propose mode: approval is a policy outcome here, so no tool
   implements it.
 - **TOOL-5 Must: idempotency keys.** Every write call carries an
-  idempotency key. The runtime derives a stable key per (run, step) so a
-  retried run does not repeat a side effect. (morris#568 item 9)
+  idempotency key that is distinct for each logical tool invocation and
+  stable across redelivery, so a retried run does not repeat a side effect
+  and two writes in one model turn (two `submit_extraction` calls for
+  different statements, say) never share a key. The runtime derives it
+  from the run, the step, and the call's identity within that step (for
+  example, its position in the recorded turn), never from the step alone.
+  Write calls execute only from a model turn already recorded (STM-6), so
+  a redelivered run re-issues the same calls with the same keys rather
+  than asking the model again. **Departs from** morris#568 item 9, which
+  asks for one key per (run, step): a step can hold several writes.
 - **TOOL-6 Should: MCP tools.** The registry can hold tools served by an
   external MCP server alongside in-process Go tools, with the same grants,
   policy, middleware and events. The MCP client itself comes from
