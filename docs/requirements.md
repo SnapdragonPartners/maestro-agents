@@ -401,10 +401,22 @@ Known consumers:
 - **BUD-3 Must: hard budgets are enforced by admission before each
   provider attempt**, not only by observing usage afterwards. Before every
   attempt, including each retry, the runtime reserves the attempt's worst
-  case (its input estimate plus its output cap, with the output cap
-  lowered to what the budget leaves) and refuses an attempt that cannot
-  fit. After the attempt, observed usage replaces the reservation. A failed
-  attempt whose consumption is unknown is charged its full reservation.
+  case (a known-safe upper bound on the complete request's input,
+  including document and image content and provider overhead, plus its
+  output cap, with the output cap lowered to what the budget leaves) and
+  refuses an attempt that cannot fit. An estimate is not a bound, even one
+  biased upward (`maestro-llms`' middleware estimator is explicitly
+  approximate): with 1,000 tokens left, an input estimated at 200 permits
+  800 output tokens, and an input that actually costs 400 overshoots the
+  budget before usage is reconciled. Where the bound comes from (a
+  provider's token-counting endpoint, a conservative bound valid for the
+  model's tokenizer, a provider's documented formula for images and
+  pages) is a design decision. When no adequate bound is available, a hard
+  budget fails closed and refuses the attempt. A host may instead
+  configure a budget as *estimated*: it is admitted on the estimate, is
+  labeled as estimated wherever it is reported, and may overshoot. After
+  the attempt, observed usage replaces the reservation. A failed attempt
+  whose consumption is unknown is charged its full reservation.
   Compaction and wrap-up calls are admitted the same way. Because
   `maestro-llms` retries inside the injected client, the injected-client
   contract must give the runtime a hook at each attempt (section 7).
@@ -503,7 +515,14 @@ The host implements these; the library calls them. (morris#568 item 8)
   activation at any durable boundary (after an effect commits but before
   its acknowledgement or the next checkpoint is recorded, for instance),
   continue the run in a new activation, and assert that no effect is
-  duplicated and no work is lost.
+  duplicated and no work is lost. This tests recovery and idempotency, not
+  fencing, because the stopped worker never returns.
+- **TEST-6 Must: stale-owner tests.** The harness can pause activation A
+  just before a durable commit, transfer the instance's ownership to
+  activation B, then resume A, and assert that A cannot commit an effect,
+  publish a checkpoint or append an authoritative execution record. This
+  exercises HOST-6 directly: it fails if ownership enforcement is
+  removed.
 - **TEST-2 Must: fakes for every seam**, usable by agent-type authors and
   hosts, built on `maestro-llms/testllm`.
 - **TEST-3 Should: record mode.** A live run can record its model exchange
@@ -686,9 +705,13 @@ store and the review UI:
    acknowledgement and checkpoint are recorded (TEST-5).
 4. Continue the run in a new activation and show the submission is not
    duplicated and no work is lost.
+5. Separately, pause activation A before the commit, transfer ownership to
+   activation B, resume A, and show that A can neither commit the
+   submission, publish a checkpoint nor append an authoritative execution
+   record (TEST-6). Steps 3 and 4 alone would pass with fencing removed.
 
 The slice proves the state machine, execution record, write contract,
-fencing and recovery while the upstream multimodal work proceeds. Visual
+recovery (steps 3 and 4) and fencing (step 5) while the upstream multimodal work proceeds. Visual
 extraction (the PDF sent to the model) and evidence highlighting then
 need their own acceptance evidence once their prerequisites land; passing
 the text-layer slice does not stand in for it. The file store, the
@@ -713,7 +736,7 @@ to agents stays here.
 | Image and document content | `maestro-llms`' `ContentPart` has only text, tool call, tool result and reasoning parts | LLM-2 |
 | Non-text tool results | `maestro-llms`' `toolloop.ToolResult.Content` is a string | TOOL-11 |
 | Forced wrap-up, a turn-boundary stop that still runs sibling calls, a pre-request hook that may fail | Not in `maestro-llms`' `toolloop`; Maestro's wishlist items 1 and 2 | LOOP-1, LOOP-3 |
-| Budget admission before each provider attempt, including retries, with per-attempt usage | Retries run inside the injected client; the existing attempt observer reports after the fact but cannot refuse an attempt. Whether the rate-limit middleware's per-attempt position can carry this, or a new hook is needed, is to be worked out with `maestro-llms` | BUD-3 |
+| Budget admission before each provider attempt, including retries, with per-attempt usage and a known-safe input bound | Retries run inside the injected client; the existing attempt observer reports after the fact but cannot refuse an attempt, and the existing estimator is approximate, not a bound. Whether the rate-limit middleware's per-attempt position can carry admission, or a new hook is needed, and where a safe bound comes from, are to be worked out with `maestro-llms` | BUD-3 |
 | An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 |
 | PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | Section 6 |
 
