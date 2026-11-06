@@ -1,0 +1,72 @@
+name: CodeQL
+
+# GitHub code scanning, driven by this workflow file (Advanced Setup) rather
+# than the UI-managed Default Setup, so every merge to main establishes a
+# fresh baseline and PR analyses always find one. If Default Setup is ever
+# enabled in the UI (Settings → Code security → Code scanning), disable it:
+# the two conflict.
+#
+# The weekly run catches new queries: GitHub updates the CodeQL bundle
+# independently of this repo, so a rule released between PRs could flag
+# dormant code only on the next scheduled run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Monday 06:00 UTC, ahead of scheduled-security.yml's 14:00 UTC.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  security-events: write   # SARIF upload
+  actions: read            # codeql-action prerequisite
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL analyze
+    runs-on: ubuntu-latest
+
+    # Fork PRs get a read-only GITHUB_TOKEN and cannot upload SARIF, and the
+    # analyze step uploads as part of its run, so fork PRs are skipped. Pushes
+    # to main, the weekly run and same-repo PRs all analyze.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # actions: the workflow files themselves (expression injection,
+        # permission misconfiguration). go: the module.
+        language: [actions, go]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # github/codeql-action/* is pinned to a commit SHA (the same pin
+      # Morris uses); Dependabot bumps it.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@52485aec7be33610227643b0fe83936b8b5f061a
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Autobuild
+        if: matrix.language == 'go'
+        uses: github/codeql-action/autobuild@52485aec7be33610227643b0fe83936b8b5f061a
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@52485aec7be33610227643b0fe83936b8b5f061a
+        with:
+          category: "/language:${{ matrix.language }}"

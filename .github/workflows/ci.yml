@@ -1,0 +1,74 @@
+name: Go CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least privilege: this workflow only reads the repo.
+permissions:
+  contents: read
+
+# Pinned tool versions. Bumping these is intentional and is part of the
+# "what version analyzed this code" audit trail. Keep in sync by hand with
+# the Makefile and, for GOVULNCHECK_VERSION, scheduled-security.yml (GitHub
+# Actions has no native cross-workflow env share).
+env:
+  GOLANGCI_VERSION: v1.64.8
+  GOVULNCHECK_VERSION: v1.1.4
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-lint-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # actions/* are first-party GitHub-owned, pinned by major tag. Linting
+      # and govulncheck are installed via `go install @<pinned version>`
+      # (immutable module versions, no third-party action) and compiled with
+      # this job's Go toolchain: a golangci-lint built with an older Go than
+      # go.mod targets refuses to run, which is why the prebuilt action
+      # binary is not used.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go tool binaries
+        id: cache-go-tools
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin
+          key: go-tools-${{ runner.os }}-golangci-${{ env.GOLANGCI_VERSION }}-vuln-${{ env.GOVULNCHECK_VERSION }}
+
+      - name: Install Go tools
+        if: steps.cache-go-tools.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@${{ env.GOLANGCI_VERSION }}
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: go.mod / go.sum are tidy
+        run: go mod tidy -diff
+
+      - name: Lint
+        run: make lint
+
+      - name: Build
+        run: make build
+
+      - name: Vulnerability check
+        run: make vuln
+
+      - name: Test
+        run: make test

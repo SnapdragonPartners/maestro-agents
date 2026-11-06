@@ -1,0 +1,27 @@
+# Build and test artifacts
+bin/
+coverage/
+*.test
+*.out
+
+# Go workspace (local multi-repo development against ../maestro-llms etc.)
+go.work
+go.work.sum
+
+# Local secrets
+.env
+.env.*
+*.env
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# .claude holds machine-local settings AND shared project skills. Its
+# contents are ignored rather than the directory, so skills/ can be
+# un-ignored: a skill is guidance for everyone working here, and one that
+# is not committed is no more shared than a private note.
+.claude/*
+!.claude/skills/

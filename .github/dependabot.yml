@@ -1,0 +1,33 @@
+# Dependabot version updates. maestro-llms owns the LLM provider SDK
+# versions; this repo inherits them transitively through maestro-llms and
+# does not bump them on its own.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      # First-party libraries get their own PRs: a bump can change behavior
+      # this module depends on and deserves its own review. Everything else
+      # is batched into one weekly PR.
+      go-deps:
+        patterns: ["*"]
+        exclude-patterns:
+          - "github.com/SnapdragonPartners/*"
+    ignore:
+      - dependency-name: "github.com/anthropics/anthropic-sdk-go"
+      - dependency-name: "github.com/openai/openai-go*"
+      - dependency-name: "google.golang.org/genai"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
