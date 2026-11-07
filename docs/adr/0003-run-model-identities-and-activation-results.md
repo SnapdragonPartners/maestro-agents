@@ -108,26 +108,31 @@ hold two sources of the same fact that can disagree.
     and the execution record's tail (ADR 0004) through the store, rather
     than taking them by value, so the input never duplicates or races
     durable state.
-13. **An `Outcome` is returned only when this activation committed it.**
-    The outcome is RUN-3's status and reason, with the step reached, the
-    checkpoint sequence, consumed budgets and artifact references. When
-    `Activate` returns a nil error, the outcome's status is what the
-    activation durably committed, in the same commit that released
-    ownership.
-14. **A non-nil error means the activation committed no outcome**, and the
-    `Outcome` is zero. The error is one of two kinds:
+13. **An `Outcome` is returned only when this activation's commit of it is
+    confirmed.** The outcome is RUN-3's status and reason, with the step
+    reached, the checkpoint sequence, consumed budgets and artifact
+    references. When `Activate` returns a nil error, the outcome's status
+    is what the activation durably committed, in the same commit that
+    released ownership.
+14. **A non-nil error means the activation has no confirmed outcome**, and
+    the `Outcome` is zero. The error is one of two kinds:
     - *ownership lost*: a commit was rejected because the epoch moved
       (HOST-6). The run's status is whatever its new owner commits
       (RUN-3, RUN-4).
-    - *store failure*: a durable write failed or could not be confirmed
-      (REC-2). The error wraps the cause.
+    - *store failure*: a durable write failed, or its result is
+      indeterminate (ADR 0005, item 3). The error wraps the cause.
 
-    In both cases the run is left exactly as of its last commit, which is
-    `runnable` or `waiting`, and that commit's checkpoint and record are
-    intact. The host retries it later; delivery is at least once (DEL-1),
-    and recovery (ADR 0004) continues from what was committed. After a
-    store failure the claim may still be held; the host releases it
-    through the store when it can, or lets the lease lapse.
+    An error does not say the activation committed nothing: an
+    indeterminate commit may have landed, including the activation's final
+    commit with a terminal status. So **before acting on an error, the host
+    rereads the run record**. If the run is terminal, it is finished and
+    the reread status is its outcome. If it is `runnable` or `waiting`, the
+    run stands at its last landed commit, whose checkpoint and record are
+    intact, and the host retries it later: delivery is at least once
+    (DEL-1), and recovery (ADR 0004) continues from what landed. A store
+    that cannot be read yet is reread later; nothing is assumed meanwhile.
+    After a store failure the claim may still be held; the host releases
+    it through the store when it can, or lets the lease lapse.
 15. **A store failure is not a run failure.** The run is not marked
     `failed`: the fault is in infrastructure, not in the run, and the
     store that would record `failed` is the one that is failing. A host
@@ -154,9 +159,10 @@ hold two sources of the same fact that can disagree.
 - Readiness after a crash depends on lease expiry: a run whose worker
   crashed is picked up one lease period later. Hosts choose the lease
   length; the standalone host avoids the wait at startup (ADR 0005).
-- Hosts handle two return shapes: an outcome (the run's committed status)
-  or an error (nothing committed by this activation, retry later). A host
-  must not record a run as failed because `Activate` returned an error.
+- Hosts handle two return shapes: an outcome (the run's confirmed status)
+  or an error (no confirmed outcome: reread the run record, then retry if
+  it is not terminal). A host must not record a run as failed because
+  `Activate` returned an error.
 - Code states are restricted to transitions and atomically committed
   object-store operations. An agent type that wants an external effect
   from a code state expresses it as a tool call instead.

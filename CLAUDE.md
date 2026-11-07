@@ -30,7 +30,8 @@ Load-bearing decisions so far:
   ([ADR 0002](docs/adr/0002-serial-execution-within-an-agent-instance.md))
 - A run has no stored `running` status: executing and ready are derived
   from the run's status and the instance's ownership lease; an activation
-  returns an outcome only when it committed one, and an error otherwise
+  returns an outcome only when its commit is confirmed, and otherwise an
+  error, after which the host rereads the run record before retrying
   ([ADR 0003](docs/adr/0003-run-model-identities-and-activation-results.md))
 - The execution record is a per-run write-ahead log; a checkpoint is its
   snapshot at each step boundary, and recovery replays at most one step

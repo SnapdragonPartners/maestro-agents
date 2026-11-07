@@ -43,18 +43,23 @@ records are stored and how a commit is made atomic and fenced is
    - `run_started`: the trigger, the resolved configuration, and the
      digests of the manifest, prompts, skills and tool definitions in
      force (REC-1, MAN-4);
-   - `admission`: a reservation made before a provider attempt (BUD-3);
-   - `turn`: one model response, with the messages added to the
-     transcript since the previous request (a delta, as buggrit stores
-     requests), the request parameters, the served model identity
+   - `model_attempt`: one provider attempt, recorded before it is sent:
+     the request (the messages added to the transcript since the previous
+     request, a delta as buggrit stores requests, and the request
+     parameters) and the attempt's budget reservation (BUD-3);
+   - `turn`: the attempt's response, with the served model identity
      (LLM-3) and the observed usage;
+   - `model_failure`: the attempt's observed error (its `maestro-llms`
+     error kind, status and message, and any usage reported), so a run
+     that ends with `model_error` replays too (REC-1, REC-4);
    - `permission`: a call's permission and the policy decision behind it
      (STM-6, TOOL-3);
    - `attempt`: a call's action identity, idempotency key and arguments
      digest, recorded immediately before it is sent (STM-6, ADR 0003);
    - `result`: a call's outcome: executed, with its result; not executed
-     because a transition ended the turn (STM-3); *unknown*; or known not
-     to have happened (TOOL-12);
+     because a transition ended the turn (STM-3); refused because it names
+     no tool offered to the state (MAN-2), with the result the model
+     received; *unknown*; or known not to have happened (TOOL-12);
    - `transition`: the state left and entered, with the new state data;
    - `outcome`: the status and reason an activation ended with (RUN-3).
 
@@ -82,13 +87,17 @@ records are stored and how a commit is made atomic and fenced is
 
 ### Write-ahead order within a step
 
-6. **Admission is recorded before each provider attempt.** A decorator
-   around the injected client commits an `admission` entry with the
-   attempt's reservation before sending it (BUD-3), and the `turn` entry
-   replaces the reservation with observed usage. An admission with no
-   `turn` after it is an attempt whose consumption is unknown, and is
-   charged its full reservation (BUD-3, BUD-4), so a crash can never
-   return budget to the run. Until `maestro-llms#149` provides a hook at
+6. **Each provider attempt is recorded before it is sent.** A decorator
+   around the injected client commits a `model_attempt` entry, with the
+   request and the attempt's reservation, before sending it (BUD-3).
+   After the attempt it commits exactly one of `turn` (a response) or
+   `model_failure` (an error), each with the observed usage replacing the
+   reservation; a failure whose consumption is unknown is charged its full
+   reservation (BUD-3, BUD-4). A `model_attempt` with neither after it is
+   an attempt interrupted by a crash or a store failure: its consumption is
+   unknown and it is charged its full reservation, so a crash can never
+   return budget to the run, and its request and the absence of an
+   observation are both on the record. Until `maestro-llms#149` provides a hook at
    each attempt, the MVP's client makes one attempt per call (MVP.md,
    BUD-1), so the decorator sees every attempt.
 7. **The model turn is recorded before any of its calls executes.** The
@@ -111,13 +120,28 @@ records are stored and how a commit is made atomic and fenced is
    at any step stops the call there and returns an error from `Execute`,
    which stops the loop; the activation then returns a store failure
    (ADR 0003).
+
+   **Results the loop synthesizes itself never reach a wrapper**, and are
+   recorded by the decorator. `toolloop` makes two kinds: the not-executed
+   results of siblings after a `Stop` (item 9), and the error result for a
+   call naming no registered tool (`dispatch`). For the second, the next
+   durable write after the turn's calls is the decorator's: before the
+   next provider attempt, or when the loop returns, it takes the
+   synthesized results from the transcript the loop now holds and commits
+   their `result` entries, and the turn's checkpoint if they complete it,
+   in the same commit as the next `model_attempt` (or on the loop's
+   return, before anything else is committed). So a turn that ends with
+   such a call reaches its step boundary before any later work, and the
+   recorded content is exactly what the model was sent.
 9. **A transition commits atomically.** The `result` of a call that causes
    a transition (STM-3), the not-executed `result` of every later sibling,
    the `transition` entry and the new state's checkpoint go in one commit.
    No recovery ever sees a transition without its siblings marked, or the
    reverse. The tool returns `ToolResult.Stop`, so `toolloop` ends the turn
    at that call and synthesizes matching not-executed results in the
-   transcript (`maestro-llms` ADR 0017).
+   transcript (`maestro-llms` ADR 0017); the loop then returns, and the
+   ended state's transcript, which is the only place that text appears, is
+   recorded from the loop's returned messages before the next state runs.
 
 ### Recovery
 
@@ -137,7 +161,10 @@ records are stored and how a commit is made atomic and fenced is
       (ADR 0005), and is issued again;
     - executed: its recorded result stands;
     - not executed, or with any permission but allowed or approved: not
-      issued.
+      issued;
+    - naming no tool offered to the state, with no result: refused, with
+      the runtime's own error result, recorded before the turn continues
+      (MAN-2).
 
     A write issued again keeps its action identity and idempotency key
     (TOOL-5). When every call is resolved, the step's checkpoint is
@@ -152,15 +179,19 @@ records are stored and how a commit is made atomic and fenced is
 12. **A code state is re-run from the checkpoint.** It has no durable
     effect of its own (ADR 0003), so a crash during it leaves nothing to
     resolve.
-13. **Admissions without a turn are charged on recovery** (item 6) before
-    any new attempt is admitted.
+13. **Interrupted attempts are charged on recovery**: a `model_attempt`
+    with no `turn` or `model_failure` after it is charged its full
+    reservation (item 6) before any new attempt is admitted.
 
 ### Replay
 
 14. **Replay uses the same seams.** The replay harness (TEST-1) runs the
-    agent type with a client that returns the recorded responses, a policy
-    hook that returns the recorded permissions, and tool wrappers that
-    return the recorded results without executing anything (REC-4). A
+    agent type with a client that returns the recorded responses and
+    provider errors, a policy hook that returns the recorded permissions,
+    and tool wrappers that return the recorded results without executing
+    anything (REC-4). Each activation is replayed from the checkpoint and
+    tail it started from, so a recovery's own decisions (item 10) are
+    replayed as recorded. A
     request that differs from the recorded one, or a call the record does
     not hold, is a replay divergence and stops the replay with an error
     that names the entry.
@@ -177,7 +208,8 @@ records are stored and how a commit is made atomic and fenced is
   recovery a bounded, single-order procedure: apply at most one step of
   entries, then resolve calls by a fixed table.
 - Each tool call costs three commits (permission, attempt, result) and
-  each provider attempt two (admission, turn). Model turns take seconds to
+  each provider attempt two (`model_attempt`, then `turn` or
+  `model_failure`). Model turns take seconds to
   minutes, so commit latency is not material; a host whose store makes it
   so may batch, provided the order above is kept.
 - `toolloop` needs no change: the decorator and the wrappers carry the

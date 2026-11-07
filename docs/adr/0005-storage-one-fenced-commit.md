@@ -57,6 +57,18 @@ at each point of a step. This ADR settles how those writes reach a store.
    A failed precondition rejects the whole commit with a conflict error
    naming the operation. New kinds of record add operations; they do not
    add write paths.
+
+   **A commit's result is one of three, and only the first two are
+   definite.** A nil error means the commit landed. An ownership or
+   conflict error means it did not, and nothing was applied. Any other
+   error is *indeterminate*: the commit may have landed (a database
+   commit whose acknowledgement was lost, a file-store commit that passed
+   its commit point and then failed, item 14). Every caller treats an
+   indeterminate commit as possibly landed: it stops, and whoever acts
+   next learns what happened by reading durable state, never by assuming
+   either answer. The write-ahead order is safe under both answers: an
+   expected-sequence append cannot land twice, and recovery decides each
+   recorded call from what the record actually holds (ADR 0004, item 10).
 4. **Writes outside an activation are the control plane's own**, each a
    single compare-and-set with no fence: claiming and heartbeats
    (ADR 0003), enqueueing a trigger (idempotent on its identity), creating
@@ -128,14 +140,30 @@ at each point of a step. This ADR settles how those writes reach a store.
     4. writes one journal file holding every operation's final contents,
        by the atomic write above (**the commit point**);
     5. applies each operation by the atomic write above;
-    6. deletes the journal and releases the mutex.
+    6. deletes the journal and syncs the journal's directory, so its
+       removal is durable;
+    7. releases the mutex.
 
     A commit of one file skips the journal; its rename is the commit point.
-    Because the journal holds final contents, not changes, applying it
-    again is harmless.
+
+    **No later write may land while a journal is live.** A journal holds
+    final contents, so replaying it is harmless only if nothing has
+    written its files since. Two rules guarantee that. First, the mutex is
+    released only after step 6, so no other commit or claim runs while a
+    journal exists. Second, any failure from the journal's rename onwards
+    (its directory sync, step 5 or step 6) *poisons* the store: the commit
+    returns an indeterminate error (item 3), and the store refuses every
+    later operation, reads included, with an error saying it must be
+    reopened. Reopening (item 15) finishes the journal before serving
+    anything. A failure before the journal's rename is definite: nothing
+    was applied, and the store stays usable. A one-file commit follows the
+    same rule: a failure after its rename (the directory sync) poisons the
+    store, since the commit may or may not survive a power loss.
 15. **Opening the store finishes interrupted commits.** After taking the
-    lock, the store applies every journal it finds, in order, and deletes
-    it. A journal is complete or absent, since it is written by rename.
+    lock, and before serving any operation, the store applies every journal
+    it finds, in order, deletes each and syncs the directory. A journal is
+    complete or absent, since it is written by rename. If this fails, the
+    open fails.
 16. **Leases live in memory; owners and epochs on disk.** Only the one
     process reads its leases, so the store keeps lease expiry in memory and
     writes no file per heartbeat. The ownership file holds the owner and
