@@ -17,8 +17,15 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
   library
 
 Current state: **bootstrap**. The repository has its tooling, workflow and
-an empty root package; no API is defined yet. The design arrives in later
+an empty root package; no API is defined yet. The requirements are in
+[docs/requirements.md](docs/requirements.md); the design arrives in later
 PRs, each with its ADR.
+
+Load-bearing decisions so far:
+
+- An agent instance executes serially, with one execution owner; parallelism
+  comes from separate instances, and later from subagents
+  ([ADR 0002](docs/adr/0002-serial-execution-within-an-agent-instance.md))
 
 ### Related repositories
 
@@ -87,6 +94,7 @@ them and does not pin or bump them independently.
 doc.go               # Root package `agents`: package documentation
 cmd/<agent>/         # (planned) Standalone agent executables
 internal/            # (planned) Code private to this module
+docs/requirements.md # Library requirements (input to the design ADRs)
 docs/adr/            # Architecture Decision Records
 hooks/               # Git hooks (installed by `make install-hooks`)
 .github/             # CI, CodeQL, buggrit, Dependabot

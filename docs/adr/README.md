@@ -36,3 +36,4 @@ template.
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
+| [0002](0002-serial-execution-within-an-agent-instance.md) | Serial execution within an agent instance | Accepted |
