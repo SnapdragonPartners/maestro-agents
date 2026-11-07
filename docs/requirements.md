@@ -38,8 +38,11 @@ prompts its model-driven states use. Three more terms, and only three:
   resolved configuration and action identities for its whole life, however
   many workers it passes through.
 - An *activation* is one worker's stretch of a run: from acquiring
-  ownership to stopping at a step boundary (including a stop to wait for
-  input, STM-8), or losing ownership. A run may
+  ownership to releasing it, at a step boundary (including a stop to wait
+  for input, STM-8), with a terminal outcome, on cancellation or failure
+  mid-step (RUN-2, RUN-3, HOST-7), or on losing ownership. Only a step
+  boundary guarantees a new checkpoint; an activation that ends mid-step
+  leaves the run at its last one. A run may
   take one activation (a daemon) or many (a serverless host).
 
 The library supplies the runtime around the agent type's logic: the state
@@ -187,7 +190,7 @@ Known consumers:
   | Not terminal | `runnable` | more work is ready now; the activation stopped at a boundary (the host's step limit, or a shutdown while working) | none: an incarnation ending without a result |
   | Not terminal | `waiting` | the input the run needs to continue (STM-8): approval of pending actions in *suspend and resume* mode (TOOL-4), or other external input mid-run; never "the next trigger", which starts a new run | blocked |
   | Terminal | `succeeded` | `changed` or `no_change`; a *propose and finish* run (TOOL-4) succeeds with its pending actions in its output | completed, with disposition changed or already_satisfied |
-  | Terminal | `failed` | `budget_exhausted` (naming the budget), `budget_unenforceable` (a hard budget configured where it cannot be enforced, BUD-3 and BUD-4: a configuration error, so retrying as-is cannot help), `model_error`, `tool_error`, `invalid_output` or `wrap_up_failed` (LOOP-3); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
+  | Terminal | `failed` | `budget_exhausted` (naming the budget), `budget_unenforceable` (a budget that cannot be enforced or computed: a hard budget with no known-safe input bound, BUD-3, or any budget, estimated included, for which no amount can be computed, BUD-4; a configuration error, so retrying as-is cannot help), `model_error`, `tool_error`, `invalid_output` or `wrap_up_failed` (LOOP-3); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
   | Terminal | `cancelled` | the cause the host supplied: superseded or operator | cancelled, with cancel reason |
 
   A shutdown preserves the disposition: a worker shutting down while the
@@ -426,15 +429,18 @@ Known consumers:
   (a daemon, or a host blocking inside the policy hook, TOOL-4). A separate optional *deadline* bounds elapsed calendar time
   across waits. Active time keeps a reserve for wrap-up, and the model is
   shown the clock (buggrit design §9: slow reasoning models spent whole
-  budgets on single turns). Both are enforced as deadlines, not by
-  admission: each activation runs under a context deadline set from the
-  remaining active time or the deadline, whichever comes first, so a slow
-  model call, tool call or limiter wait is cut off rather than overshooting
-  (tool calls receive that context); the active-time part of that
-  deadline is paused during an in-process wait for input. The elapsed-time
-  deadline keeps running through every wait: during an in-process wait the
-  worker fails the run with `budget_exhausted` naming the deadline when it
-  passes; a run that is `waiting` between activations has no worker, so
+  budgets on single turns). Both are enforced by cancelling the
+  activation's context, not by admission, through two separate
+  mechanisms, so a slow model call, tool call or limiter wait is cut off
+  rather than overshooting (tool calls receive that context):
+  - the elapsed-time deadline is a fixed context deadline, which keeps
+    running through every wait;
+  - active time is a timer the runtime pauses on entering an in-process
+    wait for input and re-arms with the remaining active time on leaving
+    it.
+
+  When the elapsed-time deadline passes during an in-process wait, the
+  worker fails the run with `budget_exhausted` naming the deadline; a run that is `waiting` between activations has no worker, so
   the host does the same; and an activation that starts after the
   deadline fails the run before doing any work.
 - **BUD-3 Must: hard budgets are enforced by admission before each
@@ -592,8 +598,11 @@ object store rather than in tables of its own.
   *Execution records* (REC). *Telemetry events*: run, sequence, kind,
   payload. *Artifacts*: content-addressed blobs with metadata. *Queued
   triggers*: per instance, in arrival order, for triggers that arrive while
-  a run is in flight (MODE-4); each is removed only when its run's record
-  is created, so a restart neither loses nor duplicates it.
+  a run is in flight (MODE-4). Its run record is created conditionally on
+  the queued trigger's identity (compare-and-set, as in STORE-2), so a
+  retried creation finds the existing run instead of making a second one,
+  and the trigger is removed only once that record exists; a restart
+  neither loses it nor gives it a second run.
 - **STORE-2 Must: an object store per namespace.** Keys map to JSON or
   bytes, in a namespace the host assigns. Instances of the same configured
   agent may share a namespace (several documents processed at once are
@@ -647,12 +656,14 @@ pluggable stores hold inputs, state and output.
   command-line and CI use) and long-running (wait for triggers such as a
   schedule or a new file in a folder, idle between them, and start a new
   run on each, per STM-7 and STM-8). A trigger that arrives while the
-  instance has a run in flight is never dropped: the host either queues it
-  for that instance, starting its run when the instance is idle, or starts
-  it on a new instance (STM-9). The standalone host queues by default; a
-  queued trigger is held in the queued-trigger record (STORE-1), so it
-  survives a restart with the file and Postgres stores but not with the
-  in-memory one (STORE-4).
+  instance has a run in flight is never dropped while the process lives:
+  the host either queues it for that instance, starting its run when the
+  instance is idle, or starts it on a new instance (STM-9). With a durable
+  store (file or Postgres) the standalone host queues by default, in the
+  queued-trigger record (STORE-1), so the trigger also survives a restart.
+  With the in-memory store (STORE-4) a queued trigger is lost on restart;
+  that store is for daemons whose state need not outlive the process, and
+  choosing it accepts that loss.
 - **MODE-5 Must: credentials stay outside agent code.** The standalone
   host implements the credential provider from environment variables or a
   secrets file. Only the host reads them; agent types and tools still go
