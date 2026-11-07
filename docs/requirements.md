@@ -18,11 +18,11 @@ requirements are **inputs, not constraints**: where this document departs
 from one, it says so and why (marked **Departs from**).
 
 **Conventions.** Requirements are numbered by area (`RUN-3`). **Must** is
-required for the first complete release, and
-[MVP.md](MVP.md) says which Musts the MVP (section 6) builds and which
-follow it; **Should** is expected
-but may follow; **Plan for** means the first release need not implement
-it, but its design must not rule it out. Every behavior has a default, so
+required for the *first complete release*, the release that implements
+every Must; [MVP.md](MVP.md) says which Musts the MVP (section 6) builds
+and which follow it. **Should** is expected but may follow; **Plan for**
+means the first complete release need not implement it, but its design
+must not rule it out. Every behavior has a default, so
 an agent type configures only what it changes.
 
 ## 1. Purpose and consumers
@@ -896,9 +896,10 @@ gate LLM-2, TOOL-11, BUD-3 and the review UI's evidence highlighting.
 and the review UI. The slice uses the file store (STORE-4): a crash test
 needs a durable store, and the file store needs no database:
 
-1. Read one representative statement through its text layer, which
-   `maestro-cms`' existing `pdftotext` engine already provides (the
-   grounding check needs the page text, not word positions).
+1. Read one representative statement through its text layer in
+   `pdftotext`'s layout mode, which keeps each label on the same line as
+   its numbers (the verification checks need that pairing, not word
+   positions); `maestro-cms` adds the option (maestro-cms#25).
 2. Extract a record, verify it in code, and commit the submission durably.
 3. Interrupt the activation after the commit but before its
    acknowledgement and checkpoint are recorded (TEST-5).

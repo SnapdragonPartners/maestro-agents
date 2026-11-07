@@ -96,7 +96,7 @@ doc.go               # Root package `agents`: package documentation
 cmd/<agent>/         # (planned) Standalone agent executables
 internal/            # (planned) Code private to this module
 docs/requirements.md # Library requirements (input to the design ADRs)
-docs/MVP.md          # MVP scope: what is built now, what is deferred
+docs/MVP.md          # MVP scope: what the MVP builds, what is deferred
 docs/adr/            # Architecture Decision Records
 hooks/               # Git hooks (installed by `make install-hooks`)
 .github/             # CI, CodeQL, buggrit, Dependabot

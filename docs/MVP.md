@@ -32,12 +32,19 @@ Every requirement falls in one of three classes:
 - **Deferred.** No code in the MVP. The design must not rule it out, and
   each design ADR says how it leaves room.
 
+A Build or Contract row may name a part of its requirement that is
+deferred; every such part is listed in *After the MVP*, so nothing falls
+out of the plan.
+
 **No disposable code.** The MVP never contains code that simulates a
-deferred capability (a fake approval flow, a stand-in Postgres, a mock
-fencing test) only to be thrown away. A simpler real mechanism that fully
-meets a requirement in the MVP's setting is not a simulation: the file
-store's exclusive process lock really does guarantee one owner per
-instance (HOST-6) while one process uses the store.
+deferred capability (a fake approval flow, a stand-in Postgres) only to be
+thrown away. A simpler real mechanism that fully meets a requirement in
+the MVP's setting is not a simulation: the file store's exclusive process
+lock keeps every other process out of the store, and within the process
+the per-instance owner epoch, checked with every durable write and
+serialized with that write, enforces one owner per instance (HOST-6).
+Tests of shipped code, such as TEST-6 against the file store, are
+permanent, never disposable.
 
 **Upstream work is assumed.** `maestro-llms`
 [#147](https://github.com/SnapdragonPartners/maestro-llms/issues/147),
@@ -60,8 +67,10 @@ wait:
   that one process.
 - **No ownership transfer while an activation is live.** The host gives
   an instance to a new activation only after the previous one has
-  returned, so a stale owner cannot exist. This is what defers TEST-6, not
-  HOST-6: every durable write still carries and checks the owner epoch.
+  returned, so in normal operation a stale owner does not arise. HOST-6 is
+  still built (every durable write carries and checks the owner epoch) and
+  TEST-6 still tests it: the harness performs the transfer itself, through
+  the file store's pause hook.
 - **No waits for input.** The intake agent's approval is an action in its
   review UI on the stored record, after the run has succeeded. The agent's
   tools never produce a pending action, so the policy hook's `pending`
@@ -120,7 +129,7 @@ wait:
 
 | ID | Class | MVP |
 |---|---|---|
-| BUD-1 | Build | Tokens, turns, active time and the deadline, hard and estimated. Cost budgets are deferred (**contract:** the pricing-function interface) |
+| BUD-1 | Build | Tokens, turns, active time and the deadline, hard and estimated. Until `maestro-llms#149` lands, the intake agent's client is built without `maestro-llms`' retry middleware, so each model call is a single provider attempt, admitted on its estimate before it is sent; a failed attempt fails the call. Cost budgets are deferred (**contract:** the pricing-function interface) |
 | BUD-2 | Build | Both clocks and the visible clock. The active-time pause is not needed while there are no in-process waits |
 | BUD-3 | Build | Once `maestro-llms#149` lands; until then the intake configuration uses estimated budgets |
 | BUD-4 | Build | |
@@ -131,13 +140,13 @@ wait:
 |---|---|---|
 | HOST-1, 2, 3, 5 | Build | |
 | HOST-4 | Build | Cancellation, lease and heartbeat as a single-process host provides them. Delivery of input to a `waiting` run is deferred with STM-8 |
-| HOST-6 | Build | Owner epoch checked with every durable write; the file store serializes check and write under its lock |
+| HOST-6 | Build | Owner epoch checked with every durable write; the file store serializes check and write under its lock; tested by TEST-6 |
 | HOST-7 | Build | |
 | DEL-1 | Build | |
 | DEL-2 | Deferred | Telemetry delivery guarantees by kind |
 | REC-1 to 4 | Build | |
 | TEST-1, 2, 3, 4, 5 | Build | TEST-5 against the file store |
-| TEST-6 | Deferred | Until a store allows transfer between live workers (Postgres, or a file store shared by processes); runs against each such store then |
+| TEST-6 | Build | Both pause points against the file store, through its test-only pause hook. Against the Postgres store when that store is built |
 
 ### Storage and run modes
 
@@ -176,10 +185,11 @@ encryption is decided in the storage design.
    in the file store (which the atomic-local-transaction write contract
    needs), and how an activation reports a failure of the execution-record
    store.
-2. **The vertical slice**, steps 1 to 4 of the requirements' delivery plan
-   (section 6), on the file store and the text layer: extract, verify,
-   commit, crash, continue, no duplicate. Step 5 (TEST-6) is deferred as
-   above.
+2. **The vertical slice**, steps 1 to 5 of the requirements' delivery plan
+   (section 6), on the file store and the PDF's text layer (`pdftotext
+   -layout`, which keeps each label beside its numbers): extract, verify,
+   commit, crash, continue, no duplicate (steps 1 to 4), then both TEST-6
+   interleavings (step 5).
 3. **The verifier and exporter**, with no model (the intake requirements'
    build step 1), alongside the slice: the seven checks, CSV and manifest,
    hand-written records for the five samples and the mutation suite.
@@ -192,6 +202,26 @@ encryption is decided in the storage design.
 
 ## After the MVP
 
-In no fixed order: the Postgres store with STORE-5 and TEST-6; approval
-(STM-8, TOOL-4, HOST-4's input delivery); MCP tools; host chat loops;
-summarization; cost budgets; subagents; the wire protocol.
+Every part deferred above, in no fixed order:
+
+- the Postgres store, with STORE-5, the Postgres token bucket (LLM-4), the
+  shared limiter's degradation (MODE-7) and TEST-6 against it;
+- approval: STM-8, TOOL-4's two modes, HOST-4's input delivery, and the
+  `waiting` status in use (RUN-1, RUN-3);
+- resolving an *unknown* write outcome by probe or person (STM-6,
+  TOOL-12);
+- extending a budget-exhausted run (RUN-3);
+- cost budgets (BUD-1) and the active-time pause for in-process waits
+  (BUD-2);
+- MCP tools (TOOL-6), including exposing the intake agent's tools over
+  MCP;
+- host chat loops (LOOP-4), with chat exposure (TOOL-1) and the chat
+  completion policy (LOOP-3);
+- per-tool circuit breaking (TOOL-7);
+- Maestro's fuller effect classification (TOOL-2);
+- skill sources other than compiled-in (SKL-3);
+- summarization (LOOP-5);
+- telemetry delivery guarantees by kind (DEL-2);
+- schedule triggers (MODE-4);
+- subagents (STM-10);
+- the wire protocol (MODE-8 to 11).
