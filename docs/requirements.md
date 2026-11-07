@@ -133,21 +133,35 @@ Known consumers:
   progress) can be checkpointed and later restored, so a run can continue
   from its last boundary in a new activation, in another process. A model
   turn is recorded in the execution record (REC-1), including the tool
-  calls it requested, before any of those calls execute. For each call,
-  in this order: the policy decision (TOOL-3) is obtained and durably
-  recorded (REC-2); only for a call the policy allows (or, for a pending action,
-  once its approval is accepted, STM-8) is its attempt (action identity
-  and the fact that it is being attempted) then durably recorded,
-  immediately before the call is sent (REC-2). A denied, invalidated or
-  pending call never carries an attempt marker. So the record can always
-  tell *not yet attempted* from *attempted*; a call with no recorded
-  attempt has not been sent. An activation that continues after
+  calls it requested, before any of those calls execute.
+
+  A call's *permission* is recorded separately from whether it was sent,
+  and takes exactly one of these values, each with one name used
+  everywhere:
+  - *allowed*: the policy hook answered `allow`;
+  - *denied*: the hook answered `deny`;
+  - *awaiting approval*: the hook answered `pending` in *suspend and
+    resume* mode (TOOL-4), and no decision has been accepted yet;
+  - *approved*: an approval decision was accepted for it (STM-8) and its
+    digest still matches (TOOL-4);
+  - *rejected*: a rejection was accepted for it;
+  - *invalidated*: an approval was accepted but the digest no longer
+    matches (TOOL-4);
+  - *proposed*: the hook answered `pending` in *propose and finish* mode;
+    the agent never executes it (TOOL-4).
+
+  Only an *allowed* or *approved* call may be sent. For each call, in this
+  order: its permission is durably recorded (REC-2); then, only if it is
+  allowed or approved, its attempt (action identity and the fact that it
+  is being attempted) is durably recorded immediately before the call is
+  sent (REC-2). A call with any other permission never carries an attempt
+  marker. So the attempt marker says whether a call was sent, the
+  permission says whether it may be, and a call with no recorded attempt
+  has not been sent. An activation that continues after
   that point does not ask the model to repeat the turn, and the execution
   record decides what happens to each recorded call:
-  - *Not yet attempted, and not denied, invalidated or awaiting approval*:
-    issued, after the policy decision is obtained if none is recorded. The
-    attempt marker says whether a call was sent; the recorded policy
-    decision says whether it may be.
+  - *Not yet attempted, and allowed or approved*: issued. A call with no
+    recorded permission first gets one from the policy hook.
   - *Read call attempted, with no recorded result* (including one
     interrupted mid-flight, RUN-2): issued again. A read has no effect
     to duplicate (TOOL-2).
@@ -160,9 +174,11 @@ Known consumers:
     write resolved from *unknown*, the result recorded is the one the
     resolution produced (what the probe or person established), so the
     model always receives a result for every call.
-  - *Not executed because a transition ended the turn* (STM-3), or
-    *denied, invalidated or pending approval* (TOOL-3, TOOL-4): never
-    issued again; each is handled by its own requirement.
+  - *Not executed because a transition ended the turn* (STM-3), or with
+    permission *denied*, *awaiting approval*, *rejected*, *invalidated*
+    or *proposed* (TOOL-3, TOOL-4): not issued; each is handled by its own
+    requirement (an awaiting call may become approved when its decision
+    is accepted, STM-8).
 
   A write issued again keeps its original action identity and idempotency
   key (TOOL-5); reads carry no idempotency key.
@@ -186,7 +202,8 @@ Known consumers:
     daemon waits in-process or a serverless host ends the activation and
     later starts another activation of the same run:
     1. *Enter.* Before waiting, the runtime durably commits, with the
-       wait's step boundary (STM-6, REC-2), the run's `waiting` status and
+       wait's step boundary (STM-6, REC-2), any pending action the wait is
+       for (its call and TOOL-4 digest), the run's `waiting` status and
        a reason naming the input it awaits. The reason lives in the run
        record the host reads (RUN-3, STORE-1), not in the checkpoint's
        opaque contents (RUN-5).
@@ -632,8 +649,9 @@ The host implements these; the library calls them. (morris#568 item 8)
   other input the runtime cannot reproduce. Content identities point at
   content that is retained and retrievable, not just at hashes.
 - **REC-2 Must: write-ahead.** A required step boundary, each tool call's
-  policy decision, and each tool call's attempt (STM-6) are durably
-  recorded before any effect that depends on them. If recording fails, dependent effects do not proceed. (buggrit's telemetry writer deliberately drops
+  permission (STM-6), each pending action with its TOOL-4 digest, and each
+  tool call's attempt (STM-6) are durably recorded before any effect or
+  wait that depends on them. If recording fails, dependent effects do not proceed. (buggrit's telemetry writer deliberately drops
   events under failure; that delivery behavior is acceptable for
   telemetry and never for this record.)
 - **REC-3 Must: protected, not redacted.** Telemetry redaction (HOST-2)
