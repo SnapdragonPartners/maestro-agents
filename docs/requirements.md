@@ -298,7 +298,9 @@ Known consumers:
 
   A host that can get a decision quickly (a chat user) may simply block
   inside the hook and return `allow` or `deny`; the library needs nothing
-  more for that. **Departs from** morris#568 item 6, which gives write tools
+  more for that, but the time spent blocked counts as active time (BUD-2).
+  A host that wants the wait excluded returns `pending` instead, and the
+  runtime waits for the decision through the control plane (HOST-4). **Departs from** morris#568 item 6, which gives write tools
   their own propose mode: approval is a policy outcome here, so no tool
   implements it.
 - **TOOL-5 Must: idempotency keys.** Every write call carries an
@@ -410,7 +412,8 @@ Known consumers:
   - *Hard* (the default): enforced so consumption never exceeds the
     budget. Token and cost budgets are enforced by admission before each
     provider attempt (BUD-3); the turn budget by counting turns before each
-    one; the time budgets by deadlines (BUD-2). A configured hard budget
+    one; the time budgets by cancelling the activation's context (BUD-2).
+    A configured hard budget
     that is not enforced is a defect (buggrit's `MaxTokensPerPass` is the
     counterexample).
   - *Estimated*: the single exception, chosen explicitly by the host for
@@ -421,12 +424,18 @@ Known consumers:
   Exhausting either kind fails the run with `budget_exhausted` (RUN-3),
   naming the budget: a token, cost or turn budget when the next attempt or
   turn cannot be admitted, an estimated budget when observed consumption
-  reaches it, a time budget when its deadline passes (BUD-2).
+  reaches it, active time when its counted time runs out, the elapsed
+  deadline when it passes (BUD-2).
 - **BUD-2 Must: two clocks.** *Active time*, the default time budget,
   counts while a worker is executing the run, including model calls, tool
   execution and limiter waits. It excludes every wait for external input
-  (STM-8), whether the activation ends (serverless) or is held in-process
-  (a daemon, or a host blocking inside the policy hook, TOOL-4). A separate optional *deadline* bounds elapsed calendar time
+  that the runtime itself performs (STM-8), whether the activation ends
+  (serverless) or waits in-process for the host to deliver the input
+  (a daemon, HOST-4). A wait held inside host code the runtime merely
+  calls (a host blocking inside the policy hook, TOOL-4, or in a tool or
+  credential provider) is invisible to the runtime and counts as active
+  time; such code receives the activation's context, so both clocks still
+  cut it off. A separate optional *deadline* bounds elapsed calendar time
   across waits. Active time keeps a reserve for wrap-up, and the model is
   shown the clock (buggrit design §9: slow reasoning models spent whole
   budgets on single turns). Both are enforced by cancelling the
@@ -499,8 +508,11 @@ The host implements these; the library calls them. (morris#568 item 8)
   run records, execution records, instance ownership, queued triggers,
   and an object store per namespace the host assigns, which several
   instances may share (STORE-2).
-- **HOST-4 Must: control plane** for lease, heartbeat and cancellation.
-  Liveness comes from heartbeats, not from output silence.
+- **HOST-4 Must: control plane** for lease, heartbeat, cancellation, and
+  delivering the input a `waiting` run needs (an approval decision, other
+  external input), either to an activation waiting in-process or as the
+  input of the next activation (STM-8). Liveness comes from heartbeats,
+  not from output silence.
 - **HOST-5 Must: credential provider** (TOOL-8) and **policy hook**
   (TOOL-3), both keyed by the opaque run context.
 - **HOST-6 Must: ownership is enforced at the durable commit.** A
