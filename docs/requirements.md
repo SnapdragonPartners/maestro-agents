@@ -160,8 +160,10 @@ Known consumers:
   has not been sent. An activation that continues after
   that point does not ask the model to repeat the turn, and the execution
   record decides what happens to each recorded call:
-  - *Not yet attempted, and allowed or approved*: issued. A call with no
-    recorded permission first gets one from the policy hook.
+  - *Not yet attempted, not marked not executed by a transition (STM-3),
+    and allowed or approved*: issued. A call with no recorded permission
+    first gets one from the policy hook. The cases form a partition; the
+    transition marker takes precedence over every other state.
   - *Read call attempted, with no recorded result* (including one
     interrupted mid-flight, RUN-2): issued again. A read has no effect
     to duplicate (TOOL-2).
@@ -376,10 +378,12 @@ Known consumers:
     key, only if the digest still matches, and returns the result to the
     model. The digest is recomputed on resume from the recorded call and
     the agent type and tool now in force. If it no longer matches (the
-    agent type or the tool changed while the run waited), the pending action is invalidated and
-    recorded as such, never executed, and the model receives a denial as
-    data, as for any policy denial (TOOL-3), so the run continues rather
-    than stalling.
+    agent type or the tool changed while the run waited), the pending
+    action is invalidated and recorded as such, never executed, and the
+    model receives a denial as data, as for any policy denial (TOOL-3), so
+    the run continues rather than stalling. An accepted rejection is
+    handled the same way: the call is recorded as rejected, never
+    executed, and the model receives a denial as data.
 
   A host that can get a decision quickly (a chat user) may simply block
   inside the hook and return `allow` or `deny`; the library needs nothing
@@ -643,7 +647,8 @@ The host implements these; the library calls them. (morris#568 item 8)
   needed to recover and to explain the run: the trigger, the resolved
   configuration, the content of the manifest, prompts, skills and tool
   definitions in force, every model request and response, every tool call
-  and result, each call's attempt marker (STM-6, REC-2), policy decisions,
+  and result, each call's permission and attempt marker (STM-6, REC-2),
+  policy decisions,
   pending actions and approvals, action identities with their
   outcomes (including *unknown*, TOOL-12), budget consumption, and any
   other input the runtime cannot reproduce. Content identities point at
