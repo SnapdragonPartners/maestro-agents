@@ -106,7 +106,15 @@ Known consumers:
 - **STM-3 Must: tools can cause transitions.** A tool's result can carry a
   transition, with data, for the state machine to apply (Maestro v1's
   `ProcessEffect` is the precedent). What ends a model state is entering a
-  new state, not the call of a particular tool.
+  new state, not the call of a particular tool. A call that causes a
+  transition ends its turn at that call, with return-statement semantics
+  (`maestro-llms` ADR 0017, `ToolResult.Stop`): earlier sibling calls have
+  run; later ones are not executed, because they belonged to the state
+  that has just ended, and each is recorded with a "not executed" result
+  so the transcript stays well formed. The execution record marks them not
+  executed, so an activation continuing from that turn never runs them
+  (STM-6). **Departs from** Maestro's wishlist item 1, which asks for a
+  stop that still runs later siblings.
 - **STM-4 Must: terminal states.** Each state is terminal or not. A run
   that enters a terminal state ends with that state's result (RUN-3). The
   agent type decides what makes a state terminal; for example, the intake
@@ -874,9 +882,10 @@ to agents stays here.
 | PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | Section 6 | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
 
 **Not upstream work.** Three loop needs that an earlier draft listed here
-are met without changes to `maestro-llms`: a turn-boundary stop that
-still runs sibling calls exists (`ToolResult.Stop`, `maestro-llms` ADR
-0017); forced wrap-up (LOOP-3) is built here, as buggrit does, by running
+are met without changes to `maestro-llms`: ending a turn at a
+transition-causing call uses the existing `ToolResult.Stop`
+(`maestro-llms` ADR 0017), whose return-statement semantics STM-3 adopts
+(later siblings are not executed); forced wrap-up (LOOP-3) is built here, as buggrit does, by running
 the loop again with the exit tools forced; and recording a model turn
 before its tool calls execute (STM-6, REC-2) needs no pre-request hook,
 because a fallible decorator around the injected client records each
