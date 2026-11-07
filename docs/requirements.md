@@ -138,21 +138,31 @@ Known consumers:
 - **STM-8 Must: two kinds of wait.**
   - *A run waiting for input it needs to continue* (an approval in
     *suspend and resume* mode, or other external input mid-run) has the
-    status `waiting` (RUN-3). The input it waits for is named in the
-    run's status reason, which the host can read (RUN-3, STORE-1), not in
-    the checkpoint's opaque contents (RUN-5). The wait is checkpointed as a
-    step boundary that does not complete the step (STM-6), and the next
-    activation continues from it. Waiting is a status, not a state
-    transition: the run stays
-    in the state it was in, a model state in progress keeps its transcript
-    (STM-6), and the step is unchanged, so the resumed action keeps its
-    original action identity and idempotency key (TOOL-4, TOOL-5). Before
-    waiting, in-process or not, the runtime durably commits the run's
-    `waiting` status and reason with the wait's step boundary (REC-2), so
-    the record the host reads is the same either way and survives a
-    restart. A daemon then waits in-process; a serverless host ends the
-    activation and starts another activation of the same run when the input
-    arrives.
+    status `waiting` (RUN-3). Waiting is a status, not a state transition:
+    the run stays in the state it was in, a model state in progress keeps
+    its transcript (STM-6), and the step is unchanged, so the resumed
+    action keeps its original action identity and idempotency key (TOOL-4,
+    TOOL-5). This is the one definition of the wait's lifecycle; RUN-1,
+    TOOL-4 and HOST-4 refer to it. The lifecycle is the same whether a
+    daemon waits in-process or a serverless host ends the activation and
+    later starts another activation of the same run:
+    1. *Enter.* Before waiting, the runtime durably commits, with the
+       wait's step boundary (STM-6, REC-2), the run's `waiting` status and
+       a reason naming the input it awaits. The reason lives in the run
+       record the host reads (RUN-3, STORE-1), not in the checkpoint's
+       opaque contents (RUN-5).
+    2. *Deliver.* The host delivers the input through the control plane
+       (HOST-4), to the activation waiting in-process or as an input of
+       the next activation (RUN-1). Every delivery, on either path,
+       carries the input's identity.
+    3. *Accept, once.* The runtime accepts an input only if the run is
+       `waiting` for it. It durably records the accepted input with its
+       identity and moves the run's status out of `waiting` (to
+       `runnable`) in one commit, before acting on the input. A delivery
+       whose identity was already accepted, or that arrives when the run
+       is not waiting for it, is acknowledged and not applied again.
+    4. *Continue.* The run continues from the wait's step boundary; the
+       committed record never describes a wait that has ended.
   - *An idle instance waiting for its next trigger* has no run in flight.
     This is not a run status: when the trigger arrives, a new run starts
     (one run per trigger, section 1; MODE-4).
@@ -173,11 +183,11 @@ Known consumers:
 
 - **RUN-1 Must: inputs and outputs.** An activation takes the run's
   identity, the trigger payload, the resolved configuration, the latest
-  checkpoint and, for a run that was `waiting`, the awaited input (HOST-4),
-  which carries its own identity so a redelivered input is applied once.
-  It returns an outcome (RUN-3), artifacts and a new checkpoint. The run's identity, consumed budgets, resolved configuration
-  and action identities survive every handover between activations, so a
-  new worker never resets the work. (morris#568 item 1)
+  checkpoint and, for a run that was `waiting`, the awaited input with its
+  identity, accepted once (STM-8). It returns an outcome (RUN-3),
+  artifacts and a new checkpoint. The run's identity, consumed budgets,
+  resolved configuration and action identities survive every handover
+  between activations, so a new worker never resets the work. (morris#568 item 1)
 - **RUN-2 Must: cancellation through `context`.** Cancelling an
   activation's context stops it at the next safe point, with the host's
   reason taken from the context's cause (`context.WithCancelCause`). A
@@ -296,10 +306,11 @@ Known consumers:
     outside the agent, which never sees the outcome. (The intake agent
     works this way: approval and export are human actions in its app.)
   - *Suspend and resume.* The run checkpoints and the activation ends with
-    the run `waiting`. When the host later starts another activation of the
-    same run with the decision as input, the runtime executes the approved
-    action, with its original action identity and idempotency key, only if
-    the digest still matches, and returns the result to the model.
+    the run `waiting`, or a daemon waits in-process. When the decision is
+    accepted (STM-8, on either delivery path), the runtime executes the
+    approved action, with its original action identity and idempotency
+    key, only if the digest still matches, and returns the result to the
+    model.
 
   A host that can get a decision quickly (a chat user) may simply block
   inside the hook and return `allow` or `deny`; the library needs nothing
@@ -516,7 +527,9 @@ The host implements these; the library calls them. (morris#568 item 8)
 - **HOST-4 Must: control plane** for lease, heartbeat, cancellation, and
   delivering the input a `waiting` run needs (an approval decision, other
   external input), either to an activation waiting in-process or as the
-  input of the next activation (STM-8). Liveness comes from heartbeats,
+  input of the next activation, each delivery carrying the input's
+  identity; delivery may be retried, and the runtime accepts each input
+  once (STM-8). Liveness comes from heartbeats,
   not from output silence.
 - **HOST-5 Must: credential provider** (TOOL-8) and **policy hook**
   (TOOL-3), both keyed by the opaque run context.
