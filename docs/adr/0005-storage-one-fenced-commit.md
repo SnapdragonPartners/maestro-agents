@@ -58,8 +58,9 @@ at each point of a step. This ADR settles how those writes reach a store.
    - change the run record (status, reason, consumed budgets, accepted
      inputs);
    - store an artifact, content-addressed and write-once, with its
-     metadata (media type, size; STORE-1); storing the same digest twice
-     is a no-op;
+     metadata (media type, size; STORE-1); storing the same digest again
+     with the same metadata is a no-op, and with different metadata is a
+     conflict;
    - release ownership (ADR 0003, item 10).
 
    A failed precondition rejects the whole commit with a conflict error
@@ -160,7 +161,15 @@ at each point of a step. This ADR settles how those writes reach a store.
     keys, which is linear in the namespace's size and adequate at the file
     store's scale. A file is written by writing a temporary file in the
     same directory, syncing it, renaming it over the target and syncing the
-    directory. (Go's `File.Sync` issues `F_FULLFSYNC` on macOS.)
+    directory. (Go's `File.Sync` issues `F_FULLFSYNC` on macOS: Go 1.26's
+    `internal/poll/fd_fsync_darwin.go`.) **A directory is durable before
+    anything is renamed into it**: every directory the store creates,
+    including `journal/`, is synced together with its parent before its
+    first file is renamed in, so no commit's journal or record can be lost
+    with an unsynced directory entry. Artifact content travels through the
+    journal base64-encoded, like any operation; at the file store's scale
+    (statements of a few megabytes) that is acceptable, and writing it
+    outside the journal would be a durable write outside `Commit`.
     **Temporary files have a reserved prefix** that the key encoding can
     never produce. Every reader ignores them: listings, journal discovery
     and record lookups see only renamed files. Opening the store deletes
@@ -188,7 +197,11 @@ at each point of a step. This ADR settles how those writes reach a store.
     (its directory sync, step 5 or step 6) *poisons* the store: the commit
     returns an indeterminate error (item 3), and the store refuses every
     later operation, reads included, with an error saying it must be
-    reopened. Reopening (item 15) finishes the journal before serving
+    reopened. Reopening means closing the poisoned store, which releases
+    its lock (item 12), and opening the directory again, in the same
+    process or a new one; the standalone host exits with a store failure
+    and leaves the restart to its supervisor. Reopening (item 15) finishes
+    the journal before serving
     anything. A failure before the journal's rename is definite: nothing
     was applied, and the store stays usable. A one-file commit follows the
     same rule: a failure after its rename (the directory sync) poisons the
@@ -236,7 +249,9 @@ at each point of a step. This ADR settles how those writes reach a store.
 - The file store is crash-consistent without a database: every file is
   replaced atomically, and every multi-record commit either reached its
   journal or never happened. Its cost is one process per directory and a
-  linear prefix listing.
+  linear prefix listing. After a failure past a commit point the store is
+  unusable until it is closed and reopened, which for the standalone host
+  means a restart.
 - After a restart, the standalone host can claim every unfinished run at
   once, without waiting out leases from the previous process.
 - A host store implements `Commit` and the control-plane writes, and
