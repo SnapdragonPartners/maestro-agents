@@ -242,7 +242,11 @@ Known consumers:
 - **MAN-1 Must: a manifest per agent type** declaring name, version,
   states and transitions (STM-1), granted tools, skills, supported trigger
   kinds, the instance config schema and a default budget. (morris#568
-  item 2)
+  item 2) Each granted tool has a content identity: a digest of its
+  definition (name, input and output schemas, description, effect
+  classification and write contract, TOOL-2 and TOOL-12) and of the
+  version of the code or server that implements it, which changes
+  whenever any of them does. TOOL-4 binds approvals to it.
 - **MAN-2 Must: the runtime enforces the manifest.** A tool not granted is
   neither offered to the model nor executable; a trigger kind not declared
   is refused before the run starts; instance config is validated against
@@ -301,7 +305,7 @@ Known consumers:
   hook answers `pending`, the runtime records a pending action, bound to a
   digest of the exact tool name and arguments together with the content
   identity of what would execute it (the agent type's version and the
-  tool's definition, MAN-4), and does not execute it.
+  tool's content identity, both from MAN-1), and does not execute it.
   The agent type declares, per tool or per state, which of two things
   follows:
   - *Propose and finish.* The pending action is part of the run's output,
@@ -627,6 +631,12 @@ The host implements these; the library calls them. (morris#568 item 8)
     fails only if A's write lands after B's transfer has committed, which
     detects a check and write not serialized against the transfer (HOST-6)
     and which the first pause point cannot.
+
+  Both pause points run against every durable reference store (the file
+  and Postgres stores, STORE-4) and against any host store that claims to
+  meet HOST-6, through a test-only pause hook each store adapter exposes
+  at those two points. Fakes and the in-memory store serialize trivially,
+  so passing against them is not evidence of fencing.
 - **TEST-2 Must: fakes for every seam**, usable by agent-type authors and
   hosts, built on `maestro-llms/testllm`.
 - **TEST-3 Should: record mode.** A live run can record its model exchange
@@ -812,8 +822,9 @@ the per-attempt budget hook in `maestro-llms`' tool loop and client
 contract; word positions and page rendering in `maestro-cms`. These gate
 LLM-2, TOOL-11, LOOP-3, BUD-3 and the review UI's evidence highlighting.
 
-**Prove the difficult vertical slice first**, before filling out every
-store and the review UI:
+**Prove the difficult vertical slice first**, before the Postgres store
+and the review UI. The slice uses the file store (STORE-4): a crash test
+needs a durable store, and the file store needs no database:
 
 1. Read one representative statement through its text layer, which
    `maestro-cms`' existing `pdftotext` engine already provides (the
@@ -823,7 +834,8 @@ store and the review UI:
    acknowledgement and checkpoint are recorded (TEST-5).
 4. Continue the run in a new activation and show the submission is not
    duplicated and no work is lost.
-5. Separately, run both TEST-6 interleavings against the submission
+5. Separately, run both TEST-6 interleavings against the submission,
+   using the file store's pause hook
    (activation A paused before its commit, and inside it after reading
    ownership, while activation B takes over), accepting either valid
    serialization order, and show that none of A's fenced writes
@@ -836,8 +848,8 @@ The slice proves the state machine, execution record, write contract,
 recovery (steps 3 and 4) and fencing (step 5) while the upstream multimodal work proceeds. Visual
 extraction (the PDF sent to the model) and evidence highlighting then
 need their own acceptance evidence once their prerequisites land; passing
-the text-layer slice does not stand in for it. The file store, the
-Postgres store and the review UI follow. MCP tools, the wire protocol and
+the text-layer slice does not stand in for it. The Postgres store, which
+must pass TEST-5 and TEST-6 in its turn, and the review UI follow. MCP tools, the wire protocol and
 subagents remain later work.
 
 ## 7. Out of scope, and upstream dependencies
