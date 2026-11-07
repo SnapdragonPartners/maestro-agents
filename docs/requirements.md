@@ -769,7 +769,7 @@ Addepar import row out. Its requirements are drafted separately (the
 *Capital Statement Intake* requirements; not in this repository). It is the
 MVP because it has users waiting for it and exercises the hard parts of the
 library (recovery, idempotent writes, multimodal input) on a small surface.
-It is not free of outside dependencies: it needs three upstream changes
+It is not free of outside dependencies: it needs four upstream changes
 (listed under *Delivery plan* below). It lives in this repository as `cmd/addepar`, both as a usable tool and as
 the reference implementation of an agent type; it may move later. The
 same agent type later runs compiled into Morris (morris#569), which is
@@ -816,11 +816,11 @@ the agent's own code, not library requirements.
 
 ### Delivery plan
 
-**Prerequisites from other repositories** (section 7): image and document
-content and non-text tool results in `maestro-llms`; forced wrap-up and
-the per-attempt budget hook in `maestro-llms`' tool loop and client
-contract; word positions and page rendering in `maestro-cms`. These gate
-LLM-2, TOOL-11, LOOP-3, BUD-3 and the review UI's evidence highlighting.
+**Prerequisites from other repositories** (section 7, each filed as an
+issue): image and document content and non-text tool results in
+`maestro-llms`; attempt-level admission and a safe input bound in
+`maestro-llms`; word positions and page rendering in `maestro-cms`. These
+gate LLM-2, TOOL-11, BUD-3 and the review UI's evidence highlighting.
 
 **Prove the difficult vertical slice first**, before the Postgres store
 and the review UI. The slice uses the file store (STORE-4): a crash test
@@ -865,14 +865,23 @@ Each is proposed to the owning team only where it would serve that
 library's other consumers too, not this library alone; anything specific
 to agents stays here.
 
-| Need | Gap | Requirement |
-|---|---|---|
-| Image and document content | `maestro-llms`' `ContentPart` has only text, tool call, tool result and reasoning parts | LLM-2 |
-| Non-text tool results | `maestro-llms`' `toolloop.ToolResult.Content` is a string | TOOL-11 |
-| Forced wrap-up, a turn-boundary stop that still runs sibling calls, a pre-request hook that may fail | Not in `maestro-llms`' `toolloop`; Maestro's wishlist items 1 and 2 | LOOP-1, LOOP-3 |
-| Budget admission before each provider attempt, including retries, with per-attempt usage and a known-safe input bound | Retries run inside the injected client; the existing attempt observer reports after the fact but cannot refuse an attempt, and the existing estimator is approximate, not a bound. Whether the rate-limit middleware's per-attempt position can carry admission, or a new hook is needed, and where a safe bound comes from, are to be worked out with `maestro-llms` | BUD-3 |
-| An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 |
-| PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | Section 6 |
+| Need | Gap | Requirement | Issue |
+|---|---|---|---|
+| Image and document content | `maestro-llms`' `ContentPart` has only text, tool call, tool result and reasoning parts | LLM-2 | [maestro-llms#147](https://github.com/SnapdragonPartners/maestro-llms/issues/147) |
+| Non-text tool results | `maestro-llms`' `ToolResult.Content` is a string, in `llms` and in `toolloop` | TOOL-11 | [maestro-llms#148](https://github.com/SnapdragonPartners/maestro-llms/issues/148) |
+| Budget admission before each provider attempt, including retries, and a known-safe input bound | Retries run inside the injected client, and `maestro-llms` ADR 0031 gave attempts an observer, which cannot refuse one, rather than a middleware slot; the existing estimator is approximate, not a bound | BUD-3 | [maestro-llms#149](https://github.com/SnapdragonPartners/maestro-llms/issues/149) |
+| An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 | [maestro-llms#150](https://github.com/SnapdragonPartners/maestro-llms/issues/150) |
+| PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | Section 6 | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
+
+**Not upstream work.** Three loop needs that an earlier draft listed here
+are met without changes to `maestro-llms`: a turn-boundary stop that
+still runs sibling calls exists (`ToolResult.Stop`, `maestro-llms` ADR
+0017); forced wrap-up (LOOP-3) is built here, as buggrit does, by running
+the loop again with the exit tools forced; and recording a model turn
+before its tool calls execute (STM-6, REC-2) needs no pre-request hook,
+because a fallible decorator around the injected client records each
+response before the loop sees it. `toolloop` already executes sibling
+calls sequentially, as ADR 0002 requires.
 
 ## 8. Lessons from buggrit and maestro
 
