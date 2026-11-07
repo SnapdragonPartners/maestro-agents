@@ -52,7 +52,9 @@ permanent, never disposable.
 [#149](https://github.com/SnapdragonPartners/maestro-llms/issues/149) and
 `maestro-cms` [#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25)
 land during the MVP; the plan sequences around them rather than working
-around them. `maestro-llms`
+around them. The first that the work waits on is #25's layout mode, a
+one-flag option, which the vertical slice needs (step 2 of *Order of
+work*). `maestro-llms`
 [#150](https://github.com/SnapdragonPartners/maestro-llms/issues/150) (the
 MCP client) is not needed by the MVP.
 
@@ -131,7 +133,7 @@ wait:
 |---|---|---|
 | BUD-1 | Build | Tokens, turns, active time and the deadline, hard and estimated. Until `maestro-llms#149` lands, the intake agent's client is built without `maestro-llms`' retry middleware, so each model call is a single provider attempt, admitted on its estimate before it is sent; a failed attempt fails the call. Cost budgets are deferred (**contract:** the pricing-function interface) |
 | BUD-2 | Build | Both clocks and the visible clock. The active-time pause is not needed while there are no in-process waits |
-| BUD-3 | Build | Once `maestro-llms#149` lands; until then the intake configuration uses estimated budgets |
+| BUD-3 | Build | The fail-closed path is built from the start: with no known-safe input bound, a hard token budget fails the run with `budget_unenforceable`. So until `maestro-llms#149` lands, hosts get hard turn and time budgets, while token budgets must be configured as estimated (the intake configuration does this); admission against the bound is built once #149 lands |
 | BUD-4 | Build | |
 
 ### Host seams, delivery, execution record and tests
@@ -187,7 +189,8 @@ encryption is decided in the storage design.
    store.
 2. **The vertical slice**, steps 1 to 5 of the requirements' delivery plan
    (section 6), on the file store and the PDF's text layer (`pdftotext
-   -layout`, which keeps each label beside its numbers): extract, verify,
+   -layout`, which keeps each label beside its numbers, through
+   `maestro-cms`' layout option from #25, which the slice waits on): extract, verify,
    commit, crash, continue, no duplicate (steps 1 to 4), then both TEST-6
    interleavings (step 5).
 3. **The verifier and exporter**, with no model (the intake requirements'

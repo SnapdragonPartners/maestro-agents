@@ -848,8 +848,10 @@ work goes to an external tool, Poppler, run as a subprocess. That
 capability belongs in `maestro-cms`, which already runs Poppler's
 `pdftotext` for Morris (`extract/pdf/pdftotext`) and is where other
 consumers will look for it. It needs extending with what the intake agent
-requires and the engine does not yet provide: word positions per page (for
-highlighting evidence in the review UI) and page rendering (section 7). The
+requires and the engine does not yet provide: a layout mode that keeps
+each label on the same line as its numbers (for the verification checks),
+word positions per page (for highlighting evidence in the review UI) and
+page rendering (section 7). The
 intake agent calls
 it in-process, as Go tools. An MCP server over the same package, for
 consumers outside Go, is a thin wrapper `maestro-cms` can add when one is
@@ -866,7 +868,7 @@ What the intake agent requires of the library, all covered above:
 |---|---|
 | One run per arriving PDF; folder drop or command line | MODE-4, RUN-1 |
 | PDF sent to the model; `get_document` returns the PDF | LLM-2, TOOL-11 |
-| PDF text with word positions, page rendering (Poppler, through `maestro-cms`) | Upstream: [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) (section 7) |
+| PDF text in layout mode and with word positions, page rendering (Poppler, through `maestro-cms`) | Upstream: [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) (section 7) |
 | `submit_extraction` verified in code, with reasons on failure and a resubmission cap | LOOP-2, STM-3 |
 | Run complete when every statement is verified, set aside or sent to manual review | STM-4 |
 | Approval and export are human actions outside the agent | TOOL-4 (propose and finish) |
@@ -889,8 +891,10 @@ two differ, it governs.
 **Prerequisites from other repositories** (section 7, each filed as an
 issue): image and document content and non-text tool results in
 `maestro-llms`; attempt-level admission and a safe input bound in
-`maestro-llms`; word positions and page rendering in `maestro-cms`. These
-gate LLM-2, TOOL-11, BUD-3 and the review UI's evidence highlighting.
+`maestro-llms`; layout mode, word positions and page rendering in
+`maestro-cms`. These gate LLM-2, TOOL-11, BUD-3 and the review UI's
+evidence highlighting; layout mode, a one-flag option and the first of
+them, also gates step 1 below.
 
 **Prove the difficult vertical slice first**, before the Postgres store
 and the review UI. The slice uses the file store (STORE-4): a crash test
@@ -942,7 +946,7 @@ to agents stays here.
 | Non-text tool results | `maestro-llms`' `ToolResult.Content` is a string, in `llms` and in `toolloop` | TOOL-11 | [maestro-llms#148](https://github.com/SnapdragonPartners/maestro-llms/issues/148) |
 | Budget admission before each provider attempt, including retries, and a known-safe input bound | Retries run inside the injected client, and `maestro-llms` ADR 0031 gave attempts an observer, which cannot refuse one, rather than a middleware slot; the existing estimator is approximate, not a bound | BUD-3 | [maestro-llms#149](https://github.com/SnapdragonPartners/maestro-llms/issues/149) |
 | An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 | [maestro-llms#150](https://github.com/SnapdragonPartners/maestro-llms/issues/150) |
-| PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | The intake review UI's evidence highlighting (section 6) | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
+| PDF layout-mode text, word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page in reading order, which separates labels from their numbers | The verification checks and the vertical slice's step 1 (layout mode); the intake review UI's evidence highlighting (section 6) | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
 
 **Not upstream work.** Three loop needs that an earlier draft listed here
 are met without changes to `maestro-llms`: ending a turn at a
