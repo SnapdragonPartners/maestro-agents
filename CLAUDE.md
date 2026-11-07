@@ -18,7 +18,8 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 
 Current state: **bootstrap**. The repository has its tooling, workflow and
 an empty root package; no API is defined yet. The requirements are in
-[docs/requirements.md](docs/requirements.md); the design arrives in later
+[docs/requirements.md](docs/requirements.md), and what the MVP builds
+of them in [docs/MVP.md](docs/MVP.md); the design arrives in later
 PRs, each with its ADR.
 
 Load-bearing decisions so far:
@@ -95,6 +96,7 @@ doc.go               # Root package `agents`: package documentation
 cmd/<agent>/         # (planned) Standalone agent executables
 internal/            # (planned) Code private to this module
 docs/requirements.md # Library requirements (input to the design ADRs)
+docs/MVP.md          # MVP scope: what the MVP builds, what is deferred
 docs/adr/            # Architecture Decision Records
 hooks/               # Git hooks (installed by `make install-hooks`)
 .github/             # CI, CodeQL, buggrit, Dependabot
