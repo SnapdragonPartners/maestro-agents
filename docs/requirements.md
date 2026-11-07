@@ -146,9 +146,13 @@ Known consumers:
     transition: the run stays
     in the state it was in, a model state in progress keeps its transcript
     (STM-6), and the step is unchanged, so the resumed action keeps its
-    original action identity and idempotency key (TOOL-4, TOOL-5). A
-    daemon waits in-process; a serverless host ends the activation and
-    starts another activation of the same run when the input arrives.
+    original action identity and idempotency key (TOOL-4, TOOL-5). Before
+    waiting, in-process or not, the runtime durably commits the run's
+    `waiting` status and reason with the wait's step boundary (REC-2), so
+    the record the host reads is the same either way and survives a
+    restart. A daemon then waits in-process; a serverless host ends the
+    activation and starts another activation of the same run when the input
+    arrives.
   - *An idle instance waiting for its next trigger* has no run in flight.
     This is not a run status: when the trigger arrives, a new run starts
     (one run per trigger, section 1; MODE-4).
@@ -168,9 +172,10 @@ Known consumers:
 ### 3.2 Runs (RUN)
 
 - **RUN-1 Must: inputs and outputs.** An activation takes the run's
-  identity, the trigger payload, the resolved configuration and the latest
-  checkpoint, and returns an outcome (RUN-3), artifacts and a new
-  checkpoint. The run's identity, consumed budgets, resolved configuration
+  identity, the trigger payload, the resolved configuration, the latest
+  checkpoint and, for a run that was `waiting`, the awaited input (HOST-4),
+  which carries its own identity so a redelivered input is applied once.
+  It returns an outcome (RUN-3), artifacts and a new checkpoint. The run's identity, consumed budgets, resolved configuration
   and action identities survive every handover between activations, so a
   new worker never resets the work. (morris#568 item 1)
 - **RUN-2 Must: cancellation through `context`.** Cancelling an
