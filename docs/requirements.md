@@ -133,11 +133,15 @@ Known consumers:
   progress) can be checkpointed and later restored, so a run can continue
   from its last boundary in a new activation, in another process. A model
   turn is recorded in the execution record (REC-1), including the tool
-  calls it requested, before any of those calls execute. Before each
-  call executes, its attempt (action identity and the fact that it is
-  being attempted) is durably recorded too (REC-2), so the record can
-  always tell *not yet attempted* from *attempted*; a call with no
-  recorded attempt has not been sent. An activation that continues after
+  calls it requested, before any of those calls execute. For each call,
+  in this order: the policy decision (TOOL-3) is obtained and durably
+  recorded; only for a call the policy allows (or, for a pending action,
+  once its approval is accepted, STM-8) is its attempt (action identity
+  and the fact that it is being attempted) then durably recorded,
+  immediately before the call is sent (REC-2). A denied, invalidated or
+  pending call never carries an attempt marker. So the record can always
+  tell *not yet attempted* from *attempted*; a call with no recorded
+  attempt has not been sent. An activation that continues after
   that point does not ask the model to repeat the turn, and the execution
   record decides what happens to each recorded call:
   - *Not yet attempted*: issued.
@@ -619,7 +623,8 @@ The host implements these; the library calls them. (morris#568 item 8)
   needed to recover and to explain the run: the trigger, the resolved
   configuration, the content of the manifest, prompts, skills and tool
   definitions in force, every model request and response, every tool call
-  and result, policy decisions and approvals, action identities with their
+  and result, each call's attempt marker (STM-6, REC-2), policy decisions,
+  pending actions and approvals, action identities with their
   outcomes (including *unknown*, TOOL-12), budget consumption, and any
   other input the runtime cannot reproduce. Content identities point at
   content that is retained and retrievable, not just at hashes.
