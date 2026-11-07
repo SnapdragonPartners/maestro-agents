@@ -34,8 +34,15 @@ at each point of a step. This ADR settles how those writes reach a store.
 
    `Fence` is (instance, owner epoch) from the activation's claim. A
    commit applies all of its operations or none. There is no other write
-   path for an activation, so HOST-6's rule that no write skips the check
-   holds by construction.
+   path for an activation to the library's stores, so HOST-6's rule that
+   no write skips the check holds by construction for every write to
+   them. A tool's effect outside those stores (an external write) is not
+   covered by `Commit`: HOST-6 still requires the destination or the host
+   to fence it (accepting a fencing token, say), or the write tool to
+   declare that it cannot be fenced, with the outcome reporting the
+   uncertainty. The MVP has no external writes (MVP.md); a tool
+   contract that carries the fence to an external destination is decided
+   with the first such tool.
 2. **The ownership check and the writes are serialized against transfer.**
    A store reads the instance's ownership record, compares its epoch with
    the fence and applies the operations so that no claim can commit in

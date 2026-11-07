@@ -145,11 +145,14 @@ hold two sources of the same fact that can disagree.
     their deadline (HOST-7), and returns the error. A tool call whose
     attempt was recorded but whose result was not is resolved by recovery
     (STM-6, ADR 0004).
-17. **Cancellation and shutdown are outcomes, not errors.** Cancelling the
-    activation's context commits `cancelled` with the host's cause
-    (RUN-2); a shutdown commits the run's actual disposition (`runnable` or
-    `waiting`, MODE-6). Only a failure to commit those turns them into an
-    error.
+17. **Cancellation, budget expiry and shutdown are outcomes, not
+    errors**, told apart by the context's cause, never by the bare fact of
+    cancellation. A host's cancellation (superseded or operator) commits
+    `cancelled` with that cause (RUN-2). The runtime's own time budgets
+    also end the context (BUD-2), with a cause naming the budget, and
+    commit `failed` with `budget_exhausted` naming it (RUN-3). A shutdown
+    commits the run's actual disposition (`runnable` or `waiting`,
+    MODE-6). Only a failure to commit those turns them into an error.
 
 ## Consequences
 

@@ -40,6 +40,11 @@ records are stored and how a commit is made atomic and fenced is
    artifact and referenced by its SHA-256 digest, in the same commit as
    the entry, so a referenced digest is always retrievable (REC-1).
 2. **Entry kinds** (names illustrative):
+   - `activation_started`: the claim's epoch and the checkpoint sequence
+     and record sequence the activation started from, committed before
+     anything else it does, so every activation's starting point is on
+     the record, including one that later failed with no `outcome`
+     (item 14);
    - `run_started`: the trigger, the resolved configuration, and the
      digests of the manifest, prompts, skills and tool definitions in
      force (REC-1, MAN-4);
@@ -69,8 +74,14 @@ records are stored and how a commit is made atomic and fenced is
 3. **A checkpoint is a snapshot of the record.** It holds the agent type's
    state, its state data, the transcript of a model state in progress, the
    step number, consumed budgets, and the record sequence number it
-   covers. The envelope (checkpoint sequence, covered record sequence,
-   format version) is the library's; the contents are opaque to the host
+   covers. The envelope (checkpoint sequence, the run's scope, covered
+   record sequence, format version) is the library's. Checkpoint
+   sequences are per instance (HOST-6) and the record is per run, so an
+   activation restores only a checkpoint whose envelope names its own
+   run's scope; a run with none yet starts from its initial state, never
+   from an earlier run's checkpoint. Checkpoints are retained, so any
+   activation's starting checkpoint is retrievable for replay (retention
+   is the host's, REC-3); the contents are opaque to the host
    (RUN-5), and an agent type can refuse or migrate an old version.
 4. **Every step boundary commits a checkpoint**, in the same commit as the
    entry that completes the step: the last `result` of a model turn, or
@@ -106,8 +117,10 @@ records are stored and how a commit is made atomic and fenced is
    fails, the decorator returns an error and the loop executes nothing.
 8. **Each tool call is wrapped.** Every `toolloop.Tool` the runtime gives
    the loop is a wrapper whose `Execute`, in this order:
-   1. obtains the call's permission from the policy hook and commits a
-      `permission` entry;
+   1. obtains the call's permission and commits a `permission` entry:
+      from the policy hook, unless the record already holds one for this
+      call (a call recovered after a crash, item 10), whose recorded
+      permission stands and is not asked again;
    2. if the permission is anything but *allowed* or *approved*, returns
       the denial to the model as data, with no attempt (TOOL-3);
    3. commits an `attempt` entry;
@@ -116,23 +129,33 @@ records are stored and how a commit is made atomic and fenced is
 
    For a tool whose write contract is an atomic local transaction, step 4
    produces object-store operations instead of performing them, and step
-   5 commits them together with the `result` (ADR 0005). A failed commit
-   at any step stops the call there and returns an error from `Execute`,
-   which stops the loop; the activation then returns a store failure
-   (ADR 0003).
+   5 commits them together with the `result` (ADR 0005). A commit that
+   does not land is handled by its class (ADR 0005, item 3): an
+   object-version conflict on an atomic local transaction's operations
+   re-runs the tool as ADR 0005 item 10 says, ending, if it persists, in
+   a tool error the model receives as data; an ownership rejection, or an
+   indeterminate result, stops the call there and returns an error from
+   `Execute`, which stops the loop, and the activation returns
+   *ownership lost* or *store failure* respectively (ADR 0003, item 14),
+   making no further writes.
 
    **Results the loop synthesizes itself never reach a wrapper**, and are
    recorded by the decorator. `toolloop` makes two kinds: the not-executed
    results of siblings after a `Stop` (item 9), and the error result for a
    call naming no registered tool (`dispatch`). For the second, the next
-   durable write after the turn's calls is the decorator's: before the
-   next provider attempt, or when the loop returns, it takes the
-   synthesized results from the transcript the loop now holds and commits
+   durable write after the turn's calls is the decorator's. The runtime
+   captures each such result from `toolloop`'s `OnToolCall` event, which
+   the loop emits for an unknown tool with the result it synthesized,
+   rather than from the transcript (which the loop does not complete if a
+   later call's `Execute` aborts it). Before the next provider attempt,
+   or when the loop returns, the decorator commits
    their `result` entries, and the turn's checkpoint if they complete it,
    in the same commit as the next `model_attempt` (or on the loop's
-   return, before anything else is committed). So a turn that ends with
-   such a call reaches its step boundary before any later work, and the
-   recorded content is exactly what the model was sent. A turn that ends
+   return, before anything else is committed, unless the loop stopped on
+   an ownership or store failure, which permits no further writes). So a
+   turn that ends with such a call reaches its step boundary before any
+   later work, and the recorded content is exactly what the loop
+   produced. A turn that ends
    in a transition is the exception, handled entirely by item 9's commit.
 9. **A transition commits atomically, and resolves its whole turn.** One
    commit holds the `result` of the call that causes the transition
@@ -202,7 +225,8 @@ records are stored and how a commit is made atomic and fenced is
     and tool wrappers that return the recorded results without executing
     anything (REC-4). Each activation is replayed from the checkpoint and
     tail it started from, so a recovery's own decisions (item 10) are
-    replayed as recorded. A
+    replayed as recorded; the `activation_started` entries (item 2) mark
+    where each activation began and from which checkpoint. A
     request that differs from the recorded one, or a call the record does
     not hold, is a replay divergence and stops the replay with an error
     that names the entry.
