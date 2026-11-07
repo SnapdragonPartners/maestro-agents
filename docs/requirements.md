@@ -135,7 +135,7 @@ Known consumers:
   turn is recorded in the execution record (REC-1), including the tool
   calls it requested, before any of those calls execute. For each call,
   in this order: the policy decision (TOOL-3) is obtained and durably
-  recorded; only for a call the policy allows (or, for a pending action,
+  recorded (REC-2); only for a call the policy allows (or, for a pending action,
   once its approval is accepted, STM-8) is its attempt (action identity
   and the fact that it is being attempted) then durably recorded,
   immediately before the call is sent (REC-2). A denied, invalidated or
@@ -144,7 +144,10 @@ Known consumers:
   attempt has not been sent. An activation that continues after
   that point does not ask the model to repeat the turn, and the execution
   record decides what happens to each recorded call:
-  - *Not yet attempted*: issued.
+  - *Not yet attempted, and not denied, invalidated or awaiting approval*:
+    issued, after the policy decision is obtained if none is recorded. The
+    attempt marker says whether a call was sent; the recorded policy
+    decision says whether it may be.
   - *Read call attempted, with no recorded result* (including one
     interrupted mid-flight, RUN-2): issued again. A read has no effect
     to duplicate (TOOL-2).
@@ -628,9 +631,9 @@ The host implements these; the library calls them. (morris#568 item 8)
   outcomes (including *unknown*, TOOL-12), budget consumption, and any
   other input the runtime cannot reproduce. Content identities point at
   content that is retained and retrievable, not just at hashes.
-- **REC-2 Must: write-ahead.** A required step boundary, and each tool
-  call's attempt (STM-6), is durably recorded before any effect that
-  depends on it. If recording fails, dependent effects do not proceed. (buggrit's telemetry writer deliberately drops
+- **REC-2 Must: write-ahead.** A required step boundary, each tool call's
+  policy decision, and each tool call's attempt (STM-6) are durably
+  recorded before any effect that depends on them. If recording fails, dependent effects do not proceed. (buggrit's telemetry writer deliberately drops
   events under failure; that delivery behavior is acceptable for
   telemetry and never for this record.)
 - **REC-3 Must: protected, not redacted.** Telemetry redaction (HOST-2)
