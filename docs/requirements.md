@@ -133,19 +133,32 @@ Known consumers:
   progress) can be checkpointed and later restored, so a run can continue
   from its last boundary in a new activation, in another process. A model
   turn is recorded in the execution record (REC-1), including the tool
-  calls it requested, before any of those calls execute. An activation
-  that continues after that point does not ask the model to repeat the
-  turn, and the execution record decides what happens to each recorded
-  call. It issues a call, always with its original action identity and
-  idempotency key (TOOL-5), only if the record shows it *not yet
-  attempted*, or *known not to have happened*: attempted, but established
-  by its write contract's reconciliation probe or by a person not to have
-  taken effect (TOOL-12). Every other recorded state is handled by its own
-  requirement and never re-issued: executed (its recorded result stands);
-  not executed because a transition ended the turn (STM-3); denied,
-  invalidated or pending approval (TOOL-3, TOOL-4); or outcome unknown,
-  which is never retried blindly and must first be resolved by the probe
-  or a person into executed or known not to have happened (TOOL-12).
+  calls it requested, before any of those calls execute. Before each
+  call executes, its attempt (action identity and the fact that it is
+  being attempted) is durably recorded too (REC-2), so the record can
+  always tell *not yet attempted* from *attempted*; a call with no
+  recorded attempt has not been sent. An activation that continues after
+  that point does not ask the model to repeat the turn, and the execution
+  record decides what happens to each recorded call:
+  - *Not yet attempted*: issued.
+  - *Read call attempted, with no recorded result* (including one
+    interrupted mid-flight, RUN-2): issued again. A read has no effect
+    to duplicate (TOOL-2).
+  - *Write call attempted, with no recorded result* (including one
+    interrupted mid-flight): its outcome is *unknown* (TOOL-12). It is
+    never retried blindly; its write contract's reconciliation probe, or
+    a person, resolves it to one of the next two states.
+  - *Known not to have happened* (resolved as above): issued again.
+  - *Executed*: never issued again. Its recorded result stands; for a
+    write resolved from *unknown*, the result recorded is the one the
+    resolution produced (what the probe or person established), so the
+    model always receives a result for every call.
+  - *Not executed because a transition ended the turn* (STM-3), or
+    *denied, invalidated or pending approval* (TOOL-3, TOOL-4): never
+    issued again; each is handled by its own requirement.
+
+  A write issued again keeps its original action identity and idempotency
+  key (TOOL-5); reads carry no idempotency key.
 - **STM-7 Must: the host decides how many steps one activation covers.** A
   serverless host may checkpoint and stop at every boundary; a daemon may
   run indefinitely, checkpointing as it goes. A daemon is therefore not a
@@ -610,9 +623,9 @@ The host implements these; the library calls them. (morris#568 item 8)
   outcomes (including *unknown*, TOOL-12), budget consumption, and any
   other input the runtime cannot reproduce. Content identities point at
   content that is retained and retrievable, not just at hashes.
-- **REC-2 Must: write-ahead.** A required step boundary is durably recorded
-  before any effect that depends on it. If recording fails, dependent
-  effects do not proceed. (buggrit's telemetry writer deliberately drops
+- **REC-2 Must: write-ahead.** A required step boundary, and each tool
+  call's attempt (STM-6), is durably recorded before any effect that
+  depends on it. If recording fails, dependent effects do not proceed. (buggrit's telemetry writer deliberately drops
   events under failure; that delivery behavior is acceptable for
   telemetry and never for this record.)
 - **REC-3 Must: protected, not redacted.** Telemetry redaction (HOST-2)
