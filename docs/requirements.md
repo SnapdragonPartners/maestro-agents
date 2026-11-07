@@ -299,7 +299,9 @@ Known consumers:
   allows everything.
 - **TOOL-4 Must: approval through policy, not per-tool modes.** When the
   hook answers `pending`, the runtime records a pending action, bound to a
-  digest of the exact tool name and arguments, and does not execute it.
+  digest of the exact tool name and arguments together with the content
+  identity of what would execute it (the agent type's version and the
+  tool's definition, MAN-4), and does not execute it.
   The agent type declares, per tool or per state, which of two things
   follows:
   - *Propose and finish.* The pending action is part of the run's output,
@@ -311,8 +313,9 @@ Known consumers:
     accepted (STM-8, on either delivery path), the runtime executes the
     approved action, with its original action identity and idempotency
     key, only if the digest still matches, and returns the result to the
-    model. If the digest no longer matches (the agent type or its tools
-    changed while the run waited), the pending action is invalidated and
+    model. The digest is recomputed on resume from the recorded call and
+    the agent type and tool now in force. If it no longer matches (the
+    agent type or the tool changed while the run waited), the pending action is invalidated and
     recorded as such, never executed, and the model receives a denial as
     data, as for any policy denial (TOOL-3), so the run continues rather
     than stalling.
@@ -606,14 +609,18 @@ The host implements these; the library calls them. (morris#568 item 8)
   continue the run in a new activation, and assert that no effect is
   duplicated and no work is lost. This tests recovery and idempotency, not
   fencing, because the stopped worker never returns.
-- **TEST-6 Must: stale-owner tests.** The harness can pause activation A
-  just before a durable commit, transfer the instance's ownership to
-  activation B, then resume A, and assert that A can make none of the
-  durable writes HOST-6 fences: no effect, checkpoint, execution-record
-  append or run-record change (such as setting `waiting` or accepting an
-  input). This
-  exercises HOST-6 directly: it fails if ownership enforcement is
-  removed.
+- **TEST-6 Must: stale-owner tests**, at two pause points. In each, the
+  harness transfers the instance's ownership to activation B while A is
+  paused, lets B commit, resumes A, and asserts that none of the durable
+  writes HOST-6 fences landed for A: no effect, checkpoint,
+  execution-record append or run-record change (such as setting `waiting`
+  or accepting an input).
+  - *Before the commit*: A is paused before it starts the commit. This
+    fails if ownership is not checked at commit time at all.
+  - *Inside the commit*: A is paused after it has read the ownership
+    record and before its write. This fails if the check and the write are
+    not serialized against the transfer (HOST-6), which the first pause
+    point cannot detect.
 - **TEST-2 Must: fakes for every seam**, usable by agent-type authors and
   hosts, built on `maestro-llms/testllm`.
 - **TEST-3 Should: record mode.** A live run can record its model exchange
@@ -810,10 +817,13 @@ store and the review UI:
    acknowledgement and checkpoint are recorded (TEST-5).
 4. Continue the run in a new activation and show the submission is not
    duplicated and no work is lost.
-5. Separately, pause activation A before the commit, transfer ownership to
-   activation B, resume A, and show that A can make none of the writes
-   HOST-6 fences: no submission, checkpoint, execution-record append or
-   run-record change (TEST-6). Steps 3 and 4 alone would pass with fencing removed.
+5. Separately, run both TEST-6 interleavings against the submission:
+   pause activation A before its commit, and inside it after reading
+   ownership, transfer ownership to activation B and let B commit, resume
+   A, and show that none of A's fenced writes (submission, checkpoint,
+   execution-record append, run-record change) landed. Steps 3 and 4 never
+   bring a stale worker back, so they cannot show fencing; step 5 does,
+   including the serialization HOST-6 requires.
 
 The slice proves the state machine, execution record, write contract,
 recovery (steps 3 and 4) and fencing (step 5) while the upstream multimodal work proceeds. Visual
