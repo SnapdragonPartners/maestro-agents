@@ -136,12 +136,16 @@ Known consumers:
   calls it requested, before any of those calls execute. An activation
   that continues after that point does not ask the model to repeat the
   turn, and the execution record decides what happens to each recorded
-  call. It issues a call only if the record shows it *not yet attempted*.
-  Every other recorded state is handled by its own requirement and never
-  re-issued: executed (its recorded result stands); not executed because
-  a transition ended the turn (STM-3); denied, invalidated or pending
-  approval (TOOL-3, TOOL-4); or outcome unknown, resolved by its write
-  contract's probe or a person (TOOL-12).
+  call. It issues a call, always with its original action identity and
+  idempotency key (TOOL-5), only if the record shows it *not yet
+  attempted*, or *known not to have happened*: attempted, but established
+  by its write contract's reconciliation probe or by a person not to have
+  taken effect (TOOL-12). Every other recorded state is handled by its own
+  requirement and never re-issued: executed (its recorded result stands);
+  not executed because a transition ended the turn (STM-3); denied,
+  invalidated or pending approval (TOOL-3, TOOL-4); or outcome unknown,
+  which is never retried blindly and must first be resolved by the probe
+  or a person into executed or known not to have happened (TOOL-12).
 - **STM-7 Must: the host decides how many steps one activation covers.** A
   serverless host may checkpoint and stop at every boundary; a daemon may
   run indefinitely, checkpointing as it goes. A daemon is therefore not a
