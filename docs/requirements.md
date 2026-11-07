@@ -18,7 +18,9 @@ requirements are **inputs, not constraints**: where this document departs
 from one, it says so and why (marked **Departs from**).
 
 **Conventions.** Requirements are numbered by area (`RUN-3`). **Must** is
-required for the first release (the MVP, section 6); **Should** is expected
+required for the first complete release, and
+[MVP.md](MVP.md) says which Musts the MVP (section 6) builds and which
+follow it; **Should** is expected
 but may follow; **Plan for** means the first release need not implement
 it, but its design must not rule it out. Every behavior has a default, so
 an agent type configures only what it changes.
@@ -880,6 +882,9 @@ The intake agent's review UI, verifier, exporter and decimal handling are
 the agent's own code, not library requirements.
 
 ### Delivery plan
+
+The MVP's scope and order of work are in [MVP.md](MVP.md); where the
+two differ, it governs.
 
 **Prerequisites from other repositories** (section 7, each filed as an
 issue): image and document content and non-text tool results in
