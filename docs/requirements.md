@@ -133,10 +133,15 @@ Known consumers:
   progress) can be checkpointed and later restored, so a run can continue
   from its last boundary in a new activation, in another process. A model
   turn is recorded in the execution record (REC-1), including the tool
-  calls it requested, before any of those calls execute; an activation
-  that continues after that point executes the recorded calls not yet run,
-  except those a transition marked not executed (STM-3), and does not ask
-  the model to repeat the turn.
+  calls it requested, before any of those calls execute. An activation
+  that continues after that point does not ask the model to repeat the
+  turn, and the execution record decides what happens to each recorded
+  call. It issues a call only if the record shows it *not yet attempted*.
+  Every other recorded state is handled by its own requirement and never
+  re-issued: executed (its recorded result stands); not executed because
+  a transition ended the turn (STM-3); denied, invalidated or pending
+  approval (TOOL-3, TOOL-4); or outcome unknown, resolved by its write
+  contract's probe or a person (TOOL-12).
 - **STM-7 Must: the host decides how many steps one activation covers.** A
   serverless host may checkpoint and stop at every boundary; a daemon may
   run indefinitely, checkpointing as it goes. A daemon is therefore not a
@@ -350,9 +355,9 @@ Known consumers:
   from the run's identity, which survives activations (RUN-1), the step,
   and the call's identity within that step (for example, its position in
   the recorded turn), never from the step alone. Write calls execute only
-  from a model turn already recorded (STM-6), so a continued run re-issues
+  from a model turn already recorded (STM-6), so a continued run issues
   the same recorded calls with the same keys rather than asking the model
-  again; calls a transition marked not executed are never issued (STM-3).
+  again, and only the calls STM-6 says may be issued.
   Reusing an action identity with different arguments is rejected.
   Idempotency prevents repeating the same action; it does not stop a stale
   worker from making a different one, which is fencing's job (HOST-6).
