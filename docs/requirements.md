@@ -893,8 +893,8 @@ issue): image and document content and non-text tool results in
 `maestro-llms`; attempt-level admission and a safe input bound in
 `maestro-llms`; layout mode, word positions and page rendering in
 `maestro-cms`. These gate LLM-2, TOOL-11, BUD-3 and the review UI's
-evidence highlighting; layout mode, a one-flag option and the first of
-them, also gates step 1 below.
+evidence highlighting. Layout mode, a one-flag option and the first of the
+three, also gates step 1 below.
 
 **Prove the difficult vertical slice first**, before the Postgres store
 and the review UI. The slice uses the file store (STORE-4): a crash test
