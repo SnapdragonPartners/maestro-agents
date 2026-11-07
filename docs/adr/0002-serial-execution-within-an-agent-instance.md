@@ -26,7 +26,9 @@ removing the problem at its root, and a human operator agreed.
 1. **One execution stream per instance.** An agent instance executes
    serially: state processing, model turns and tool calls happen one at a
    time, including sibling tool calls returned in one model response, which
-   execute in their recorded order.
+   execute in their recorded order, unless a call that causes a state
+   transition ends the turn before them; those are not executed
+   (requirements STM-3).
 2. **One execution owner.** At any moment an instance has at most one
    active owner (one worker holding its lease), and only that owner may
    advance the instance's checkpoint sequence.

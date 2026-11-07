@@ -113,7 +113,8 @@ Known consumers:
   that has just ended, and each is recorded with a "not executed" result
   so the transcript stays well formed. The execution record marks them not
   executed, so an activation continuing from that turn never runs them
-  (STM-6). **Departs from** Maestro's wishlist item 1, which asks for a
+  (STM-6). **Departs from** item 1 of Maestro's
+  [wishlist for `maestro-llms`](https://github.com/SnapdragonPartners/maestro/blob/main/docs/v2/requirements_maestro-llms-wishlist.md), which asks for a
   stop that still runs later siblings.
 - **STM-4 Must: terminal states.** Each state is terminal or not. A run
   that enters a terminal state ends with that state's result (RUN-3). The
@@ -133,8 +134,9 @@ Known consumers:
   from its last boundary in a new activation, in another process. A model
   turn is recorded in the execution record (REC-1), including the tool
   calls it requested, before any of those calls execute; an activation
-  that continues after that point executes the recorded calls and does not
-  ask the model to repeat the turn.
+  that continues after that point executes the recorded calls not yet run,
+  except those a transition marked not executed (STM-3), and does not ask
+  the model to repeat the turn.
 - **STM-7 Must: the host decides how many steps one activation covers.** A
   serverless host may checkpoint and stop at every boundary; a daemon may
   run indefinitely, checkpointing as it goes. A daemon is therefore not a
@@ -177,7 +179,8 @@ Known consumers:
     (one run per trigger, section 1; MODE-4).
 - **STM-9 Must: serial execution within an instance.** State processing,
   model turns and tool calls execute one at a time, including sibling tool
-  calls from one model response, in their recorded order. Only the
+  calls from one model response, in their recorded order, unless a
+  transition ends the turn before them (STM-3). Only the
   instance's current owner advances its checkpoint sequence. Independent
   instances run concurrently. Heartbeats, cancellation and transport
   handling may run alongside the execution stream but never advance
@@ -348,7 +351,8 @@ Known consumers:
   and the call's identity within that step (for example, its position in
   the recorded turn), never from the step alone. Write calls execute only
   from a model turn already recorded (STM-6), so a continued run re-issues
-  the same calls with the same keys rather than asking the model again.
+  the same recorded calls with the same keys rather than asking the model
+  again; calls a transition marked not executed are never issued (STM-3).
   Reusing an action identity with different arguments is rejected.
   Idempotency prevents repeating the same action; it does not stop a stale
   worker from making a different one, which is fencing's job (HOST-6).
@@ -807,7 +811,7 @@ What the intake agent requires of the library, all covered above:
 |---|---|
 | One run per arriving PDF; folder drop or command line | MODE-4, RUN-1 |
 | PDF sent to the model; `get_document` returns the PDF | LLM-2, TOOL-11 |
-| PDF text with word positions, page rendering (Poppler, through `maestro-cms`) | Section 7 |
+| PDF text with word positions, page rendering (Poppler, through `maestro-cms`) | Upstream: [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) (section 7) |
 | `submit_extraction` verified in code, with reasons on failure and a resubmission cap | LOOP-2, STM-3 |
 | Run complete when every statement is verified, set aside or sent to manual review | STM-4 |
 | Approval and export are human actions outside the agent | TOOL-4 (propose and finish) |
@@ -879,7 +883,7 @@ to agents stays here.
 | Non-text tool results | `maestro-llms`' `ToolResult.Content` is a string, in `llms` and in `toolloop` | TOOL-11 | [maestro-llms#148](https://github.com/SnapdragonPartners/maestro-llms/issues/148) |
 | Budget admission before each provider attempt, including retries, and a known-safe input bound | Retries run inside the injected client, and `maestro-llms` ADR 0031 gave attempts an observer, which cannot refuse one, rather than a middleware slot; the existing estimator is approximate, not a bound | BUD-3 | [maestro-llms#149](https://github.com/SnapdragonPartners/maestro-llms/issues/149) |
 | An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 | [maestro-llms#150](https://github.com/SnapdragonPartners/maestro-llms/issues/150) |
-| PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | Section 6 | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
+| PDF word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page | The intake review UI's evidence highlighting (section 6) | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
 
 **Not upstream work.** Three loop needs that an earlier draft listed here
 are met without changes to `maestro-llms`: ending a turn at a
