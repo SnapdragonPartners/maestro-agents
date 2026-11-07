@@ -609,18 +609,24 @@ The host implements these; the library calls them. (morris#568 item 8)
   continue the run in a new activation, and assert that no effect is
   duplicated and no work is lost. This tests recovery and idempotency, not
   fencing, because the stopped worker never returns.
-- **TEST-6 Must: stale-owner tests**, at two pause points. In each, the
-  harness transfers the instance's ownership to activation B while A is
-  paused, lets B commit, resumes A, and asserts that none of the durable
-  writes HOST-6 fences landed for A: no effect, checkpoint,
-  execution-record append or run-record change (such as setting `waiting`
-  or accepting an input).
-  - *Before the commit*: A is paused before it starts the commit. This
-    fails if ownership is not checked at commit time at all.
+- **TEST-6 Must: stale-owner tests**, at two pause points. The property
+  checked in both is the same: no durable write HOST-6 fences (effect,
+  checkpoint, execution-record append, run-record change such as setting
+  `waiting` or accepting an input) lands for A after B's ownership
+  transfer has committed.
+  - *Before the commit*: A is paused before it starts the commit; the
+    harness transfers ownership to B and lets B commit, then resumes A,
+    and asserts that none of A's fenced writes land. This fails if
+    ownership is not checked at commit time at all.
   - *Inside the commit*: A is paused after it has read the ownership
-    record and before its write. This fails if the check and the write are
-    not serialized against the transfer (HOST-6), which the first pause
-    point cannot detect.
+    record and before its write, while B attempts the transfer. Either
+    serialization order is correct and the test accepts both: B's transfer
+    waits until A's commit finishes (as with the row lock HOST-6 permits),
+    so A's write lands while A is still the owner and B's transfer follows
+    it; or B's transfer commits first and A's write is rejected. The test
+    fails only if A's write lands after B's transfer has committed, which
+    detects a check and write not serialized against the transfer (HOST-6)
+    and which the first pause point cannot.
 - **TEST-2 Must: fakes for every seam**, usable by agent-type authors and
   hosts, built on `maestro-llms/testllm`.
 - **TEST-3 Should: record mode.** A live run can record its model exchange
@@ -817,11 +823,12 @@ store and the review UI:
    acknowledgement and checkpoint are recorded (TEST-5).
 4. Continue the run in a new activation and show the submission is not
    duplicated and no work is lost.
-5. Separately, run both TEST-6 interleavings against the submission:
-   pause activation A before its commit, and inside it after reading
-   ownership, transfer ownership to activation B and let B commit, resume
-   A, and show that none of A's fenced writes (submission, checkpoint,
-   execution-record append, run-record change) landed. Steps 3 and 4 never
+5. Separately, run both TEST-6 interleavings against the submission
+   (activation A paused before its commit, and inside it after reading
+   ownership, while activation B takes over), accepting either valid
+   serialization order, and show that none of A's fenced writes
+   (submission, checkpoint, execution-record append, run-record change)
+   lands after B's transfer has committed. Steps 3 and 4 never
    bring a stale worker back, so they cannot show fencing; step 5 does,
    including the serialization HOST-6 requires.
 
