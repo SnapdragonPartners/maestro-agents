@@ -157,8 +157,9 @@ Known consumers:
        carries the input's identity.
     3. *Accept, once.* The runtime accepts an input only if the run is
        `waiting` for it. It durably records the accepted input with its
-       identity and moves the run's status out of `waiting` (to
-       `runnable`) in one commit, before acting on the input. A delivery
+       identity in the execution record (REC-1), where a recovering
+       activation finds it, and moves the run's status out of `waiting`
+       (to `runnable`) in one commit, before acting on the input. A delivery
        whose identity was already accepted, or that arrives when the run
        is not waiting for it, is acknowledged and not applied again.
     4. *Continue.* The run continues from the wait's step boundary; the
@@ -310,7 +311,11 @@ Known consumers:
     accepted (STM-8, on either delivery path), the runtime executes the
     approved action, with its original action identity and idempotency
     key, only if the digest still matches, and returns the result to the
-    model.
+    model. If the digest no longer matches (the agent type or its tools
+    changed while the run waited), the pending action is invalidated and
+    recorded as such, never executed, and the model receives a denial as
+    data, as for any policy denial (TOOL-3), so the run continues rather
+    than stalling.
 
   A host that can get a decision quickly (a chat user) may simply block
   inside the hook and return `allow` or `deny`; the library needs nothing
@@ -536,8 +541,10 @@ The host implements these; the library calls them. (morris#568 item 8)
 - **HOST-6 Must: ownership is enforced at the durable commit.** A
   separate check before the effect is not enough: a worker can pass it,
   lose ownership, and then commit. So ownership is validated together with
-  every durable commit an activation makes: tool effects, checkpoint
-  publication and execution-record appends. For a database effect, the
+  every durable write an activation makes, with no exceptions: tool
+  effects, checkpoint publication, execution-record appends, run-record
+  changes (status and reason, accepted inputs, STM-8) and any other write
+  a later requirement adds. A write that skips this check is a defect. For a database effect, the
   ownership check and the effect are serialized against ownership
   transfer, for example by locking the ownership row or comparing an owner
   epoch within the same transaction at an isolation level that actually
@@ -601,8 +608,10 @@ The host implements these; the library calls them. (morris#568 item 8)
   fencing, because the stopped worker never returns.
 - **TEST-6 Must: stale-owner tests.** The harness can pause activation A
   just before a durable commit, transfer the instance's ownership to
-  activation B, then resume A, and assert that A cannot commit an effect,
-  publish a checkpoint or append an authoritative execution record. This
+  activation B, then resume A, and assert that A can make none of the
+  durable writes HOST-6 fences: no effect, checkpoint, execution-record
+  append or run-record change (such as setting `waiting` or accepting an
+  input). This
   exercises HOST-6 directly: it fails if ownership enforcement is
   removed.
 - **TEST-2 Must: fakes for every seam**, usable by agent-type authors and
@@ -802,9 +811,9 @@ store and the review UI:
 4. Continue the run in a new activation and show the submission is not
    duplicated and no work is lost.
 5. Separately, pause activation A before the commit, transfer ownership to
-   activation B, resume A, and show that A can neither commit the
-   submission, publish a checkpoint nor append an authoritative execution
-   record (TEST-6). Steps 3 and 4 alone would pass with fencing removed.
+   activation B, resume A, and show that A can make none of the writes
+   HOST-6 fences: no submission, checkpoint, execution-record append or
+   run-record change (TEST-6). Steps 3 and 4 alone would pass with fencing removed.
 
 The slice proves the state machine, execution record, write contract,
 recovery (steps 3 and 4) and fencing (step 5) while the upstream multimodal work proceeds. Visual
