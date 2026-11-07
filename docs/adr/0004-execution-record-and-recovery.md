@@ -132,16 +132,27 @@ records are stored and how a commit is made atomic and fenced is
    in the same commit as the next `model_attempt` (or on the loop's
    return, before anything else is committed). So a turn that ends with
    such a call reaches its step boundary before any later work, and the
-   recorded content is exactly what the model was sent.
-9. **A transition commits atomically.** The `result` of a call that causes
-   a transition (STM-3), the not-executed `result` of every later sibling,
-   the `transition` entry and the new state's checkpoint go in one commit.
-   No recovery ever sees a transition without its siblings marked, or the
-   reverse. The tool returns `ToolResult.Stop`, so `toolloop` ends the turn
-   at that call and synthesizes matching not-executed results in the
-   transcript (`maestro-llms` ADR 0017); the loop then returns, and the
-   ended state's transcript, which is the only place that text appears, is
-   recorded from the loop's returned messages before the next state runs.
+   recorded content is exactly what the model was sent. A turn that ends
+   in a transition is the exception, handled entirely by item 9's commit.
+9. **A transition commits atomically, and resolves its whole turn.** One
+   commit holds the `result` of the call that causes the transition
+   (STM-3), a `result` for every other call in the turn that has none yet
+   (not executed, for each later sibling; refused, for each earlier call
+   naming no offered tool), the `transition` entry and the new state's
+   checkpoint. The runtime derives those results from the recorded turn
+   and the state's offered tools alone, so it needs no transcript text.
+   No recovery ever sees a transition without its turn fully resolved, or
+   the reverse, and no write after the transition is needed for the
+   snapshot to be complete. The tool returns `ToolResult.Stop`, so
+   `toolloop` ends the turn at that call, synthesizes matching results in
+   the transcript (`maestro-llms` ADR 0017) and returns.
+
+   **Each model state starts its own transcript.** What passes from one
+   state to the next is the state data (STM-5), never the ended state's
+   transcript, so the text `toolloop` synthesized in a turn that ended in
+   a transition is never sent to a model. The record keeps each such
+   call's status, which is all recovery and explanation need; the model
+   text it would have received does not exist as an input to anything.
 
 ### Recovery
 
