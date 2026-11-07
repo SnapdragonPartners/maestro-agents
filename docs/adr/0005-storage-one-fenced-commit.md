@@ -57,8 +57,9 @@ at each point of a step. This ADR settles how those writes reach a store.
      (HOST-6's compare-and-set on instance, owner and sequence);
    - change the run record (status, reason, consumed budgets, accepted
      inputs);
-   - store an artifact, content-addressed and write-once (storing the
-     same digest twice is a no-op);
+   - store an artifact, content-addressed and write-once, with its
+     metadata (media type, size; STORE-1); storing the same digest twice
+     is a no-op;
    - release ownership (ADR 0003, item 10).
 
    A failed precondition rejects the whole commit with a conflict error
@@ -138,11 +139,11 @@ at each point of a step. This ADR settles how those writes reach a store.
     - `runs/<run>/run.json`: the run record;
     - `runs/<run>/record/<seq>.json`: one file per execution-record entry.
       An append at sequence *n* has the precondition that entry *n* does
-      not exist and entry *n*-1 does (or *n* is 1), checked under the
-      mutex like every precondition; publishing checkpoint *n* is checked
-      the same way;
+      not exist and entry *n*-1 does (or *n* is 1); publishing checkpoint
+      *n* is checked the same way;
     - `objects/<namespace>/<key>.json`: value and version;
-    - `artifacts/<sha256>`: content, written once;
+    - `artifacts/<sha256>` and `artifacts/<sha256>.json`: content and
+      metadata, each written once;
     - `triggers/<instance>/<seq>.json`: queued triggers in arrival order;
     - `telemetry/<run>/<seq>.json`: telemetry events, written by the
       telemetry sink (HOST-1) idempotently on their identity, not through
@@ -150,11 +151,20 @@ at each point of a step. This ADR settles how those writes reach a store.
       fencing never depend on it (HOST-1, REC-2);
     - `journal/`: commits in progress (item 14).
 
+    **A commit's preconditions are checked in operation order**, under the
+    mutex, against the current files as updated by the commit's earlier
+    operations, so consecutive appends in one commit (ADR 0004, items 8
+    and 9) satisfy each other.
+
     Prefix listing reads a namespace's directory and filters the decoded
-    keys, which is linear in the namespace's size and adequate at the file store's scale. A file
-    is written by writing a temporary file in the same directory, syncing
-    it, renaming it over the target and syncing the directory. (Go's
-    `File.Sync` issues `F_FULLFSYNC` on macOS.)
+    keys, which is linear in the namespace's size and adequate at the file
+    store's scale. A file is written by writing a temporary file in the
+    same directory, syncing it, renaming it over the target and syncing the
+    directory. (Go's `File.Sync` issues `F_FULLFSYNC` on macOS.)
+    **Temporary files have a reserved prefix** that the key encoding can
+    never produce. Every reader ignores them: listings, journal discovery
+    and record lookups see only renamed files. Opening the store deletes
+    any it finds, after finishing journals (item 15).
 14. **A multi-record commit goes through a journal.** The store has one
     in-process mutex, which serializes commits and claims. A commit:
     1. reaches the first pause point (before taking the mutex);
@@ -185,9 +195,11 @@ at each point of a step. This ADR settles how those writes reach a store.
     store, since the commit may or may not survive a power loss.
 15. **Opening the store finishes interrupted commits.** After taking the
     lock, and before serving any operation, the store applies every journal
-    it finds, in order, deletes each and syncs the directory. A journal is
-    complete or absent, since it is written by rename. If this fails, the
-    open fails.
+    it finds, in order, deletes each and syncs the directory, then deletes
+    every leftover temporary file (item 13). Only renamed journal files are
+    journals, so a journal is complete or absent; a temporary file left by
+    an interrupted journal write is never applied. If this fails, the open
+    fails.
 16. **Leases live in memory; owners and epochs on disk.** Only the one
     process reads its leases, so the store keeps lease expiry in memory and
     writes no file per heartbeat. The ownership file holds the owner and

@@ -37,7 +37,8 @@ records are stored and how a commit is made atomic and fenced is
    entry has a kind, the step it belongs to and a JSON payload (P-6).
    Large or repeated content (model requests and responses, documents,
    prompts, skills, tool definitions, the manifest) is stored as an
-   artifact and referenced by its SHA-256 digest, in the same commit as
+   artifact, with its metadata (ADR 0005), and referenced by its SHA-256
+   digest, in the same commit as
    the entry, so a referenced digest is always retrievable (REC-1).
 2. **Entry kinds** (names illustrative):
    - `activation_started`: the claim's epoch and the checkpoint sequence
