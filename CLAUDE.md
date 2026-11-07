@@ -19,14 +19,26 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 Current state: **bootstrap**. The repository has its tooling, workflow and
 an empty root package; no API is defined yet. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
-of them in [docs/MVP.md](docs/MVP.md); the design arrives in later
-PRs, each with its ADR.
+of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
+and storage design are ADRs 0003 to 0005; further design arrives with the
+code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
 - An agent instance executes serially, with one execution owner; parallelism
   comes from separate instances, and later from subagents
   ([ADR 0002](docs/adr/0002-serial-execution-within-an-agent-instance.md))
+- A run has no stored `running` status: executing and ready are derived
+  from the run's status and the instance's ownership lease; an activation
+  returns an outcome only when it committed one, and an error otherwise
+  ([ADR 0003](docs/adr/0003-run-model-identities-and-activation-results.md))
+- The execution record is a per-run write-ahead log; a checkpoint is its
+  snapshot at each step boundary, and recovery replays at most one step
+  ([ADR 0004](docs/adr/0004-execution-record-and-recovery.md))
+- Every durable write an activation makes goes through one fenced, atomic
+  commit; atomic-local-transaction tools return operations rather than
+  writing; the library does not encrypt at rest
+  ([ADR 0005](docs/adr/0005-storage-one-fenced-commit.md))
 
 ### Related repositories
 
