@@ -130,11 +130,28 @@ at each point of a step. This ADR settles how those writes reach a store.
     second process fails at once with an error naming the directory. The
     lock is released when the process exits, however it exits. Network
     file systems are not supported.
-13. **One JSON file per record**, under `instances/`, `runs/`,
-    `objects/<namespace>/`, `artifacts/` and `triggers/`, with keys and IDs
-    encoded so each is a single safe path component. Prefix listing reads
-    a namespace's directory and filters the decoded keys, which is linear
-    in the namespace's size and adequate at the file store's scale. A file
+13. **One JSON file per record**, with keys and IDs encoded so each is a
+    single safe path component (names illustrative):
+    - `instances/<instance>/ownership.json`: owner and epoch (item 16);
+    - `instances/<instance>/checkpoints/<seq>.json`: one file per
+      checkpoint, retained (ADR 0004, item 3);
+    - `runs/<run>/run.json`: the run record;
+    - `runs/<run>/record/<seq>.json`: one file per execution-record entry.
+      An append at sequence *n* has the precondition that entry *n* does
+      not exist and entry *n*-1 does (or *n* is 1), checked under the
+      mutex like every precondition; publishing checkpoint *n* is checked
+      the same way;
+    - `objects/<namespace>/<key>.json`: value and version;
+    - `artifacts/<sha256>`: content, written once;
+    - `triggers/<instance>/<seq>.json`: queued triggers in arrival order;
+    - `telemetry/<run>/<seq>.json`: telemetry events, written by the
+      telemetry sink (HOST-1) idempotently on their identity, not through
+      `Commit`: telemetry is an observation, never state, so recovery and
+      fencing never depend on it (HOST-1, REC-2);
+    - `journal/`: commits in progress (item 14).
+
+    Prefix listing reads a namespace's directory and filters the decoded
+    keys, which is linear in the namespace's size and adequate at the file store's scale. A file
     is written by writing a temporary file in the same directory, syncing
     it, renaming it over the target and syncing the directory. (Go's
     `File.Sync` issues `F_FULLFSYNC` on macOS.)

@@ -59,8 +59,8 @@ records are stored and how a commit is made atomic and fenced is
      that ends with `model_error` replays too (REC-1, REC-4);
    - `permission`: a call's permission and the policy decision behind it
      (STM-6, TOOL-3);
-   - `attempt`: a call's action identity, idempotency key and arguments
-     digest, recorded immediately before it is sent (STM-6, ADR 0003);
+   - `attempt`: a call's action identity and arguments digest, and for a
+     write call its idempotency key, recorded immediately before it is sent (STM-6, ADR 0003);
    - `result`: a call's outcome: executed, with its result; not executed
      because a transition ended the turn (STM-3); refused because it names
      no tool offered to the state (MAN-2), with the result the model

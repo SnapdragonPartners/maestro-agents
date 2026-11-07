@@ -33,15 +33,19 @@ key on them.
 2. **Instance and run IDs** are host-assigned opaque strings. A run record
    is created conditionally on its trigger's identity (STORE-1), so a
    retried creation finds the existing run. An instance has at most one
-   non-terminal run; triggers that arrive meanwhile are queued (MODE-4).
+   non-terminal run. A trigger that arrives meanwhile is either queued
+   for that instance or started on a new instance, as the host chooses
+   (MODE-4, STM-9); the standalone host queues by default with a durable
+   store (MODE-4).
 3. **Step.** A step is the work between two step boundaries (STM-6): one
    model turn with its tool calls, or one state's processing that ends in
    a transition. Steps are numbered from 1 within the run, and the number
    is part of the run's checkpointed state. A wait for input (STM-8) does
    not start a new step.
 4. **Action identity** is (scope, step, call index), where the call index
-   is the call's position in the recorded model response (STM-6). The
-   idempotency key (TOOL-5) is the hex SHA-256 of a canonical,
+   is the call's position in the recorded model response (STM-6). Every
+   call has an action identity; a write call also has an idempotency key
+   (TOOL-5), and reads carry none (STM-6). The key is the hex SHA-256 of a canonical,
    domain-separated encoding of the action identity. The attempt marker
    (ADR 0004) also records a digest of the call's arguments; reissuing an
    action identity whose recorded digest differs is refused as a defect.
@@ -65,8 +69,13 @@ key on them.
    - *executing*: status `runnable` and the instance has a live owner (an
      owner whose lease has not expired);
    - *ready*: status `runnable` and the instance has no live owner (no
-     owner, or an expired lease). A `waiting` run becomes ready when the
-     host has the input it awaits (STM-8, post-MVP).
+     owner, or an expired lease). A `waiting` run is not ready: nothing
+     can advance it until its input arrives. When STM-8 is built
+     (post-MVP), the host records a delivered input in the store, with a
+     control-plane write added to ADR 0005 item 4, and *ready* is
+     extended to a `waiting` run with no live owner and a recorded input
+     it has not yet accepted; the activation then accepts it (STM-8). Until
+     then nothing enters `waiting` (MVP.md).
 8. **Claiming is compare-and-set on the ownership record.** A claim
    succeeds only if the instance has no live owner, and it increments the
    epoch, which never decreases. Two hosts racing for one run cannot both
