@@ -105,22 +105,25 @@ func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome,
 // activation is one activation's view of its run. Only the activation
 // writes the run's records, so the view stays exact (ADR 0005, item 5).
 type activation struct {
-	c     *Controller
-	m     *machine
-	fence store.Fence
-	run   store.Run
-	scope store.Scope
+	// start1 is the run's start while it is not yet committed.
+	start1 *runStart
+	m      *machine
+	c      *Controller
+	scope  store.Scope
+	fence  store.Fence
 	// config is the run's resolved configuration; cs.Config its digest.
 	config json.RawMessage
+	run    store.Run
 	cs     checkpointState
-	// own reports whether the run has a checkpoint; ckSeq is its
-	// latest, nextCk the instance's next checkpoint sequence.
-	own    bool
+	// ckSeq is the run's latest checkpoint, nextCk the instance's next
+	// checkpoint sequence.
 	ckSeq  uint64
 	nextCk uint64
 	// nextEntry is the run's next execution-record sequence.
 	nextEntry uint64
 	steps     int
+	// own reports whether the run has a checkpoint.
+	own bool
 }
 
 // ending is an activation's result: an outcome or an error.
@@ -350,10 +353,20 @@ func (a *activation) start(ctx context.Context, config json.RawMessage) *ending 
 }
 
 // startRun runs Init and commits the run's start with its first checkpoint,
-// so Init never runs twice for a run.
+// so Init never runs twice for a run. Until that commit lands, a terminal
+// ending carries the run's start with it (REC-1).
 func (a *activation) startRun(ctx context.Context, config json.RawMessage) *ending {
+	start := &runStart{entry: RunStarted{
+		AgentType: a.m.name, AgentVersion: a.m.version, TriggerID: a.run.TriggerID, Trigger: a.run.Trigger,
+	}}
+	a.start1 = start
 	if err := store.ValidJSON(config); err != nil {
 		return a.fail(ctx, ReasonStateError, "configuration: "+err.Error())
+	}
+	if config != nil {
+		sum := sha256.Sum256(config)
+		start.entry.Config = hex.EncodeToString(sum[:])
+		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
 	}
 	a.config = config
 	var data json.RawMessage
@@ -364,17 +377,11 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	if err != nil {
 		return a.codeFailed(ctx, fmt.Errorf("init: %w", err))
 	}
-	cs := checkpointState{AgentType: a.m.name, AgentVersion: a.m.version, State: a.m.initial, Data: data, Step: 1}
-	b := a.entries()
-	if config != nil {
-		sum := sha256.Sum256(config)
-		cs.Config = hex.EncodeToString(sum[:])
-		b.ops = append(b.ops, store.PutArtifactOp(store.Artifact{Digest: cs.Config, MediaType: "application/json", Content: config}))
+	cs := checkpointState{
+		AgentType: a.m.name, AgentVersion: a.m.version, State: a.m.initial, Data: data, Step: 1, Config: start.entry.Config,
 	}
-	b.add(1, EntryRunStarted, RunStarted{
-		AgentType: a.m.name, AgentVersion: a.m.version, TriggerID: a.run.TriggerID,
-		Trigger: a.run.Trigger, Config: cs.Config,
-	})
+	b := a.entries()
+	start.add(b)
 	b.checkpoint(&cs)
 	if b.err != nil {
 		return &ending{err: b.err}
@@ -382,8 +389,23 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	if err := a.commit(ctx, b.ops, b.next); err != nil {
 		return commitErr(err)
 	}
+	a.start1 = nil
 	a.checkpointed(&cs)
 	return nil
+}
+
+// runStart is a run's start, not yet committed: the configuration
+// artifact, if any, and the run_started entry.
+type runStart struct {
+	config *store.Artifact
+	entry  RunStarted
+}
+
+func (r *runStart) add(b *entries) {
+	if r.config != nil {
+		b.ops = append(b.ops, store.PutArtifactOp(*r.config))
+	}
+	b.add(1, EntryRunStarted, r.entry)
 }
 
 // checkpointed records that a commit published cs at a.nextCk.
@@ -411,6 +433,12 @@ func (a *activation) step(ctx context.Context) *ending {
 		})
 		if err != nil {
 			return a.codeFailed(ctx, fmt.Errorf("state %q: %w", st.name, err))
+		}
+		// A state that returns normally after the context ended has its
+		// result discarded: it has no durable effect of its own (ADR 0003,
+		// item 5), and the cause decides the ending (RUN-2).
+		if ctx.Err() != nil {
+			return a.endByCause(ctx)
 		}
 		next, err := a.checkTransition(st, &tr)
 		if err != nil {
@@ -506,6 +534,12 @@ func (a *activation) outcome(out *OutcomeEntry) Outcome {
 // entry, the run record's change and the release, in one commit.
 func (a *activation) end(ctx context.Context, out OutcomeEntry) *ending {
 	b := a.entries()
+	// A terminal ending before the run's start landed records the start,
+	// so the run's inputs are on the record (REC-1). A non-terminal one
+	// does not: the next activation starts the run.
+	if a.start1 != nil && out.Status.Terminal() {
+		a.start1.add(b)
+	}
 	b.add(a.step1(), EntryOutcome, out)
 	if b.err != nil {
 		return &ending{err: b.err}
@@ -516,8 +550,12 @@ func (a *activation) end(ctx context.Context, out OutcomeEntry) *ending {
 	return &ending{out: a.outcome(&out)}
 }
 
-// fail ends the run as failed with the given reason.
+// fail ends the run as failed with the given reason, unless the context has
+// ended, whose cause then decides the ending (ADR 0003, item 17).
 func (a *activation) fail(ctx context.Context, reason, detail string) *ending {
+	if ctx.Err() != nil {
+		return a.endByCause(ctx)
+	}
 	return a.end(ctx, OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: reason}, Detail: detail})
 }
 

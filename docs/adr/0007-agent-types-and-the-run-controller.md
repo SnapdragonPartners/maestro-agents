@@ -68,7 +68,13 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
    runs twice for one run, even if it is not deterministic. This is a
    checkpoint at a boundary that is not a step boundary, which ADR 0004
    item 4 does not forbid; it means every started run has a checkpoint of
-   its own, and recovery always starts from one.
+   its own, and recovery always starts from one. **An activation that
+   ends the run before that commit lands** (`Init` fails or panics, the
+   configuration is not valid JSON, or the context's cause cancels or
+   fails the run) commits the configuration artifact and `run_started`
+   with its terminal ending, so the run's inputs are on the record
+   (REC-1). A non-terminal ending (a shutdown) does not: the next
+   activation starts the run, and records its start once.
 7. **The configuration is fixed when the run starts** (RUN-1). It is
    stored as an artifact in the start commit, and its digest is recorded
    in `run_started` and in every checkpoint. Later activations read it
@@ -129,7 +135,13 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
     reason; a `*BudgetExhausted` cause fails it with `budget_exhausted`
     naming the budget; any other cause, or none, is a shutdown, and the
     run stays `runnable` with reason `shutdown`. Stopping at the host's
-    step limit leaves it `runnable` with reason `step_limit`. **The
+    step limit leaves it `runnable` with reason `step_limit`. **The cause
+    takes precedence over every ending the runtime would otherwise
+    choose** (RUN-2): a code state that returns a transition, terminal or
+    not, after the context ended has the result discarded, which is safe
+    because it has no durable effect of its own (ADR 0003, item 5); and a
+    failure the runtime picks itself (`state_error`, `object_conflict`)
+    yields to the cause once the context has ended. **The
     controller's own reads and writes use a context that is not cancelled
     with the activation's**, so a cancelled activation still commits its
     outcome; agent-type code receives the activation's context.

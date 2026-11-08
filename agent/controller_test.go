@@ -640,3 +640,153 @@ func TestEnv(t *testing.T) {
 		t.Fatalf("env = %q, want %q", got, want)
 	}
 }
+
+// A state that returns a transition after its context ended has the result
+// discarded: the cause decides the ending, terminal transition or not
+// (RUN-2; Codex round 1).
+func TestCauseBeatsStateResult(t *testing.T) {
+	for _, to := range []string{"done", "count"} {
+		t.Run(to, func(t *testing.T) {
+			forEachBackend(t, func(t *testing.T, b backend) {
+				s := b.open()
+				defer s.Close()
+				createRun(t, s, "r1", `{"target":3}`)
+				ctx, cancel := context.WithCancelCause(context.Background())
+				typ := counterType()
+				typ.States[0].Code = func(ctx context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
+					tr, err := countStep(ctx, env, d)
+					tr.To = to
+					cancel(agent.ErrOperator)
+					return tr, err
+				}
+				out, err := activate(ctx, agent.NewController(s, registry(t, typ)), claim(t, s), "r1", 0)
+				if err != nil || out.Status != store.StatusCancelled || out.Reason.Code != agent.ReasonOperator || out.Steps != 0 {
+					t.Fatalf("outcome = %+v, %v; want cancelled by the operator", out, err)
+				}
+				if n := count(t, s, "r1"); n != 0 {
+					t.Fatalf("count = %d: the discarded transition's operations landed", n)
+				}
+				if got := kinds(entries(t, s, "r1")); !slices.Equal(got, []string{"activation_started", "run_started", "outcome"}) {
+					t.Fatalf("entries = %v", got)
+				}
+			})
+		})
+	}
+}
+
+// An ended context also decides an ending the runtime would otherwise
+// choose itself, such as a checkpoint it cannot migrate.
+func TestCauseBeatsRuntimeFailure(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, b backend) {
+		s := b.open()
+		defer s.Close()
+		createRun(t, s, "r1", `{"target":3}`)
+		if _, err := activate(context.Background(), agent.NewController(s, registry(t, counterType())), claim(t, s), "r1", 1); err != nil {
+			t.Fatal(err)
+		}
+		v2 := counterType()
+		v2.Version = "2"
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(agent.ErrSuperseded)
+		out, err := activate(ctx, agent.NewController(s, registry(t, v2)), claim(t, s), "r1", 0)
+		if err != nil || out.Status != store.StatusCancelled || out.Reason.Code != agent.ReasonSuperseded {
+			t.Fatalf("outcome = %+v, %v; want cancelled as superseded", out, err)
+		}
+	})
+}
+
+// A run that ends while starting still records its start: the trigger, the
+// agent type's version and the configuration (REC-1; Codex round 1). A
+// non-terminal ending leaves the start to the next activation, so it is
+// recorded once.
+func TestStartRecordedOnTerminalStartFailure(t *testing.T) {
+	failingInit := func(fn func(context.Context) error) *agent.Type[counterData] {
+		typ := counterType()
+		typ.Init = func(ctx context.Context, _ *agent.Env) (counterData, error) {
+			return counterData{}, fn(ctx)
+		}
+		return typ
+	}
+	cases := []struct {
+		typ    *agent.Type[counterData]
+		cancel error
+		name   string
+		config string
+		status store.Status
+	}{
+		{name: "init error", typ: failingInit(func(context.Context) error { return errors.New("no document") }),
+			config: `{"model":"a"}`, status: store.StatusFailed},
+		{name: "init panic", typ: failingInit(func(context.Context) error { panic("boom") }),
+			config: `{"model":"a"}`, status: store.StatusFailed},
+		{name: "invalid configuration", typ: counterType(), config: `{`, status: store.StatusFailed},
+		{name: "cancelled", typ: failingInit(func(ctx context.Context) error { return context.Cause(ctx) }),
+			cancel: agent.ErrOperator, config: `{"model":"a"}`, status: store.StatusCancelled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachBackend(t, func(t *testing.T, b backend) {
+				s := b.open()
+				defer s.Close()
+				createRun(t, s, "r1", `{"target":3}`)
+				ctx, cancel := context.WithCancelCause(context.Background())
+				defer cancel(nil)
+				if tc.cancel != nil {
+					cancel(tc.cancel)
+				}
+				out, err := agent.NewController(s, registry(t, tc.typ)).Activate(ctx, agent.ActivationInput{
+					Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Config: json.RawMessage(tc.config),
+				})
+				if err != nil || out.Status != tc.status {
+					t.Fatalf("outcome = %+v, %v; want %s", out, err, tc.status)
+				}
+				es := entries(t, s, "r1")
+				if got := kinds(es); !slices.Equal(got, []string{"activation_started", "run_started", "outcome"}) {
+					t.Fatalf("entries = %v", got)
+				}
+				var rs agent.RunStarted
+				if err := json.Unmarshal(es[1].Payload, &rs); err != nil || rs.AgentVersion != "1" || string(rs.Trigger) != `{"target":3}` {
+					t.Fatalf("run_started = %+v, %v", rs, err)
+				}
+				if json.Valid([]byte(tc.config)) {
+					if _, cfg, err := s.Artifact(context.Background(), rs.Config); err != nil || string(cfg) != tc.config {
+						t.Fatalf("configuration artifact = %q, %v", cfg, err)
+					}
+				} else if rs.Config != "" {
+					t.Fatalf("invalid configuration recorded as %q", rs.Config)
+				}
+			})
+		})
+	}
+}
+
+func TestShutdownDuringInitStartsOnce(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, b backend) {
+		s := b.open()
+		defer s.Close()
+		createRun(t, s, "r1", `{"target":2}`)
+		typ := counterType()
+		init := typ.Init
+		shut := true
+		typ.Init = func(ctx context.Context, env *agent.Env) (counterData, error) {
+			if shut {
+				return counterData{}, context.Cause(ctx)
+			}
+			return init(ctx, env)
+		}
+		c := agent.NewController(s, registry(t, typ))
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(errors.New("SIGTERM"))
+		out, err := activate(ctx, c, claim(t, s), "r1", 0)
+		if err != nil || out.Status != store.StatusRunnable || out.Reason.Code != agent.ReasonShutdown {
+			t.Fatalf("shutdown outcome = %+v, %v", out, err)
+		}
+		shut = false
+		if out, err = activate(context.Background(), c, claim(t, s), "r1", 0); err != nil || out.Status != store.StatusSucceeded {
+			t.Fatalf("second activation = %+v, %v", out, err)
+		}
+		want := []string{"activation_started", "outcome", "activation_started", "run_started", "transition", "transition", "outcome"}
+		if got := kinds(entries(t, s, "r1")); !slices.Equal(got, want) {
+			t.Fatalf("entries = %v, want %v", got, want)
+		}
+	})
+}
