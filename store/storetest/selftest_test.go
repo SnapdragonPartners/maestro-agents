@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/store"
 	"github.com/SnapdragonPartners/maestro-agents/store/memstore"
@@ -46,7 +47,13 @@ func record(t *testing.T, fn func(testing.TB, Harness), h Harness) []string {
 		defer close(done)
 		fn(r, h)
 	}()
-	<-done
+	select {
+	case <-done:
+	case <-time.After(time.Minute):
+		t.Fatalf("suite case did not finish within a minute; failures so far: %v", r.failures)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.failures
 }
 
@@ -131,5 +138,22 @@ func TestStaleOwnerInsideCommitDetectsUnserializedCheck(t *testing.T) {
 	got := record(t, staleOwnerInsideCommit, brokenHarness(unserialized))
 	if len(got) == 0 {
 		t.Fatal("a store whose check and write are not serialized passed the inside-commit test")
+	}
+}
+
+// A store that never calls the pause hook fails both fencing tests with a
+// diagnosis, rather than hanging the suite.
+func TestFencingTestsFailWithoutPauseHook(t *testing.T) {
+	noHook := Harness{Open: func(_ testing.TB, o Options) store.Store {
+		return memstore.New(memstore.WithClock(o.Now))
+	}}
+	for name, fn := range map[string]func(testing.TB, Harness){
+		"before": staleOwnerBeforeCommit,
+		"inside": staleOwnerInsideCommit,
+	} {
+		got := record(t, fn, noHook)
+		if len(got) == 0 || !strings.Contains(strings.Join(got, "\n"), "pause hook") {
+			t.Fatalf("%s-commit test against a store without the pause hook = %v; want a pause hook failure", name, got)
+		}
 	}
 }

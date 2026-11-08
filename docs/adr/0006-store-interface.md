@@ -118,6 +118,13 @@ PR that defines it:
     and a reopen check. TEST-5 stops an activation at a durable boundary
     and continues it in a new one, so it needs the execution record's
     runtime, and joins the suite with that runtime.
+    **A reopen keeps owners and epochs and never extends a lease**; the
+    suite accepts a store that drops every lease on reopen, as the file
+    store does (ADR 0005, item 16, tested in the file store's own tests),
+    and one that keeps them, as a store shared by several processes must,
+    since dropping a live process's lease would let a second worker claim
+    its instance. The fencing tests bound every wait, so a store that
+    never calls the pause hook fails with a diagnosis rather than hanging.
 
 ### The file store
 

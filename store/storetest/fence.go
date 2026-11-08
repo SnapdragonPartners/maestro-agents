@@ -19,7 +19,38 @@ const (
 	// store that does not serialize the claim against the commit lets the
 	// claim return at once, well inside this.
 	blockedFor = 300 * time.Millisecond
+	// hangFor bounds every other wait in the fencing tests, so a store
+	// that never reaches a pause point, or never returns, fails with a
+	// diagnosis instead of hanging until the test binary's timeout.
+	hangFor = 30 * time.Second
 )
+
+// waitPaused waits for A's commit to reach the pause point. A commit that
+// returns without pausing, or a pause that never comes, means the store
+// does not call the pause hook where TEST-6 needs it.
+func waitPaused(t testing.TB, p *pauser, aErr <-chan error) {
+	t.Helper()
+	select {
+	case <-p.paused:
+	case err := <-aErr:
+		t.Fatalf("A's commit returned (%v) without reaching pause point %v: the store must call the pause hook at both points of every commit", err, p.at)
+	case <-time.After(hangFor):
+		t.Fatalf("A's commit did not reach pause point %v within %v: the store must call the pause hook at both points of every commit", p.at, hangFor)
+	}
+}
+
+// within receives from c, failing the test if nothing arrives in hangFor.
+func within[T any](t testing.TB, c <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-c:
+		return v
+	case <-time.After(hangFor):
+		t.Fatalf("%s did not return within %v", what, hangFor)
+		var zero T
+		return zero
+	}
+}
 
 // pauser pauses the first commit by ownerA at one pause point.
 type pauser struct {
@@ -89,14 +120,14 @@ func staleOwnerBeforeCommit(t testing.TB, h Harness) {
 
 	aErr := make(chan error, 1)
 	go func() { aErr <- s.Commit(ctx, a.Fence(), aWrites()) }()
-	<-p.paused
+	waitPaused(t, p, aErr)
 
 	clk.Advance(lease)
 	b := claim(t, s, instance, ownerB)
 	commit(t, s, b.Fence(), store.PutObjectJSON(ns, "b-was-here", 0, json.RawMessage(`true`)))
 
 	close(p.resume)
-	err := <-aErr
+	err := within(t, aErr, "A's commit")
 	wantErr(t, err, store.ErrOwnership)
 	if aLanded(t, s) {
 		t.Fatal("A's fenced writes landed after B's transfer committed")
@@ -122,7 +153,7 @@ func staleOwnerInsideCommit(t testing.TB, h Harness) {
 
 	aErr := make(chan error, 1)
 	go func() { aErr <- s.Commit(ctx, a.Fence(), aWrites()) }()
-	<-p.paused
+	waitPaused(t, p, aErr)
 
 	// A's lease has expired; its epoch is still current, so its commit is
 	// legitimate until B's claim commits.
@@ -145,9 +176,9 @@ func staleOwnerInsideCommit(t testing.TB, h Harness) {
 	case <-time.After(blockedFor):
 	}
 	close(p.resume)
-	errA := <-aErr
+	errA := within(t, aErr, "A's commit")
 	if !bFirst {
-		b = <-bDone
+		b = within(t, bDone, "B's claim, after A's commit")
 	}
 
 	if bFirst {
@@ -181,9 +212,12 @@ func staleOwnerInsideCommit(t testing.TB, h Harness) {
 	wantErr(t, err, store.ErrOwnership)
 }
 
-// durability checks a reopened store: records survive, and every recorded
-// owner has no lease, so its instance is claimable at once and the next
-// claim increments the epoch (ADR 0005, item 16).
+// durability checks a reopened store: records survive, owners and epochs
+// survive, and a reopen never extends a lease. A store may drop every lease
+// on reopen, as the file store does because its lock proves the previous
+// process gone (ADR 0005, item 16), or keep each lease, as a store shared
+// by several processes must; either way the instance is claimable once the
+// lease is gone, and the next claim increments the epoch.
 func durability(t testing.TB, h Harness) {
 	clk := NewClock()
 	o := Options{Now: clk.Now}
@@ -208,8 +242,13 @@ func durability(t testing.TB, h Harness) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	own, err := s.Ownership(ctx, instance)
-	if err != nil || own.Owner != ownerA || own.Epoch != a.Epoch || !own.LeaseExpiry.IsZero() || own.Live(clk.Now()) {
-		t.Fatalf("Ownership after reopen = %+v, %v; want owner A at epoch %d with no lease", own, err, a.Epoch)
+	if err != nil || own.Owner != ownerA || own.Epoch != a.Epoch || own.LeaseExpiry.After(a.LeaseExpiry) {
+		t.Fatalf("Ownership after reopen = %+v, %v; want owner A at epoch %d, lease no later than %v",
+			own, err, a.Epoch, a.LeaseExpiry)
+	}
+	if own.Live(clk.Now()) {
+		// The store kept the lease: let it run out.
+		clk.Advance(lease)
 	}
 	ready, err := s.Claimable(ctx)
 	if err != nil || len(ready) != 1 || ready[0].Run != runID {

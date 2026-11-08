@@ -714,13 +714,24 @@ func testConflictReportsCommittedVersion(t testing.TB, h Harness) {
 		err := e.s.Commit(ctx, f, tc.ops)
 		c := wantConflict(t, err, len(tc.ops)-1, tc.current)
 		if c.IsObjectConflict() {
-			if obj, _ := object(t, e.s, "k"); obj.Version < c.Current || obj.Version != 0 {
+			if obj, _ := object(t, e.s, "k"); obj.Version < c.Current {
 				t.Fatalf("read after conflict = version %d, conflict reported %d", obj.Version, c.Current)
 			}
 		}
 	}
 	if run := getRun(t, e.s, runID); run.Version != 1 {
 		t.Fatalf("run version = %d, want 1", run.Version)
+	}
+	// With a committed version to report: the conflict names it, not the
+	// rejected commit's 2, and a read after the conflict sees at least it.
+	commit(t, e.s, f, store.PutObjectJSON(ns, "k", 0, json.RawMessage(`1`)))
+	err := e.s.Commit(ctx, f, []store.Op{
+		store.PutObjectJSON(ns, "k", 1, json.RawMessage(`2`)),
+		store.PutObjectJSON(ns, "k", 1, json.RawMessage(`3`)),
+	})
+	c := wantConflict(t, err, 1, 1)
+	if obj, _ := object(t, e.s, "k"); obj.Version < c.Current || obj.Version != 1 || string(obj.JSON) != "1" {
+		t.Fatalf("read after conflict = %+v, conflict reported %d", obj, c.Current)
 	}
 }
 
