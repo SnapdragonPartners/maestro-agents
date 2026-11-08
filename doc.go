@@ -4,6 +4,7 @@
 // under an orchestrator (Maestro, or Morris's orchestration layer). LLM access
 // goes through github.com/SnapdragonPartners/maestro-llms.
 //
-// The module is at the scaffolding stage: no API is defined yet. See the
-// README and docs/adr for the current state and the decisions behind it.
+// The module is being built toward its MVP. The durable records and the
+// store interface are in the store package; see the README and docs/adr for
+// the current state and the decisions behind it.
 package agents

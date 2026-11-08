@@ -39,4 +39,5 @@ template.
 | [0002](0002-serial-execution-within-an-agent-instance.md) | Serial execution within an agent instance | Accepted |
 | [0003](0003-run-model-identities-and-activation-results.md) | Run model: identities, stored status and activation results | Accepted |
 | [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Accepted |
-| [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Accepted |
+| [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Amended by ADR-0006 |
+| [0006](0006-store-interface.md) | The store interface | Accepted |

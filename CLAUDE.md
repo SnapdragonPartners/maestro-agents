@@ -16,8 +16,10 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 - Agent executables live in this repository under `cmd/<agent>/`, beside the
   library
 
-Current state: **bootstrap**. The repository has its tooling, workflow and
-an empty root package; no API is defined yet. The requirements are in
+Current state: **MVP, step 2 (the vertical slice)**. The store interface,
+the memory and file stores and the conformance suite exist (`store/`); the
+run controller, the execution record's runtime and the intake agent come
+next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0005; further design arrives with the
@@ -40,6 +42,10 @@ Load-bearing decisions so far:
   commit; atomic-local-transaction tools return operations rather than
   writing; the library does not encrypt at rest
   ([ADR 0005](docs/adr/0005-storage-one-fenced-commit.md))
+- The store interface is `store.Store` (committer, control plane, reader);
+  both reference stores run on one engine (`internal/storecore`), and a
+  host store proves itself with `store/storetest`
+  ([ADR 0006](docs/adr/0006-store-interface.md))
 
 ### Related repositories
 
@@ -106,8 +112,12 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
+store/               # Store records, operations, errors and interface (ADR 0005, 0006)
+store/memstore/      # In-memory reference store
+store/filestore/     # File reference store: JSON files, journal, directory lock
+store/storetest/     # Store conformance suite, TEST-6 included
+internal/storecore/  # The engine both reference stores share
 cmd/<agent>/         # (planned) Standalone agent executables
-internal/            # (planned) Code private to this module
 docs/requirements.md # Library requirements (input to the design ADRs)
 docs/MVP.md          # MVP scope: what the MVP builds, what is deferred
 docs/adr/            # Architecture Decision Records

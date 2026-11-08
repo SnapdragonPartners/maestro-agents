@@ -1,6 +1,6 @@
 # 0005. Storage: one fenced commit, and the reference stores
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0006
 - **Date:** 2026-11-07
 
 ## Context
