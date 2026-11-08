@@ -159,7 +159,8 @@ type Object struct {
 	Namespace string          `json:"namespace"`
 	Key       string          `json:"key"`
 	JSON      json.RawMessage `json:"json,omitempty"`
-	Bytes     []byte          `json:"bytes,omitempty"`
+	// Bytes is null when unset and "" when an empty byte value.
+	Bytes []byte `json:"bytes"`
 	// Version is the object's version. Versions never repeat for a key,
 	// across deletion and re-creation.
 	Version uint64 `json:"version"`

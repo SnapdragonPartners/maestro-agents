@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
@@ -61,10 +62,25 @@ func decode(name string) (string, bool) {
 	return b.String(), true
 }
 
-// component encodes an identifier, refusing an empty or oversized one.
+// text refuses a string that JSON serialization would change: encoding/json
+// replaces invalid UTF-8 with U+FFFD, so such a string would not read back
+// as written, and an identity built from it would name another record.
+// Every string a record stores goes through text or component.
+func text(what, s string) error {
+	if !utf8.ValidString(s) {
+		return fmt.Errorf("%w: %s is not valid UTF-8", store.ErrInvalid, what)
+	}
+	return nil
+}
+
+// component encodes an identifier, refusing an empty, oversized or
+// non-UTF-8 one.
 func component(what, s string) (string, error) {
 	if s == "" {
 		return "", fmt.Errorf("%w: empty %s", store.ErrInvalid, what)
+	}
+	if err := text(what, s); err != nil {
+		return "", err
 	}
 	e := encode(s)
 	if len(e) > maxComponent {

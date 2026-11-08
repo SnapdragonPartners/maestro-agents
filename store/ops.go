@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 )
 
 // OpKind names the kind of a commit operation.
@@ -40,11 +41,13 @@ type Op struct {
 // after a deletion). The new version is ExpectVersion+1. Exactly one of
 // JSON and Bytes is set.
 type PutObject struct {
-	Namespace     string          `json:"namespace"`
-	Key           string          `json:"key"`
-	JSON          json.RawMessage `json:"json,omitempty"`
-	Bytes         []byte          `json:"bytes,omitempty"`
-	ExpectVersion uint64          `json:"expect_version"`
+	Namespace string          `json:"namespace"`
+	Key       string          `json:"key"`
+	JSON      json.RawMessage `json:"json,omitempty"`
+	// Bytes has no omitempty, so an empty byte value ("") survives a JSON
+	// round trip as distinct from an unset one (null).
+	Bytes         []byte `json:"bytes"`
+	ExpectVersion uint64 `json:"expect_version"`
 }
 
 // DeleteObject deletes an existing object at ExpectVersion. The deletion is
@@ -151,6 +154,11 @@ func (op Op) Validate() error {
 	if !isSet {
 		return fmt.Errorf("%w: operation kind %q does not match the field set", ErrInvalid, op.Kind)
 	}
+	for _, s := range op.strings() {
+		if !utf8.ValidString(s) {
+			return fmt.Errorf("%w: operation %q holds a string that is not valid UTF-8", ErrInvalid, op.Kind)
+		}
+	}
 	if p := op.PutObject; p != nil {
 		if (p.JSON == nil) == (p.Bytes == nil) {
 			return fmt.Errorf("%w: put_object must set exactly one of json and bytes", ErrInvalid)
@@ -160,4 +168,30 @@ func (op Op) Validate() error {
 		}
 	}
 	return nil
+}
+
+// strings returns every string the operation stores or matches on. Each
+// must be valid UTF-8: encoding/json replaces invalid bytes with U+FFFD, so
+// such a string would not read back as written.
+func (op Op) strings() []string {
+	var out []string
+	if p := op.PutObject; p != nil {
+		out = append(out, p.Namespace, p.Key)
+	}
+	if d := op.DeleteObject; d != nil {
+		out = append(out, d.Namespace, d.Key)
+	}
+	if e := op.AppendEntry; e != nil {
+		out = append(out, e.Run, e.Kind)
+	}
+	if c := op.PutCheckpoint; c != nil {
+		out = append(out, c.Instance, string(c.Scope.Kind), c.Scope.ID)
+	}
+	if u := op.UpdateRun; u != nil {
+		out = append(out, u.Run, string(u.Status), u.Reason.Code, u.Reason.Budget)
+	}
+	if a := op.PutArtifact; a != nil {
+		out = append(out, a.Digest, a.MediaType)
+	}
+	return out
 }

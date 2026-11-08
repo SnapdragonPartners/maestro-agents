@@ -49,7 +49,9 @@ PR that defines it:
    checked (for an absent key, the version a creation must expect), and
    any read the same store serves after the conflict observes at least that
    version. A re-run therefore never reads a state older than the one it
-   lost to. **Object versions never repeat:** a deletion is itself a
+   lost to. The reported version is always a committed one: when the
+   conflict is with an earlier operation of the same commit, the rejected
+   commit's own writes are not reported, since none of them land. **Object versions never repeat:** a deletion is itself a
    version, kept as a tombstone, so a writer holding a version from before
    a deletion and re-creation cannot succeed.
 5. **A run-record change is conditional on the run record's version**,
@@ -79,13 +81,21 @@ PR that defines it:
    activation releases in its final commit. **A run's trigger identity is
    scoped to its instance.** `CreateRun` refuses a new run on an instance
    with a non-terminal one (ADR 0003, item 2) and a run ID already in use.
-9. **Telemetry storage is not in this interface yet.** Telemetry is
+9. **Every stored string is valid UTF-8**, and a write holding one that is
+   not is refused as invalid: `encoding/json` replaces invalid bytes with
+   U+FFFD, so such a string would not read back as written, and an
+   identity built from it would name another record. The checks sit at the
+   choke points: `Op.Validate` for every commit operation, and the claim
+   and run creation for the control plane. **An empty byte value is a
+   value:** an object's `bytes` field is `null` when unset and `""` when
+   empty, so the two survive every JSON round trip.
+10. **Telemetry storage is not in this interface yet.** Telemetry is
    written by the telemetry sink, not through `Commit` (ADR 0005, item
    13), and joins with that sink.
 
 ### Tests
 
-10. **Both reference stores accept the pause hook**; the suite runs TEST-6
+11. **Both reference stores accept the pause hook**; the suite runs TEST-6
     against both, though only the file store's pass is evidence of
     fencing (ADR 0005, item 11). The suite's harness requires an
     injectable clock, which it advances to expire leases. The suite tests
@@ -100,17 +110,19 @@ PR that defines it:
 
 ### The file store
 
-11. **Names.** A key or ID is one path component: lowercase letters,
+12. **Names.** A key or ID is one path component: lowercase letters,
     digits, `-` and `_` stand for themselves and every other byte is
     `%xx` in lowercase hex, so distinct keys stay distinct on
     case-insensitive file systems and no name starts with `.`, which
     temporary files (`.tmp-`) use. An encoded component is limited to 240
     bytes; a longer one is invalid. The lock file is `LOCK`; a run's
     trigger index is `instances/<instance>/runs/<trigger>.json`.
-12. **Confinement and permissions.** Every file access goes through
+13. **Confinement and permissions.** Every file access goes through
     `os.Root` on the store directory. Directories are created `0700` and
-    files `0600`. On a platform without `flock` the store refuses to open
-    rather than run unlocked.
+    files `0600`. Opening creates any missing ancestors of the store
+    directory and syncs each new directory, and the store directory itself,
+    with its parent before accepting a write. On a platform without
+    `flock` the store refuses to open rather than run unlocked.
 
 ## Consequences
 

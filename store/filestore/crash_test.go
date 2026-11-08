@@ -302,3 +302,16 @@ func TestLayout(t *testing.T) {
 		t.Fatalf("run file mode = %v, %v; want %v", info.Mode().Perm(), err, os.FileMode(filePerm))
 	}
 }
+
+// Open creates missing ancestors of the store directory.
+func TestOpenCreatesNestedRoot(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "a", "b", "store")
+	s := openT(t, dir, nil)
+	defer s.Close()
+	if _, err := os.Stat(filepath.Join(dir, lockName)); err != nil {
+		t.Fatalf("lock file in nested root: %v", err)
+	}
+	if err := createRoot(dir); err != nil {
+		t.Fatalf("createRoot on an existing root: %v", err)
+	}
+}

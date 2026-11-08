@@ -39,6 +39,9 @@ func (e *Engine) Claim(ctx context.Context, instance, owner string, lease time.D
 	if owner == "" || lease <= 0 {
 		return store.Ownership{}, fmt.Errorf("%w: a claim needs an owner and a positive lease", store.ErrInvalid)
 	}
+	if err := text("owner", owner); err != nil {
+		return store.Ownership{}, err
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if err := e.usable(); err != nil {
@@ -272,6 +275,12 @@ func (e *Engine) CreateRun(ctx context.Context, r store.Run) (store.Run, bool, e
 	}
 	if r.AgentType == "" {
 		return store.Run{}, false, fmt.Errorf("%w: run %q has no agent type", store.ErrInvalid, r.ID)
+	}
+	if err = text("agent type", r.AgentType); err != nil {
+		return store.Run{}, false, err
+	}
+	if err = text("agent version", r.AgentVersion); err != nil {
+		return store.Run{}, false, err
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()

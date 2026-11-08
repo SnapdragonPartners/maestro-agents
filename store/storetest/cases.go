@@ -37,6 +37,9 @@ func cases() []testCase {
 		{name: "Atomicity", fn: testAtomicity},
 		{name: "PreconditionsInOrder", fn: testPreconditionsInOrder},
 		{name: "ConcurrentObjectWriters", fn: testConcurrentObjectWriters},
+		{name: "EmptyBytes", fn: testEmptyBytes},
+		{name: "ConflictReportsCommittedVersion", fn: testConflictReportsCommittedVersion},
+		{name: "InvalidUTF8", fn: testInvalidUTF8},
 	}
 }
 
@@ -645,5 +648,82 @@ func testConcurrentObjectWriters(t testing.TB, h Harness) {
 	obj, ok := object(t, s, "counter")
 	if !ok || string(obj.JSON) != fmt.Sprint(writers*increments) || obj.Version != writers*increments {
 		t.Fatalf("counter = %+v, want %d", obj, writers*increments)
+	}
+}
+
+// An empty byte value is a value: it reads back as present, with Bytes
+// empty but set and JSON unset.
+func testEmptyBytes(t testing.TB, h Harness) {
+	e := setup(t, h)
+	commit(t, e.s, e.own.Fence(), store.PutObjectBytes(ns, "empty", 0, []byte{}))
+	obj, ok := object(t, e.s, "empty")
+	if !ok || obj.Bytes == nil || len(obj.Bytes) != 0 || obj.JSON != nil || obj.Version != 1 {
+		t.Fatalf("empty bytes object = %+v (bytes nil: %v), %v", obj, obj.Bytes == nil, ok)
+	}
+}
+
+// A conflict inside a commit reports the committed version, never one only
+// the rejected commit would have written (ADR 0006, item 4).
+func testConflictReportsCommittedVersion(t testing.TB, h Harness) {
+	e := setup(t, h)
+	ctx := context.Background()
+	f := e.own.Fence()
+	for _, tc := range []struct {
+		ops     []store.Op
+		current uint64
+	}{
+		{ops: []store.Op{store.PutObjectJSON(ns, "k", 0, json.RawMessage(`1`)), store.PutObjectJSON(ns, "k", 0, json.RawMessage(`2`))}},
+		{ops: []store.Op{store.PutObjectJSON(ns, "k", 0, json.RawMessage(`1`)), store.DeleteObjectOp(ns, "k", 0)}},
+		{ops: []store.Op{store.PutObjectJSON(ns, "k", 0, json.RawMessage(`1`)), store.DeleteObjectOp(ns, "k", 1), store.DeleteObjectOp(ns, "k", 2)}},
+		{ops: []store.Op{
+			store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 1, Status: store.StatusRunnable}),
+			store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 1, Status: store.StatusRunnable}),
+		}, current: 1},
+	} {
+		err := e.s.Commit(ctx, f, tc.ops)
+		c := wantConflict(t, err, len(tc.ops)-1, tc.current)
+		if c.IsObjectConflict() {
+			if obj, _ := object(t, e.s, "k"); obj.Version < c.Current || obj.Version != 0 {
+				t.Fatalf("read after conflict = version %d, conflict reported %d", obj.Version, c.Current)
+			}
+		}
+	}
+	if run := getRun(t, e.s, runID); run.Version != 1 {
+		t.Fatalf("run version = %d, want 1", run.Version)
+	}
+}
+
+// Every stored string must survive JSON serialization, so invalid UTF-8 is
+// refused at every write and read that names a record.
+func testInvalidUTF8(t testing.TB, h Harness) {
+	e := setup(t, h)
+	ctx := context.Background()
+	const bad = "invalid-\xff"
+	_, _, err := e.s.CreateRun(ctx, store.Run{ID: bad, Instance: "inst-2", AgentType: "a", TriggerID: "t"})
+	wantErr(t, err, store.ErrInvalid)
+	_, _, err = e.s.CreateRun(ctx, store.Run{ID: "r", Instance: bad, AgentType: "a", TriggerID: "t"})
+	wantErr(t, err, store.ErrInvalid)
+	_, _, err = e.s.CreateRun(ctx, store.Run{ID: "r", Instance: "inst-2", AgentType: bad, TriggerID: "t"})
+	wantErr(t, err, store.ErrInvalid)
+	_, err = e.s.Claim(ctx, "inst-2", bad, lease)
+	wantErr(t, err, store.ErrInvalid)
+	_, err = e.s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: bad})
+	wantErr(t, err, store.ErrInvalid)
+	for _, op := range []store.Op{
+		store.PutObjectJSON(ns, bad, 0, json.RawMessage(`1`)),
+		store.PutObjectJSON(bad, "k", 0, json.RawMessage(`1`)),
+		store.DeleteObjectOp(ns, bad, 1),
+		store.AppendEntryOp(store.Entry{Run: runID, Seq: 1, Kind: bad}),
+		store.PutCheckpointOp(store.Checkpoint{Instance: instance, Seq: 1, Scope: store.Scope{Kind: "chat_turn", ID: bad}, State: json.RawMessage(`{}`)}),
+		store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 1, Status: store.StatusFailed, Reason: store.Reason{Code: bad}}),
+		store.PutArtifactOp(store.Artifact{Digest: digest(nil), MediaType: bad}),
+	} {
+		wantErr(t, e.s.Commit(ctx, e.own.Fence(), []store.Op{op}), store.ErrInvalid)
+	}
+	if _, _, err := e.s.Object(ctx, ns, bad); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("Object(invalid key) = %v, want ErrInvalid", err)
+	}
+	if _, err := e.s.Run(ctx, bad); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("Run(invalid ID) = %v, want ErrInvalid", err)
 	}
 }

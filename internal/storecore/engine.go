@@ -61,7 +61,7 @@ type ownershipFile struct {
 // version never repeats.
 type objectFile struct {
 	JSON    json.RawMessage `json:"json,omitempty"`
-	Bytes   []byte          `json:"bytes,omitempty"`
+	Bytes   []byte          `json:"bytes"`
 	Version uint64          `json:"version"`
 	Deleted bool            `json:"deleted,omitempty"`
 }
@@ -259,6 +259,19 @@ func (e *Engine) applyOp(t *tx, f store.Fence, inst string, own ownershipFile, i
 	return nil
 }
 
+// committedVersion reads a record's version from the backend, ignoring the
+// commit's own pending writes: a rejected commit applies none of them, so a
+// conflict must never report a version only the overlay holds.
+func committedVersion(t *tx, path string) (uint64, error) {
+	var v struct {
+		Version uint64 `json:"version"`
+	}
+	if _, err := readJSON(t.b, path, &v); err != nil {
+		return 0, err
+	}
+	return v.Version, nil
+}
+
 func conflict(i int, kind store.OpKind, current uint64, format string, args ...any) error {
 	return &store.ConflictError{Op: i, Kind: kind, Current: current, Detail: fmt.Sprintf(format, args...)}
 }
@@ -285,7 +298,11 @@ func putObject(t *tx, i int, p *store.PutObject) error {
 		return err
 	}
 	if p.ExpectVersion != cur.Version {
-		return conflict(i, store.OpPutObject, cur.Version, "object %q/%q is at version %d, not %d",
+		committed, err := committedVersion(t, path)
+		if err != nil {
+			return err
+		}
+		return conflict(i, store.OpPutObject, committed, "object %q/%q is at version %d in this commit, not %d",
 			p.Namespace, p.Key, cur.Version, p.ExpectVersion)
 	}
 	return t.putJSON(path, objectFile{Version: cur.Version + 1, JSON: p.JSON, Bytes: p.Bytes})
@@ -301,12 +318,13 @@ func deleteObject(t *tx, i int, d *store.DeleteObject) error {
 	if err != nil {
 		return err
 	}
-	if !found || cur.Deleted {
-		return conflict(i, store.OpDeleteObject, cur.Version, "object %q/%q does not exist", d.Namespace, d.Key)
-	}
-	if d.ExpectVersion != cur.Version {
-		return conflict(i, store.OpDeleteObject, cur.Version, "object %q/%q is at version %d, not %d",
-			d.Namespace, d.Key, cur.Version, d.ExpectVersion)
+	if !found || cur.Deleted || d.ExpectVersion != cur.Version {
+		committed, err := committedVersion(t, path)
+		if err != nil {
+			return err
+		}
+		return conflict(i, store.OpDeleteObject, committed, "object %q/%q is at version %d in this commit (deleted or absent: %v), not %d",
+			d.Namespace, d.Key, cur.Version, !found || cur.Deleted, d.ExpectVersion)
 	}
 	return t.putJSON(path, objectFile{Version: cur.Version + 1, Deleted: true})
 }
@@ -407,7 +425,11 @@ func (e *Engine) updateRun(t *tx, f store.Fence, i int, u *store.RunUpdate) erro
 		return fmt.Errorf("%w: run %q is %s, which is final", store.ErrInvalid, u.Run, run.Status)
 	}
 	if u.ExpectVersion != run.Version {
-		return conflict(i, store.OpUpdateRun, run.Version, "run %q is at version %d, not %d",
+		committed, err := committedVersion(t, runPath(enc))
+		if err != nil {
+			return err
+		}
+		return conflict(i, store.OpUpdateRun, committed, "run %q is at version %d in this commit, not %d",
 			u.Run, run.Version, u.ExpectVersion)
 	}
 	run.Status = u.Status

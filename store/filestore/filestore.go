@@ -73,8 +73,8 @@ func Open(dir string, opts ...Option) (store.Store, error) {
 	for _, opt := range opts {
 		opt(&c)
 	}
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return nil, fmt.Errorf("filestore: create %s: %w", dir, err)
+	if err := createRoot(dir); err != nil {
+		return nil, err
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -96,6 +96,62 @@ func Open(dir string, opts ...Option) (store.Store, error) {
 		return nil, fmt.Errorf("filestore: recover %s: %w", dir, err)
 	}
 	return storecore.New(b, c.core), nil
+}
+
+// createRoot creates the store directory and any missing ancestors, then
+// makes each new entry durable: every directory it created, and the store
+// directory itself, is synced together with its parent before Open accepts
+// a write, so an acknowledged commit cannot vanish with an unsynced root
+// (ADR 0005, item 13).
+func createRoot(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("filestore: resolve %s: %w", dir, err)
+	}
+	var missing []string
+	for p := abs; ; p = filepath.Dir(p) {
+		_, err := os.Stat(p)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filestore: stat %s: %w", p, err)
+		}
+		missing = append(missing, p)
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+	toSync := []string{abs, filepath.Dir(abs)}
+	for i := len(missing) - 1; i >= 0; i-- {
+		p := missing[i]
+		if err := os.Mkdir(p, dirPerm); err != nil && !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("filestore: create %s: %w", p, err)
+		}
+		toSync = append(toSync, p, filepath.Dir(p))
+	}
+	for _, p := range toSync {
+		if err := syncPath(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncPath syncs a directory outside the store root.
+func syncPath(p string) error {
+	f, err := os.Open(filepath.Clean(p))
+	if err != nil {
+		return fmt.Errorf("filestore: open directory %s: %w", p, err)
+	}
+	err = f.Sync()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("filestore: sync directory %s: %w", p, err)
+	}
+	return nil
 }
 
 // backend stores each record as a file under root. The engine serializes
