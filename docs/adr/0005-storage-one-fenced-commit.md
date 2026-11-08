@@ -99,8 +99,17 @@ at each point of a step. This ADR settles how those writes reach a store.
    STORE-1) and removing the trigger once its run exists. A host that
    overrides a run's outcome (RUN-4) claims the instance first and uses
    `Commit`.
-5. **Reads are unfenced** and may be stale; correctness comes from the
-   preconditions at commit. The store also answers the claimable-instances
+5. **Reads are unfenced.** Reads of shared objects may be stale;
+   correctness comes from the preconditions at commit. Reads of an
+   instance's own records (its ownership record, its runs' records, its
+   checkpoints and its execution records) made by the owner after its
+   claim succeeded are **fresh**: they reflect every commit made before
+   the claim, and the owner's own commits since. A claim is serialized with
+   commits (item 2), so a store meets this by serving those reads from its
+   authoritative state, never from a cache or replica older than the
+   claim. Only the owner writes these records, so the activation's view of
+   them stays exact, and their sequence preconditions cannot fail
+   legitimately (item 3). The store also answers the claimable-instances
    query (ADR 0003).
 6. **The test-only pause hook sits inside `Commit`** at TEST-6's two
    points: before the commit starts, and after the ownership record is
