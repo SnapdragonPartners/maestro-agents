@@ -2,6 +2,8 @@ package filestore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -313,5 +315,34 @@ func TestOpenCreatesNestedRoot(t *testing.T) {
 	}
 	if err := createRoot(dir); err != nil {
 		t.Fatalf("createRoot on an existing root: %v", err)
+	}
+}
+
+// A commit that changes nothing never reaches the backend: re-storing an
+// artifact neither journals nor fails, even when every write would fail,
+// and the store stays usable (PR #5 buggrit pass 3).
+func TestNoOpCommitDoesNotTouchBackend(t *testing.T) {
+	dir, f := prepare(t)
+	ctx := context.Background()
+	content := []byte("statement")
+	sum := sha256.Sum256(content)
+	a := store.Artifact{Digest: hex.EncodeToString(sum[:]), MediaType: "text/plain", Content: content}
+	s := openT(t, dir, nil)
+	if err := s.Commit(ctx, f, []store.Op{store.PutArtifactOp(a)}); err != nil {
+		t.Fatalf("first store: %v", err)
+	}
+	_ = s.Close()
+	s = openT(t, dir, func(string) error { return errInjected })
+	defer s.Close()
+	if err := s.Commit(ctx, f, []store.Op{store.PutArtifactOp(a)}); err != nil {
+		t.Fatalf("re-store = %v, want nil", err)
+	}
+	if _, _, err := s.Artifact(ctx, a.Digest); err != nil {
+		t.Fatalf("store unusable after no-op commit: %v", err)
+	}
+	stale := f
+	stale.Epoch++
+	if err := s.Commit(ctx, stale, []store.Op{store.PutArtifactOp(a)}); !errors.Is(err, store.ErrOwnership) {
+		t.Fatalf("stale re-store = %v, want ErrOwnership", err)
 	}
 }

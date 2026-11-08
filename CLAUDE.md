@@ -22,7 +22,7 @@ run controller, the execution record's runtime and the intake agent come
 next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
-and storage design are ADRs 0003 to 0005; further design arrives with the
+and storage design are ADRs 0003 to 0006; further design arrives with the
 code, each piece with its ADR.
 
 Load-bearing decisions so far:
