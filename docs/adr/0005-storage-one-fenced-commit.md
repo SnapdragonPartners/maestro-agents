@@ -58,14 +58,28 @@ at each point of a step. This ADR settles how those writes reach a store.
    - change the run record (status, reason, consumed budgets, accepted
      inputs);
    - store an artifact, content-addressed and write-once, with its
-     metadata (media type, size; STORE-1); storing the same digest again
-     with the same metadata is a no-op, and with different metadata is a
-     conflict;
+     metadata (media type, size; STORE-1); storing a digest already
+     stored is a no-op whatever its metadata, since the digest is the
+     content's identity and the first metadata stands (the operation has
+     no precondition, so it never conflicts);
    - release ownership (ADR 0003, item 10).
 
    A failed precondition rejects the whole commit with a conflict error
    naming the operation. New kinds of record add operations; they do not
    add write paths.
+
+   **Only an object-version conflict is expected.** Objects are shared
+   between instances (STORE-2), so their conflicts are normal and are
+   handled where they arise: a tool is re-run (item 10), and so is a code
+   state whose transition carries object operations, which is safe
+   because a code state has no other durable effect (ADR 0003, item 5),
+   with the same bound, after which the run fails with `tool_error`. Every other precondition (record
+   and checkpoint sequences, run-record changes) concerns records only the
+   current owner writes, so under a passed fence it cannot fail unless
+   the runtime or the store has broken its contract. Such a conflict is
+   reported as a *store failure* (ADR 0003, item 14), and a new operation
+   whose precondition can legitimately fail must say where that conflict
+   is handled when it is added.
 
    **A commit's result is one of three, and only the first two are
    definite.** A nil error means the commit landed. An ownership or

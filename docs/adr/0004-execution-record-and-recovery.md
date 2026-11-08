@@ -255,10 +255,11 @@ records are stored and how a commit is made atomic and fenced is
   grows with every run. Retention and protection are the host's (REC-3),
   at store level: artifacts are content-addressed and shared by every
   record that references them, so an artifact may be deleted only once no
-  retained record references it. A host that needs per-run deletion keeps
-  per-run artifacts in its own store (its stores are its own, HOST-3);
-  the reference stores have no reference index (STORE-3), and their
-  retention tooling comes after the MVP.
+  retained record references it. A host that needs per-run deletion
+  implements its store (HOST-3) with artifacts kept per run inside its
+  own `Commit`, which keeps item 1's same-commit guarantee; the reference
+  stores have no reference index (STORE-3), and their retention tooling
+  comes after the MVP.
 - Hosts and agent types never read checkpoints' contents or entries'
   payloads to make decisions; the run record carries what a host needs
   (STM-8, RUN-3).
