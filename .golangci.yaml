@@ -190,11 +190,18 @@ linters-settings:
       - wrapperFunc
       - importShadow
       - unnamedResult
+      # sloppyReassign contradicts govet's shadow check, which this config
+      # enables: shadow forbids `if err := f(); ...` after an earlier err,
+      # sloppyReassign forbids the `if err = f(); ...` that avoids it.
+      - sloppyReassign
+      # The store's records (store.Run, store.Op, store.Trigger, ...) are
+      # JSON value types, passed and ranged by value deliberately; the
+      # copies are negligible beside the I/O every store call makes.
+      - hugeParam
+      - rangeValCopy
     settings:
       captLocal:
         paramsOnly: true
-      rangeValCopy:
-        sizeThreshold: 32
 
   gomodguard:
     blocked:
@@ -230,6 +237,22 @@ issues:
         - gosec
         - wrapcheck
         - prealloc
+
+    # store/storetest is a test package (the store conformance suite)
+    # outside _test.go files, so that host stores can import it. It gets
+    # the test files' leniency.
+    - path: "store/storetest/"
+      linters:
+        - errcheck
+        - goconst
+        - gocritic
+        - cyclop
+        - maintidx
+        - dupl
+        - gosec
+        - wrapcheck
+        - prealloc
+        - unparam
 
     # Example test files
     - path: "example_test\\.go"
