@@ -63,6 +63,10 @@ func WithPauseHook(h store.PauseHook) Option {
 	return func(c *config) { c.core.Pause = h }
 }
 
+// errUnsupported refuses to open a file store where this package cannot
+// take an exclusive lock, rather than open one unprotected.
+var errUnsupported = errors.New("the file store's directory lock is not supported on this platform")
+
 // Open opens the store in dir, creating the directory if needed. It takes
 // the directory's lock, finishes every interrupted commit and removes
 // leftover temporary files before returning. Every recorded owner is
@@ -88,6 +92,9 @@ func Open(dir string, opts ...Option) (store.Store, error) {
 	if err := lockFile(lock); err != nil {
 		_ = lock.Close()
 		_ = root.Close()
+		if errors.Is(err, errUnsupported) {
+			return nil, fmt.Errorf("filestore: cannot lock %s: %w", dir, err)
+		}
 		return nil, fmt.Errorf("filestore: store directory %s is in use by another process: %w", dir, err)
 	}
 	b := &backend{root: root, lock: lock, dirs: map[string]bool{".": true}, failpoint: c.failpoint}

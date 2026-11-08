@@ -159,15 +159,52 @@ func (op Op) Validate() error {
 			return fmt.Errorf("%w: operation %q holds a string that is not valid UTF-8", ErrInvalid, op.Kind)
 		}
 	}
-	if p := op.PutObject; p != nil {
-		if (p.JSON == nil) == (p.Bytes == nil) {
-			return fmt.Errorf("%w: put_object must set exactly one of json and bytes", ErrInvalid)
-		}
-		if p.JSON != nil && !json.Valid(p.JSON) {
-			return fmt.Errorf("%w: put_object json value is not valid JSON", ErrInvalid)
+	for _, raw := range op.raws() {
+		if err := ValidJSON(raw); err != nil {
+			return fmt.Errorf("operation %q: %w", op.Kind, err)
 		}
 	}
+	if p := op.PutObject; p != nil && (p.JSON == nil) == (p.Bytes == nil) {
+		return fmt.Errorf("%w: put_object must set exactly one of json and bytes", ErrInvalid)
+	}
 	return nil
+}
+
+// ValidJSON reports whether raw, if set, is a JSON value a store can keep:
+// valid JSON in valid UTF-8 (RFC 8259, section 8.1). encoding/json accepts
+// and stores invalid UTF-8 inside a raw value byte for byte, but a reader
+// decoding it gets U+FFFD in place of the bytes, and a store on a JSON
+// column type refuses it. A nil raw is unset and valid; an empty, non-nil
+// one is not JSON. The error wraps [ErrInvalid].
+func ValidJSON(raw json.RawMessage) error {
+	if raw == nil {
+		return nil
+	}
+	if !json.Valid(raw) {
+		return fmt.Errorf("%w: value is not valid JSON", ErrInvalid)
+	}
+	if !utf8.Valid(raw) {
+		return fmt.Errorf("%w: JSON value is not valid UTF-8", ErrInvalid)
+	}
+	return nil
+}
+
+// raws returns every raw JSON value the operation stores.
+func (op Op) raws() []json.RawMessage {
+	var out []json.RawMessage
+	if p := op.PutObject; p != nil {
+		out = append(out, p.JSON)
+	}
+	if e := op.AppendEntry; e != nil {
+		out = append(out, e.Payload)
+	}
+	if c := op.PutCheckpoint; c != nil {
+		out = append(out, c.State)
+	}
+	if u := op.UpdateRun; u != nil {
+		out = append(out, u.Consumed)
+	}
+	return out
 }
 
 // strings returns every string the operation stores or matches on. Each

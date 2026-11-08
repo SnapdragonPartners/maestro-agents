@@ -33,6 +33,7 @@ func cases() []testCase {
 		{name: "Artifacts", fn: testArtifacts},
 		{name: "Objects", fn: testObjects},
 		{name: "ObjectVersionsNeverRepeat", fn: testObjectVersionsNeverRepeat},
+		{name: "DeleteAndRecreateInOneCommit", fn: testDeleteAndRecreateInOneCommit},
 		{name: "ObjectKeys", fn: testObjectKeys},
 		{name: "Atomicity", fn: testAtomicity},
 		{name: "PreconditionsInOrder", fn: testPreconditionsInOrder},
@@ -194,6 +195,11 @@ func testCreateRun(t testing.TB, h Harness) {
 	again, created, err := s.CreateRun(ctx, store.Run{ID: "run-other", Instance: instance, AgentType: "x", TriggerID: "trigger-1"})
 	if err != nil || created || again.ID != runID {
 		t.Fatalf("retried CreateRun = %+v, created %v, %v; want the existing run", again, created, err)
+	}
+	// Even a retry naming only the instance and the trigger.
+	again, created, err = s.CreateRun(ctx, store.Run{Instance: instance, TriggerID: "trigger-1"})
+	if err != nil || created || again.ID != runID {
+		t.Fatalf("CreateRun with only the trigger = %+v, created %v, %v; want the existing run", again, created, err)
 	}
 	_, _, err = s.CreateRun(ctx, store.Run{ID: "run-2", Instance: instance, AgentType: "x", TriggerID: "trigger-2"})
 	wantErr(t, err, store.ErrInstanceBusy)
@@ -496,6 +502,31 @@ func testObjectVersionsNeverRepeat(t testing.TB, h Harness) {
 	}
 }
 
+// A deletion and a re-creation in one commit keep the version climbing: the
+// re-creation expects the tombstone's version, and the versions before it
+// stay unusable (ADR 0006, item 4).
+func testDeleteAndRecreateInOneCommit(t testing.TB, h Harness) {
+	e := setup(t, h)
+	ctx := context.Background()
+	f := e.own.Fence()
+	commit(t, e.s, f,
+		store.PutObjectJSON(ns, "k", 0, json.RawMessage(`"a"`)),
+		store.DeleteObjectOp(ns, "k", 1),
+		store.PutObjectJSON(ns, "k", 2, json.RawMessage(`"b"`)),
+	)
+	if obj, ok := object(t, e.s, "k"); !ok || obj.Version != 3 || string(obj.JSON) != `"b"` {
+		t.Fatalf("object = %+v, %v; want version 3", obj, ok)
+	}
+	commit(t, e.s, f, store.DeleteObjectOp(ns, "k", 3), store.PutObjectJSON(ns, "k", 4, json.RawMessage(`"c"`)))
+	for _, stale := range []uint64{0, 1, 3} {
+		err := e.s.Commit(ctx, f, []store.Op{store.DeleteObjectOp(ns, "k", 5), store.PutObjectJSON(ns, "k", stale, json.RawMessage(`"x"`))})
+		wantConflict(t, err, 1, 5)
+	}
+	if obj, _ := object(t, e.s, "k"); obj.Version != 5 || string(obj.JSON) != `"c"` {
+		t.Fatalf("object = %+v; want version 5", obj)
+	}
+}
+
 func testObjectKeys(t testing.TB, h Harness) {
 	e := setup(t, h)
 	ctx := context.Background()
@@ -709,6 +740,15 @@ func testInvalidUTF8(t testing.TB, h Harness) {
 	wantErr(t, err, store.ErrInvalid)
 	_, err = e.s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: bad})
 	wantErr(t, err, store.ErrInvalid)
+	// Raw JSON values too: encoding/json keeps invalid UTF-8 in a raw value
+	// byte for byte, which a reader decoding it would not get back.
+	badJSON := json.RawMessage("\"invalid-\xff\"")
+	_, err = e.s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: "t-bad", Payload: badJSON})
+	wantErr(t, err, store.ErrInvalid)
+	_, _, err = e.s.CreateRun(ctx, store.Run{ID: "r", Instance: "inst-2", AgentType: "a", TriggerID: "t", Trigger: badJSON})
+	wantErr(t, err, store.ErrInvalid)
+	_, _, err = e.s.CreateRun(ctx, store.Run{ID: "r", Instance: "inst-2", AgentType: "a", TriggerID: "t", Consumed: badJSON})
+	wantErr(t, err, store.ErrInvalid)
 	for _, op := range []store.Op{
 		store.PutObjectJSON(ns, bad, 0, json.RawMessage(`1`)),
 		store.PutObjectJSON(bad, "k", 0, json.RawMessage(`1`)),
@@ -717,6 +757,10 @@ func testInvalidUTF8(t testing.TB, h Harness) {
 		store.PutCheckpointOp(store.Checkpoint{Instance: instance, Seq: 1, Scope: store.Scope{Kind: "chat_turn", ID: bad}, State: json.RawMessage(`{}`)}),
 		store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 1, Status: store.StatusFailed, Reason: store.Reason{Code: bad}}),
 		store.PutArtifactOp(store.Artifact{Digest: digest(nil), MediaType: bad}),
+		store.PutObjectJSON(ns, "k", 0, badJSON),
+		store.AppendEntryOp(store.Entry{Run: runID, Seq: 1, Kind: "k", Payload: badJSON}),
+		store.PutCheckpointOp(store.Checkpoint{Instance: instance, Seq: 1, Scope: store.Scope{Kind: store.ScopeRun, ID: runID}, State: badJSON}),
+		store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 1, Status: store.StatusRunnable, Consumed: badJSON}),
 	} {
 		wantErr(t, e.s.Commit(ctx, e.own.Fence(), []store.Op{op}), store.ErrInvalid)
 	}

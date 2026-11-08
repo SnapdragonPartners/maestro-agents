@@ -166,6 +166,9 @@ func (e *Engine) EnqueueTrigger(ctx context.Context, t store.Trigger) (store.Tri
 	if _, err = component("trigger", t.ID); err != nil {
 		return store.Trigger{}, err
 	}
+	if err = rawJSON("trigger payload", t.Payload); err != nil {
+		return store.Trigger{}, err
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if err = e.usable(); err != nil {
@@ -269,27 +272,20 @@ func (e *Engine) CreateRun(ctx context.Context, r store.Run) (store.Run, bool, e
 	if err != nil {
 		return store.Run{}, false, err
 	}
-	runEnc, err := component("run", r.ID)
-	if err != nil {
-		return store.Run{}, false, err
-	}
-	if r.AgentType == "" {
-		return store.Run{}, false, fmt.Errorf("%w: run %q has no agent type", store.ErrInvalid, r.ID)
-	}
-	if err = text("agent type", r.AgentType); err != nil {
-		return store.Run{}, false, err
-	}
-	if err = text("agent version", r.AgentVersion); err != nil {
-		return store.Run{}, false, err
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if err = e.usable(); err != nil {
 		return store.Run{}, false, err
 	}
+	// The trigger lookup comes first: an existing run is returned whatever
+	// r's other fields say, so they are validated only for a new record.
 	existing, found, err := e.runForTrigger(inst, trig, r.TriggerID)
 	if err != nil || found {
 		return existing, false, err
+	}
+	runEnc, err := validNewRun(r)
+	if err != nil {
+		return store.Run{}, false, err
 	}
 	if err = e.checkNewRun(inst, r); err != nil {
 		return store.Run{}, false, err
@@ -311,6 +307,31 @@ func (e *Engine) CreateRun(ctx context.Context, r store.Run) (store.Run, bool, e
 		return store.Run{}, false, err
 	}
 	return r, true, nil
+}
+
+// validNewRun checks the fields of a run record about to be created and
+// returns its encoded ID.
+func validNewRun(r store.Run) (string, error) {
+	runEnc, err := component("run", r.ID)
+	if err != nil {
+		return "", err
+	}
+	if r.AgentType == "" {
+		return "", fmt.Errorf("%w: run %q has no agent type", store.ErrInvalid, r.ID)
+	}
+	if err = text("agent type", r.AgentType); err != nil {
+		return "", err
+	}
+	if err = text("agent version", r.AgentVersion); err != nil {
+		return "", err
+	}
+	if err = rawJSON("trigger payload", r.Trigger); err != nil {
+		return "", err
+	}
+	if err = rawJSON("consumed budgets", r.Consumed); err != nil {
+		return "", err
+	}
+	return runEnc, nil
 }
 
 // runForTrigger finds the run created for (instance, trigger). The caller

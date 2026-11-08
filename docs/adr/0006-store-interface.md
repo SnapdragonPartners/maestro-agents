@@ -85,8 +85,14 @@ PR that defines it:
    not is refused as invalid: `encoding/json` replaces invalid bytes with
    U+FFFD, so such a string would not read back as written, and an
    identity built from it would name another record. The checks sit at the
-   choke points: `Op.Validate` for every commit operation, and the claim
-   and run creation for the control plane. **An empty byte value is a
+   choke points: `Op.Validate` for every commit operation, and the claim,
+   the trigger queue and run creation for the control plane. **A raw JSON
+   value is held to the same rule:** `encoding/json` stores invalid UTF-8
+   inside a raw value byte for byte, but such a value is not JSON
+   (RFC 8259, section 8.1), a reader decoding it gets U+FFFD, and a store
+   on a JSON column type refuses it. Every raw value (object values,
+   payloads, checkpoint state, consumed budgets) must be valid JSON in
+   valid UTF-8; `store.ValidJSON` is the check, for host stores too. **An empty byte value is a
    value:** an object's `bytes` field is `null` when unset and `""` when
    empty, so the two survive every JSON round trip.
 10. **Telemetry storage is not in this interface yet.** Telemetry is
@@ -107,6 +113,11 @@ PR that defines it:
     treats a claim that returns within 300 ms while A is paused as having
     committed first; a store that serializes the claim behind the commit
     blocks it indefinitely, so the window cannot fail a correct store.
+    **The suite does not run TEST-5 yet**, which ADR 0005 item 6 assigns
+    to it: it runs the operations' semantics, TEST-6's two interleavings
+    and a reopen check. TEST-5 stops an activation at a durable boundary
+    and continues it in a new one, so it needs the execution record's
+    runtime, and joins the suite with that runtime.
 
 ### The file store
 
@@ -143,6 +154,6 @@ PR that defines it:
 - [ADR 0004](0004-execution-record-and-recovery.md): entries and the
   artifacts they reference
 - [ADR 0005](0005-storage-one-fenced-commit.md): the fenced commit and the
-  reference stores, which this ADR amends (items 3, 5 and 10)
+  reference stores, which this ADR amends (items 3, 5, 6 and 10)
 - [docs/requirements.md](../requirements.md): RUN-3, HOST-6, STORE-1 to
   STORE-4, TEST-6, P-7

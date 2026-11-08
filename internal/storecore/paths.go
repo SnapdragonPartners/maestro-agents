@@ -1,6 +1,7 @@
 package storecore
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -69,6 +70,16 @@ func decode(name string) (string, bool) {
 func text(what, s string) error {
 	if !utf8.ValidString(s) {
 		return fmt.Errorf("%w: %s is not valid UTF-8", store.ErrInvalid, what)
+	}
+	return nil
+}
+
+// rawJSON refuses a raw JSON value a store cannot keep as written (see
+// [store.ValidJSON]). Every raw value the control plane stores goes through
+// it; commit operations check theirs in [store.Op.Validate].
+func rawJSON(what string, raw json.RawMessage) error {
+	if err := store.ValidJSON(raw); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil
 }
