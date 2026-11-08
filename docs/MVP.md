@@ -175,14 +175,16 @@ to N-7. Two depart from that document:
   (TOOL-6's reverse direction).
 - **Prototype language.** Go, not Python (requirements section 6).
 
-**Open:** N-5 asks for data at rest to be encrypted. Whether the file
-store encrypts or the MVP relies on the operating system's disk
-encryption is decided in the storage design.
+N-5 asks for data at rest to be encrypted. The file store does not
+encrypt; the MVP relies on the operating system's full-disk encryption,
+an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
 
 ## Order of work
 
 1. **Design ADRs** for the run model and execution record, and for
-   storage. They settle the questions the requirements PR deferred: the
+   storage ([ADR 0003](adr/0003-run-model-identities-and-activation-results.md),
+   [0004](adr/0004-execution-record-and-recovery.md),
+   [0005](adr/0005-storage-one-fenced-commit.md)). They settle the questions the requirements PR deferred: the
    stored status of a run being executed, an atomic commit across records
    in the file store (which the atomic-local-transaction write contract
    needs), and how an activation reports a failure of the execution-record
