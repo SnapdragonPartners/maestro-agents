@@ -64,8 +64,12 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
 6. **A run's start commits `run_started` with a first checkpoint.** The
    agent type's `Init` computes the initial state data from the trigger
    and configuration; its result is checkpointed (state: the initial
-   state, step 1) in the same commit as `run_started`, so `Init` never
-   runs twice for one run, even if it is not deterministic. This is a
+   state, step 1) in the same commit as `run_started`, so once that
+   commit lands `Init` never runs again for the run, even if it is not
+   deterministic. Until it lands, `Init` may run again (after a crash or
+   an indeterminate commit), so like a code state it must have no durable
+   effect of its own (ADR 0003, item 5); only its committed result is
+   kept. This is a
    checkpoint at a boundary that is not a step boundary, which ADR 0004
    item 4 does not forbid; it means every started run has a checkpoint of
    its own, and recovery always starts from one. **An activation that

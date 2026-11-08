@@ -339,6 +339,9 @@ func (a *activation) start(ctx context.Context, config json.RawMessage) *ending 
 			"checkpoint was written by version %q of agent type %q, which is version %q and has no Migrate",
 			a.cs.AgentVersion, a.m.name, a.m.version))
 	}
+	if ctx.Err() != nil {
+		return a.endByCause(ctx)
+	}
 	var data json.RawMessage
 	err := guard(func() (err error) {
 		data, err = a.m.migrate(ctx, a.cs.AgentVersion, a.cs.Data)
@@ -353,7 +356,8 @@ func (a *activation) start(ctx context.Context, config json.RawMessage) *ending 
 }
 
 // startRun runs Init and commits the run's start with its first checkpoint,
-// so Init never runs twice for a run. Until that commit lands, a terminal
+// so Init never runs again once the run's start has landed (it may run
+// again if this commit does not land). Until that commit lands, a terminal
 // ending carries the run's start with it (REC-1).
 func (a *activation) startRun(ctx context.Context, config json.RawMessage) *ending {
 	start := &runStart{entry: RunStarted{
@@ -369,6 +373,10 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
 	}
 	a.config = config
+	if ctx.Err() != nil {
+		// The start is prepared, so a terminal ending records it.
+		return a.endByCause(ctx)
+	}
 	var data json.RawMessage
 	err := guard(func() (err error) {
 		data, err = a.m.init(ctx, a.env())

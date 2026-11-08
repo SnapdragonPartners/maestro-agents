@@ -28,6 +28,13 @@ type Committer interface {
 	// operation. An operation on another instance's records returns
 	// [ErrInvalid]. In each of those cases nothing was applied. Any other
 	// error is indeterminate ([IsDefinite]).
+	//
+	// A commit whose operations change nothing (re-storing an artifact
+	// already stored) is fenced and checked all the same. The reference
+	// stores then return without writing, so such a commit cannot fail
+	// after those checks; that is their optimization, not part of this
+	// contract: like any commit, a host store's may return an
+	// indeterminate error.
 	Commit(ctx context.Context, f Fence, ops []Op) error
 }
 

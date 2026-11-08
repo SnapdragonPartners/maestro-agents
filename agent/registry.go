@@ -22,6 +22,9 @@ func NewRegistry() *Registry {
 // malformed declaration, or a name already registered, returns an error
 // wrapping ErrInvalidType.
 func (r *Registry) Register(d Definition) error {
+	if d == nil {
+		return fmt.Errorf("%w: nil agent type", ErrInvalidType)
+	}
 	m, err := d.compile()
 	if err != nil {
 		return err

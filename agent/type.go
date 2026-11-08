@@ -15,10 +15,13 @@ import (
 // must round-trip through encoding/json.
 type Type[D any] struct {
 	// Init returns the initial state data from the run's trigger and
-	// configuration, which env exposes. It runs once, when the run starts,
-	// and its result is checkpointed with the run's start, so it is never
-	// run again for the same run. Nil starts from D's zero value. An error
-	// fails the run with ReasonStateError.
+	// configuration, which env exposes. It runs when the run starts, and
+	// its result is checkpointed with the run's start; once that commit
+	// lands it never runs again for the run. Until then it may run more
+	// than once (after a crash, or a commit whose result is unknown), so,
+	// like a code state, it must have no durable effect of its own: only
+	// its committed result is kept. Nil starts from D's zero value. An
+	// error fails the run with ReasonStateError.
 	Init func(ctx context.Context, env *Env) (D, error)
 
 	// Migrate converts state data checkpointed by another version of this
@@ -158,9 +161,15 @@ type erasedTransition struct {
 }
 
 func (t *Type[D]) compile() (*machine, error) {
+	if t == nil {
+		return nil, fmt.Errorf("%w: nil agent type", ErrInvalidType)
+	}
 	if err := t.check(); err != nil {
 		return nil, err
 	}
+	// Every function is captured now, so changing t after registration
+	// (to register another version, say) does not change this machine.
+	initFn, migrate := t.Init, t.Migrate
 	m := &machine{
 		states:  make(map[string]*erasedState, len(t.States)),
 		name:    t.Name,
@@ -169,17 +178,17 @@ func (t *Type[D]) compile() (*machine, error) {
 	}
 	m.init = func(ctx context.Context, env *Env) (json.RawMessage, error) {
 		var d D
-		if t.Init != nil {
+		if initFn != nil {
 			var err error
-			if d, err = t.Init(ctx, env); err != nil {
+			if d, err = initFn(ctx, env); err != nil {
 				return nil, err
 			}
 		}
 		return marshalData(d)
 	}
-	if t.Migrate != nil {
+	if migrate != nil {
 		m.migrate = func(ctx context.Context, from string, data json.RawMessage) (json.RawMessage, error) {
-			d, err := t.Migrate(ctx, from, data)
+			d, err := migrate(ctx, from, data)
 			if err != nil {
 				return nil, err
 			}
