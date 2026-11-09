@@ -28,16 +28,20 @@ const (
 	// ReasonBudgetUnenforceable: failed; a budget cannot be enforced or
 	// computed. A configuration error: retrying as-is cannot help.
 	ReasonBudgetUnenforceable = "budget_unenforceable"
-	// ReasonModelError: failed; the model call failed.
+	// ReasonModelError: failed; the model call failed, or a model state
+	// was reached with no model client (ADR 0008).
 	ReasonModelError = "model_error"
 	// ReasonToolError: failed; a tool failed in a way the run cannot
-	// continue from.
+	// continue from: its Execute returned an error or panicked, it returned
+	// a result the runtime cannot record, a write's outcome is unknown, or
+	// the policy hook failed or asked for approval (ADR 0008).
 	ReasonToolError = "tool_error"
 	// ReasonInvalidOutput: failed; the agent type judged its output
 	// invalid.
 	ReasonInvalidOutput = "invalid_output"
-	// ReasonWrapUpFailed: failed; the loop's wrap-up did not produce a
-	// result (LOOP-3).
+	// ReasonWrapUpFailed: failed; a model state's completion policy did not
+	// produce a transition (LOOP-3): the model answered without calling a
+	// tool again after it was nudged, or a forced wrap-up failed.
 	ReasonWrapUpFailed = "wrap_up_failed"
 	// ReasonObjectConflict: failed; a code state's object operations still
 	// conflicted after the retry bound (ADR 0006, item 6). Retrying can

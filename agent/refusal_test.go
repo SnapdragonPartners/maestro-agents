@@ -178,10 +178,16 @@ func TestUnrecoverableRecords(t *testing.T) {
 		name   string
 		detail string
 	}{
-		{name: "unknown entry kind past the checkpoint", want: agent.ErrNotActivatable, detail: `"model_attempt" entry past its checkpoint`,
+		{name: "unknown entry kind past the checkpoint", want: agent.ErrNotActivatable, detail: "a kind this version cannot recover",
 			damage: func(t *testing.T, s store.Store, f store.Fence, last store.Entry, _ store.Checkpoint) store.Store {
 				t.Helper()
-				commitOps(t, s, f, store.AppendEntryOp(store.Entry{Run: "r1", Seq: last.Seq + 1, Step: 2, Kind: "model_attempt", Payload: json.RawMessage(`{}`)}))
+				commitOps(t, s, f, store.AppendEntryOp(store.Entry{Run: "r1", Seq: last.Seq + 1, Step: 2, Kind: "subagent_started", Payload: json.RawMessage(`{}`)}))
+				return s
+			}},
+		{name: "model attempt in a code state", want: agent.ErrNotActivatable, detail: "not a model state",
+			damage: func(t *testing.T, s store.Store, f store.Fence, last store.Entry, _ store.Checkpoint) store.Store {
+				t.Helper()
+				commitOps(t, s, f, store.AppendEntryOp(store.Entry{Run: "r1", Seq: last.Seq + 1, Step: 2, Kind: "model_attempt", Payload: json.RawMessage(`{"state":"count"}`)}))
 				return s
 			}},
 		{name: "gap in the record", want: agent.ErrStoreFailure, detail: "where",

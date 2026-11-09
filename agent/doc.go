@@ -14,7 +14,13 @@
 // otherwise it returns an error and the host rereads the run record before
 // acting.
 //
-// This package runs code states. Model states (a tool loop through
-// maestro-llms) arrive next, with the write-ahead model turn, tool
-// permissions, attempt markers and results.
+// A model state (ADR 0008) runs a tool loop through maestro-llms' toolloop
+// with the host's model client (LLM-1). Every attempt is recorded before it
+// is sent and every turn before its calls execute; every tool call passes
+// the host's policy hook (TOOL-3), and its permission, attempt and result
+// are recorded in that order (STM-6). A tool's result can carry a
+// transition (STM-3), and an atomic local transaction's object operations
+// commit with its result (ADR 0005). An activation continuing mid-turn
+// resolves each recorded call by STM-6's partition without asking the model
+// again.
 package agent
