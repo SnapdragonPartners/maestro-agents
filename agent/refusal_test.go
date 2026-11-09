@@ -155,18 +155,23 @@ func TestUnrecoverableRecords(t *testing.T) {
 		damage func(t *testing.T, s store.Store, f store.Fence, last store.Entry, ck store.Checkpoint) store.Store
 		want   error
 		name   string
+		detail string
 	}{
-		{name: "unknown entry kind past the checkpoint", want: agent.ErrNotActivatable,
+		{name: "unknown entry kind past the checkpoint", want: agent.ErrNotActivatable, detail: `"model_attempt" entry past its checkpoint`,
 			damage: func(t *testing.T, s store.Store, f store.Fence, last store.Entry, _ store.Checkpoint) store.Store {
 				t.Helper()
 				commitOps(t, s, f, store.AppendEntryOp(store.Entry{Run: "r1", Seq: last.Seq + 1, Step: 2, Kind: "model_attempt", Payload: json.RawMessage(`{}`)}))
 				return s
 			}},
-		{name: "gap in the record", want: agent.ErrStoreFailure,
-			damage: func(_ *testing.T, s store.Store, _ store.Fence, _ store.Entry, ck store.Checkpoint) store.Store {
+		{name: "gap in the record", want: agent.ErrStoreFailure, detail: "where",
+			damage: func(t *testing.T, s store.Store, f store.Fence, last store.Entry, ck store.Checkpoint) store.Store {
+				t.Helper()
+				// Two entries past the checkpoint, the first hidden: the
+				// tail starts after a hole.
+				commitOps(t, s, f, store.AppendEntryOp(store.Entry{Run: "r1", Seq: last.Seq + 1, Step: 2, Kind: agent.EntryOutcome, Payload: json.RawMessage(`{}`)}))
 				return gapStore{Store: s, drop: ck.RecordSeq + 1}
 			}},
-		{name: "checkpoint format", want: agent.ErrNotActivatable,
+		{name: "checkpoint format", want: agent.ErrNotActivatable, detail: "has format 2",
 			damage: func(t *testing.T, s store.Store, f store.Fence, last store.Entry, ck store.Checkpoint) store.Store {
 				t.Helper()
 				commitOps(t, s, f, store.PutCheckpointOp(store.Checkpoint{
@@ -174,7 +179,7 @@ func TestUnrecoverableRecords(t *testing.T) {
 				}))
 				return s
 			}},
-		{name: "checkpoint of another agent type", want: agent.ErrNotActivatable,
+		{name: "checkpoint of another agent type", want: agent.ErrNotActivatable, detail: `of agent type "summarizer"`,
 			damage: func(t *testing.T, s store.Store, f store.Fence, last store.Entry, ck store.Checkpoint) store.Store {
 				t.Helper()
 				commitOps(t, s, f, store.PutCheckpointOp(store.Checkpoint{
@@ -204,8 +209,8 @@ func TestUnrecoverableRecords(t *testing.T) {
 				damaged := tc.damage(t, s, f, es[len(es)-1], ck)
 				before := len(entries(t, s, "r1"))
 				_, err = activate(ctx, agent.NewController(damaged, reg), f, "r1", 0)
-				if !errors.Is(err, tc.want) {
-					t.Fatalf("Activate = %v, want %v", err, tc.want)
+				if !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.detail) {
+					t.Fatalf("Activate = %v, want %v with %q", err, tc.want, tc.detail)
 				}
 				if after := len(entries(t, s, "r1")); after != before {
 					t.Fatalf("entries grew from %d to %d", before, after)
