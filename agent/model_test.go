@@ -322,12 +322,14 @@ func TestModelStateRun(t *testing.T) {
 // duplicated, no work is lost, and no turn is asked of the model again
 // once it is recorded.
 func TestModelStateCrashAtEveryCommit(t *testing.T) {
+	var want []string
 	total := func() int {
 		s := &countingStore{Store: newBackend(t, "memstore").open()}
 		createLedgerRun(t, s)
 		if _, err := activateWith(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), scripted(ledgerScript), 0); err != nil {
 			t.Fatal(err)
 		}
+		want = lastTranscript(t, s)
 		return s.n
 	}()
 	// The memory store only: storetest's TEST-5 runs the same procedure
@@ -371,10 +373,45 @@ func TestModelStateCrashAtEveryCommit(t *testing.T) {
 					if n := countKind(entries(t, s, "r1"), agent.EntryTurn); n != len(ledgerScript) {
 						t.Fatalf("%d turns recorded, want %d: a recorded turn was asked again", n, len(ledgerScript))
 					}
+					// The transcript is the uninterrupted run's, message for
+					// message: a call recovery refuses or resolves reads as
+					// the loop's own would (ADR 0008, item 13).
+					if got := lastTranscript(t, s); !slices.Equal(got, want) {
+						t.Fatalf("transcript = %v, want the uninterrupted run's %v", got, want)
+					}
 				})
 			}
 		}
 	}
+}
+
+// lastTranscript returns the message artifacts of the latest checkpoint
+// that holds a model state's progress.
+func lastTranscript(t testing.TB, s store.Store) []string {
+	t.Helper()
+	ck, ok, err := s.LatestCheckpoint(context.Background(), inst)
+	if err != nil || !ok {
+		t.Fatalf("LatestCheckpoint = %v, %v", ok, err)
+	}
+	for seq := ck.Seq; seq > 0; seq-- {
+		c, err := s.Checkpoint(context.Background(), inst, seq)
+		if err != nil {
+			t.Fatalf("Checkpoint %d: %v", seq, err)
+		}
+		var st struct {
+			Model *struct {
+				Transcript []string `json:"transcript"`
+			} `json:"model"`
+		}
+		if err := json.Unmarshal(c.State, &st); err != nil {
+			t.Fatal(err)
+		}
+		if st.Model != nil {
+			return st.Model.Transcript
+		}
+	}
+	t.Fatal("no checkpoint holds a model state's progress")
+	return nil
 }
 
 func ownershipFence(t testing.TB, s store.Store) store.Fence {
@@ -1039,6 +1076,7 @@ func TestModelStateInvalidPromptRequest(t *testing.T) {
 	for name, mutate := range map[string]func(*llms.ChatRequest){
 		"message": func(r *llms.ChatRequest) { r.Messages = []llms.Message{llms.UserText("\xff")} },
 		"system":  func(r *llms.ChatRequest) { r.System = []llms.ContentPart{llms.Text("\xff")} },
+		"role":    func(r *llms.ChatRequest) { r.Messages[0].Role = "user\xff" },
 		"cyclic provider params": func(r *llms.ChatRequest) {
 			m := map[string]any{}
 			m["self"] = m
@@ -1096,5 +1134,183 @@ func TestModelStateParamsSentAsRecorded(t *testing.T) {
 	b, _ := json.Marshal(again.ProviderParams)
 	if string(a) != string(b) || !strings.Contains(string(a), "1152921504606846976") {
 		t.Fatalf("provider params sent live %s, after recovery %s", a, b)
+	}
+}
+
+// TestModelStateCancelledDuringWriteRead: a write whose store read the
+// activation's end interrupted ends the activation by the context's cause,
+// not as a store failure (ADR 0007, item 14).
+func TestModelStateCancelledDuringWriteRead(t *testing.T) {
+	execs := &execLog{}
+	tools := ledgerTools(execs)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	tools[1] = agent.Tool[ledgerData]{
+		Definition: llms.ToolDefinition{Name: "record"},
+		Effect:     agent.EffectWrite,
+		Contract:   agent.ContractIdempotent,
+		Execute: func(ctx context.Context, c *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			cancel(agent.ErrOperator)
+			if _, _, err := ledger(ctx, c.Env); err != nil {
+				return agent.Result[ledgerData]{}, err
+			}
+			return agent.Result[ledgerData]{}, errors.New("the read was not interrupted")
+		},
+	}
+	s := ctxObjects{newBackend(t, "memstore").open()}
+	createLedgerRun(t, s)
+	out, err := activateWith(ctx, agent.NewController(s, registry(t, ledgerType(execs, tools...))), claim(t, s), scripted(ledgerScript), 0)
+	if err != nil {
+		t.Fatalf("Activate = %v, want the operator's cancellation", err)
+	}
+	if out.Status != store.StatusCancelled || out.Reason.Code != agent.ReasonOperator {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if run := runRecord(t, s, "r1"); run.Status != store.StatusCancelled {
+		t.Fatalf("run = %+v, want cancelled", run)
+	}
+}
+
+// ctxObjects fails an object read whose context has ended, as a store
+// that honours its context does.
+type ctxObjects struct{ store.Store }
+
+func (s ctxObjects) Object(ctx context.Context, ns, key string) (store.Object, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Object{}, false, err
+	}
+	return s.Store.Object(ctx, ns, key)
+}
+
+// TestModelStateRecoveredWriteOutlivesItsTool: a write attempted with no
+// result is resolved by the effect and contract its attempt recorded, not
+// by what the recovering version declares: removing the tool, or
+// redeclaring it as an atomic local transaction, leaves its outcome
+// unknown (ADR 0008, item 17).
+func TestModelStateRecoveredWriteOutlivesItsTool(t *testing.T) {
+	for name, redeclare := range map[string]func([]agent.Tool[ledgerData]) []agent.Tool[ledgerData]{
+		"removed": func(tools []agent.Tool[ledgerData]) []agent.Tool[ledgerData] {
+			return []agent.Tool[ledgerData]{tools[0], tools[2]}
+		},
+		"now atomic local": func(tools []agent.Tool[ledgerData]) []agent.Tool[ledgerData] {
+			tools[1].Contract = agent.ContractAtomicLocal
+			return tools
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sent := 0
+			tools := func() []agent.Tool[ledgerData] {
+				tools := ledgerTools(&execLog{})
+				tools[1] = agent.Tool[ledgerData]{
+					Definition: llms.ToolDefinition{Name: "record"},
+					Effect:     agent.EffectWrite,
+					Contract:   agent.ContractIdempotent,
+					Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+						sent++
+						return agent.TextResult[ledgerData]("sent"), nil
+					},
+				}
+				return tools
+			}
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			// Commit 10 is the record call's result: the write was sent,
+			// its result did not land.
+			cs := &crashStore{Store: s, at: 10}
+			if _, err := activateWith(context.Background(), agent.NewController(cs, registry(t, ledgerType(&execLog{}, tools()...))), claim(t, s), scripted(ledgerScript), 0); !errors.Is(err, agent.ErrStoreFailure) {
+				t.Fatalf("crashed activation = %v", err)
+			}
+			releaseIfOwned(t, s)
+			reg := registry(t, ledgerType(&execLog{}, redeclare(tools())...))
+			out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(ledgerScript), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonToolError || !strings.Contains(out.Detail, "unknown") {
+				t.Fatalf("outcome = %+v", out)
+			}
+			if sent != 1 {
+				t.Fatalf("write sent %d times, want once", sent)
+			}
+			es := entries(t, s, "r1")
+			if r := payload[agent.ResultEntry](t, es[len(es)-2]); r.Status != agent.ResultUnknown || r.Tool != "record" {
+				t.Fatalf("result = %+v", r)
+			}
+		})
+	}
+}
+
+// Registration keeps its own copy of a tool's input schema: changing the
+// declaration's bytes afterwards changes nothing sent (ADR 0007, item 3).
+func TestModelStateSchemaIsASnapshot(t *testing.T) {
+	tools := ledgerTools(&execLog{})
+	schema := json.RawMessage(`{ "type": "object" }`)
+	tools[0].Definition.InputSchema = schema
+	reg := registry(t, ledgerType(&execLog{}, tools...))
+	copy(schema, `{ "type": "string" }`)
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	client := scripted(ledgerScript)
+	if _, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(client.Calls()[0].Tools[0].InputSchema); got != `{"type":"object"}` {
+		t.Fatalf("schema sent = %s", got)
+	}
+}
+
+// TestModelStateChangedToolsRecorded: a version that declares the state's
+// tools differently records new parameters with its next attempt, so each
+// attempt's recorded parameters are the ones sent (ADR 0008, item 8).
+func TestModelStateChangedToolsRecorded(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := scripted(ledgerScript)
+	inner := client.Func
+	client.Func = func(c context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+		if len(client.Calls()) == 2 {
+			cancel()
+			return llms.ChatResponse{}, c.Err()
+		}
+		return inner(c, req)
+	}
+	if out, err := activateWith(ctx, agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), client, 0); err != nil || out.Reason.Code != agent.ReasonShutdown {
+		t.Fatalf("first activation = %+v, %v", out, err)
+	}
+	const changed = `{"type":"object","required":["key"]}`
+	tools := ledgerTools(&execLog{})
+	tools[0].Definition.InputSchema = json.RawMessage(changed)
+	resumed := scripted(ledgerScript)
+	if out, err := activateWith(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}, tools...))), claim(t, s), resumed, 0); err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("resumed = %+v, %v", out, err)
+	}
+	var params []string
+	for _, e := range entries(t, s, "r1") {
+		if e.Kind == agent.EntryModelAttempt {
+			params = append(params, payload[agent.ModelAttemptEntry](t, e).Params)
+		}
+	}
+	schemaOf := func(digest string) string {
+		_, raw, err := s.Artifact(context.Background(), digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var req llms.ChatRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Fatal(err)
+		}
+		return string(req.Tools[0].InputSchema)
+	}
+	if got := schemaOf(params[0]); got != `{"type":"object"}` {
+		t.Fatalf("first attempt's schema = %s", got)
+	}
+	last := params[len(params)-1]
+	if got := schemaOf(last); got != changed {
+		t.Fatalf("last attempt's schema = %s, want %s", got, changed)
+	}
+	if got := string(resumed.Calls()[len(resumed.Calls())-1].Tools[0].InputSchema); got != changed {
+		t.Fatalf("schema sent = %s", got)
 	}
 }

@@ -23,7 +23,9 @@ decisions building model states raised:
    end a run;
 7. where TEST-5 runs.
 
-It amends ADR 0004 item 8 (the commit that carries synthesized results).
+It amends ADR 0004 item 8 (the commit that carries synthesized results),
+ADR 0006 item 11 (TEST-5 joins the suite, item 20) and ADR 0007 items 2 (a
+state's third kind, item 1) and 9 (the tail's model-state kinds, item 11).
 
 ## Decision
 
@@ -111,7 +113,14 @@ It amends ADR 0004 item 8 (the commit that carries synthesized results).
    decoded from that record**, live as on recovery, so whatever
    `encoding/json` normalizes (invalid UTF-8 in metadata or provider
    parameters, typed values) is normalized alike for both; a value it
-   cannot encode (a cycle) fails the run with `state_error`.
+   cannot encode (a cycle) fails the run with `state_error`. A tool's
+   schema is copied and compacted at registration, as the parameters hold
+   it. **Restored parameters keep the tools the loop offers**: when the
+   recovering version declares the state's tools differently from the
+   recorded parameters (a changed schema, a tool added or removed), its
+   next attempt records new parameters, with the recorded system
+   instructions and settings and the current tools, so every attempt's
+   parameters are what it sent; `Prompt` does not run again.
 9. **A model attempt records its request as a delta** (ADR 0004, item 2):
    the parameters' digest, `Base` (the number of messages the state's
    latest checkpoint holds) and the digests of the messages added since,
@@ -179,18 +188,26 @@ It amends ADR 0004 item 8 (the commit that carries synthesized results).
     as ADR 0007 item 12 left it, distinct from `state_error`. A model-visible
     failure is a result with `IsError`. As for a code state (ADR 0007,
     item 13), an error wrapping a `*ReadError` from the tool's `Env` ends the
-    activation with a store failure instead, not a run failure.
+    activation with a store failure instead, not a run failure, unless the
+    context has ended (item 18).
 16. **The policy hook's failure fails the run with `tool_error`**: an error,
     a panic, or an unknown verdict. A `pending` verdict does too, until
     approval is built (MVP.md, TOOL-4).
 17. **An unknown write fails the run** (ADR 0004, item 11): a write that is
     not an atomic local transaction, attempted with no result, gets a
     `result` entry with status `unknown` in the commit that fails the run
-    with `tool_error`.
+    with `tool_error`. **An attempt records its tool's effect and write
+    contract**, and recovery partitions an attempt with no result by what
+    it recorded, not by what the recovering version declares: a write
+    attempted by a tool since removed or redeclared still has an unknown
+    outcome.
 18. **The context's end** (ADR 0003, item 17; ADR 0007, item 14): a read's
     or an atomic local transaction's result returned after the context ended
     is discarded, since its effect commits only with its result, and
-    recovery issues the call again. Any other write's result is recorded, as
+    recovery issues the call again. Any other write's error after the
+    context ended (a store read the end interrupted included) ends the
+    activation by the cause, leaving its attempt for recovery to resolve
+    as unknown. Any other write's result is recorded, as
     its effect may have happened; if it transitions to a terminal state the
     transition and its checkpoint commit but the run's ending yields to the
     cause, and a later activation that finds a terminal checkpointed state

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -258,6 +259,15 @@ type erasedModel struct {
 	tools  []*erasedTool
 }
 
+// definitions returns the tool definitions the state offers, in order.
+func (m *erasedModel) definitions() []llms.ToolDefinition {
+	defs := make([]llms.ToolDefinition, len(m.tools))
+	for i, t := range m.tools {
+		defs[i] = t.def
+	}
+	return defs
+}
+
 type erasedTool struct {
 	exec     func(ctx context.Context, env *Env, data json.RawMessage, call llms.ToolCall, action ActionID, key string) (erasedResult, error)
 	effect   Effect
@@ -269,7 +279,23 @@ type erasedTool struct {
 // again (STM-6): a read, or an atomic local transaction, whose effect
 // commits only with its result.
 func (t *erasedTool) reissuable() bool {
-	return t.effect == EffectRead || t.contract == ContractAtomicLocal
+	return reissuable(t.effect, t.contract)
+}
+
+func reissuable(effect Effect, contract WriteContract) bool {
+	return effect == EffectRead || contract == ContractAtomicLocal
+}
+
+// compactJSON returns a compacted copy of valid JSON, nil for nil.
+func compactJSON(raw json.RawMessage) json.RawMessage {
+	if raw == nil {
+		return nil
+	}
+	var b bytes.Buffer
+	if err := json.Compact(&b, raw); err != nil {
+		return append(json.RawMessage(nil), raw...)
+	}
+	return b.Bytes()
 }
 
 type erasedResult struct {
@@ -298,6 +324,10 @@ func eraseModel[D any](ms *ModelState[D]) *erasedModel {
 		t := ms.Tools[i]
 		exec := t.Execute
 		et := &erasedTool{def: t.Definition, effect: t.Effect, contract: t.Contract}
+		// The schema's bytes are the declaration's own: registration keeps
+		// a copy, compacted as the recorded parameters hold it, so what is
+		// sent is what is recorded (ADR 0008, item 8).
+		et.def.InputSchema = compactJSON(t.Definition.InputSchema)
 		et.exec = func(ctx context.Context, env *Env, raw json.RawMessage, call llms.ToolCall, action ActionID, key string) (erasedResult, error) {
 			d, err := decodeData[D](raw)
 			if err != nil {

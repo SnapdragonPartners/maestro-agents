@@ -136,14 +136,23 @@ type PermissionEntry struct {
 
 // AttemptEntry is the payload of an attempt entry, committed immediately
 // before the call is sent (STM-6): its action identity, the SHA-256 of its
-// arguments and, for a write, its idempotency key (TOOL-5).
+// arguments, the tool's effect and write contract as they were when it was
+// sent and, for a write, its idempotency key (TOOL-5). Recovery partitions
+// an attempt with no result by its recorded effect and contract, not by
+// the tool a later version declares (ADR 0008, item 17).
 type AttemptEntry struct {
-	Tool   string   `json:"tool"`
-	Args   string   `json:"args"`
-	Key    string   `json:"key,omitempty"`
-	Action ActionID `json:"action"`
-	Call   int      `json:"call"`
+	Tool     string        `json:"tool"`
+	Args     string        `json:"args"`
+	Effect   Effect        `json:"effect"`
+	Contract WriteContract `json:"contract,omitempty"`
+	Key      string        `json:"key,omitempty"`
+	Action   ActionID      `json:"action"`
+	Call     int           `json:"call"`
 }
+
+// reissuable reports whether the attempt, with no recorded result, is
+// issued again (STM-6).
+func (e *AttemptEntry) reissuable() bool { return reissuable(e.Effect, e.Contract) }
 
 // ResultStatus is how a call was resolved (ADR 0004, item 2).
 type ResultStatus string

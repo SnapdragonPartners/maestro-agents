@@ -1,6 +1,6 @@
 # 0007. Agent types and the run controller
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR 0008](0008-model-states.md)
 - **Date:** 2026-11-08
 
 ## Context
@@ -24,7 +24,8 @@ It amends ADR 0003 items 12 (the trigger is read from the run record) and
 14 (a third error, for an activation refused before it writes).
 
 Model states (the write-ahead turn, tool permissions, attempts and
-results, ADR 0004 items 6 to 10) build on this API in the next PR.
+results, ADR 0004 items 6 to 10) build on this API; [ADR 0008](0008-model-states.md)
+records them and amends items 2 and 9.
 
 ## Decision
 
@@ -38,7 +39,8 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
    name, a version, an initial state and its states. A state sets exactly
    one of `Code` (a code state, STM-2) and `End` (a terminal state, STM-4);
    a code state declares `Next`, the states it may transition to (STM-1).
-   Model states add a third field. **`Registry.Register`** checks the
+   (Amended by ADR 0008, item 1: a state sets exactly one of `Code`,
+   `Model` and `End`.) **`Registry.Register`** checks the
    declaration (unique names, declared transitions naming declared states,
    a non-terminal initial state) and refuses a malformed one or a
    duplicate name with `ErrInvalidType` (MAN-3). The registry erases `D`,
@@ -97,7 +99,8 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
    of a code state commits a checkpoint (ADR 0004, item 4), so recovery
    of a code-state run is restoring the checkpoint (ADR 0004, item 12). An
    entry of any other kind past the checkpoint is refused as one this
-   version cannot recover, until model states add theirs.
+   version cannot recover. (Amended by ADR 0008, item 11: the tail also
+   holds a model state's attempts and at most one turn with its calls.)
 
 ### Code states
 
@@ -177,11 +180,10 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
 - Replaying a code state needs no record of its object reads, since its
   output is recorded whole; the replay harness (TEST-1) is decided with
   its own work.
-- Not yet built, and decided with their own work: model states and the
-  write-ahead turn; budgets and their consumption (`Outcome.Consumed`);
+- Not yet built, and decided with their own work (model states, the
+  write-ahead turn and TEST-5 in `storetest` followed in ADR 0008): budgets and their consumption (`Outcome.Consumed`);
   manifests, tool grants and the namespaces a state may touch (MAN-1,
-  MAN-2); telemetry events (HOST-1); TEST-5 in `storetest`, which needs
-  model states to have effects worth testing (ADR 0006, item 11).
+  MAN-2); telemetry events (HOST-1).
   Heartbeats remain the host's (HOST-4): a long activation's host extends
   the lease while it runs.
 

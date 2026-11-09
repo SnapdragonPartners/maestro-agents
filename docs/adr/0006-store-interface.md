@@ -1,6 +1,6 @@
 # 0006. The store interface
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR 0008](0008-model-states.md)
 - **Date:** 2026-11-08
 
 ## Context
@@ -113,11 +113,12 @@ PR that defines it:
     treats a claim that returns within 300 ms while A is paused as having
     committed first; a store that serializes the claim behind the commit
     blocks it indefinitely, so the window cannot fail a correct store.
-    **The suite does not run TEST-5 yet**, which ADR 0005 item 6 assigns
-    to it: it runs the operations' semantics, TEST-6's two interleavings
-    and a reopen check. TEST-5 stops an activation at a durable boundary
-    and continues it in a new one, so it needs the execution record's
-    runtime, and joins the suite with that runtime.
+    **The suite did not run TEST-5 at first**, which ADR 0005 item 6
+    assigns to it: it ran the operations' semantics, TEST-6's two
+    interleavings and a reopen check. TEST-5 stops an activation at a
+    durable boundary and continues it in a new one, so it needed the
+    execution record's runtime; it joined the suite with model states
+    (ADR 0008, item 20).
     **A reopen keeps owners and epochs and never extends a lease**; the
     suite accepts a store that drops every lease on reopen, as the file
     store does (ADR 0005, item 16, tested in the file store's own tests),

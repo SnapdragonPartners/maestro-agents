@@ -20,9 +20,9 @@ type Store interface {
 	store.Reader
 }
 
-// DefaultConflictRetries is how many times a code state is run again when
-// its object operations conflict with another instance's commit (ADR 0005,
-// item 10).
+// DefaultConflictRetries is how many times a code state, or a model
+// state's atomic-local-transaction tool, is run again when its object
+// operations conflict with another instance's commit (ADR 0005, item 10).
 const DefaultConflictRetries = 3
 
 // Controller runs activations (ADR 0003, item 12). It holds no per-run
@@ -38,8 +38,10 @@ type Controller struct {
 type Option func(*Controller)
 
 // WithConflictRetries sets how many times a code state is re-run on an
-// object conflict before the run fails with ReasonObjectConflict. Negative
-// values count as zero.
+// object conflict before the run fails with ReasonObjectConflict, and how
+// many times an atomic-local-transaction tool is re-run before its call's
+// result becomes a tool error the model receives (ADR 0005, item 10); the
+// run does not fail. Negative values count as zero.
 func WithConflictRetries(n int) Option {
 	return func(c *Controller) { c.retries = max(n, 0) }
 }

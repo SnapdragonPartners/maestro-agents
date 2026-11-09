@@ -127,8 +127,11 @@ func (w *wireMessage) message() llms.Message {
 }
 
 // checkMessage refuses a message the record could not keep exactly: a
-// string that is not valid UTF-8.
+// string, its role included, that is not valid UTF-8.
 func checkMessage(m *llms.Message) error {
+	if !utf8.ValidString(string(m.Role)) {
+		return errors.New("role is not valid UTF-8")
+	}
 	return checkStrings(m.Content)
 }
 

@@ -238,6 +238,9 @@ func (r *modelRun) load(ctx context.Context) *ending {
 		if e := r.loadParams(ctx, p.Params); e != nil {
 			return e
 		}
+		if e := r.offerTools(ctx); e != nil {
+			return e
+		}
 		r.digests = append([]string(nil), p.Transcript...)
 		r.transcript = make([]llms.Message, len(p.Transcript))
 		for i, d := range p.Transcript {
@@ -252,7 +255,10 @@ func (r *modelRun) load(ctx context.Context) *ending {
 	if t := a.tail.turn; t != nil {
 		// The state's first turn is recorded but not complete: its request
 		// is the recorded one, so Prompt does not run again.
-		return r.loadParams(ctx, t.attempt.Params)
+		if e := r.loadParams(ctx, t.attempt.Params); e != nil {
+			return e
+		}
+		return r.offerTools(ctx)
 	}
 	if ctx.Err() != nil {
 		return a.endByCause(ctx)
@@ -280,23 +286,42 @@ func (r *modelRun) load(ctx context.Context) *ending {
 	// and part of the transcript when its turn completes.
 	r.unsent = req.Messages
 	req.Messages = nil
-	req.Tools = make([]llms.ToolDefinition, len(r.ms.tools))
-	for i, t := range r.ms.tools {
-		req.Tools[i] = t.def
-	}
+	req.Tools = r.ms.definitions()
+	return r.setParams(ctx, &req)
+}
+
+// setParams makes req the state's parameters, to be recorded with the next
+// attempt. The request sent is the recorded one, decoded from its artifact
+// as recovery decodes it, so a live run and its recovery send the same
+// parameters whatever encoding/json normalizes (ADR 0008, item 8).
+func (r *modelRun) setParams(ctx context.Context, req *llms.ChatRequest) *ending {
 	raw, err := json.Marshal(req)
 	if err != nil {
-		return a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q prompt: encode request: %v", r.st.name, err))
+		return r.a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q: encode request: %v", r.st.name, err))
 	}
-	// The request sent is the recorded one, decoded from its artifact as
-	// recovery decodes it, so a live run and its recovery send the same
-	// parameters whatever encoding/json normalizes (ADR 0008, item 8).
 	var sent llms.ChatRequest
 	if err := decodeJSON(raw, &sent); err != nil {
-		return a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q prompt: decode request: %v", r.st.name, err))
+		return r.a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q: decode request: %v", r.st.name, err))
 	}
-	r.params, r.paramsRaw, r.paramsDigest = sent, raw, digestOf(raw)
+	r.params, r.paramsRaw, r.paramsDigest, r.paramsStored = sent, raw, digestOf(raw), false
 	return nil
+}
+
+// offerTools keeps the restored parameters' tool definitions the ones the
+// loop offers. A version that declares the state's tools differently (a
+// changed schema, a tool added or removed) records new parameters with its
+// next attempt, so every attempt's parameters are what was sent (ADR 0008,
+// item 8).
+func (r *modelRun) offerTools(ctx context.Context) *ending {
+	defs := r.ms.definitions()
+	have, herr := json.Marshal(r.params.Tools)
+	want, werr := json.Marshal(defs)
+	if herr == nil && werr == nil && bytes.Equal(have, want) {
+		return nil
+	}
+	req := r.params
+	req.Tools = defs
+	return r.setParams(ctx, &req)
 }
 
 func (r *modelRun) loadParams(ctx context.Context, digest string) *ending {
@@ -776,15 +801,15 @@ func (r *modelRun) resolve(ctx context.Context, i int) (*resultRecord, bool, err
 				"call %d (%s): reissued with arguments that differ from its recorded attempt", i, call.Name))
 			return nil, false, errAbort
 		}
-		if !tool.reissuable() {
-			r.abort = r.unknown(ctx, i, tool)
+		if !prev.reissuable() {
+			r.abort = r.unknown(ctx, i, prev)
 			return nil, false, errAbort
 		}
 	}
 	if ctx.Err() != nil {
 		return nil, false, ctx.Err() //nolint:wrapcheck // toolloop classifies the context's error
 	}
-	at := AttemptEntry{Call: i, Tool: call.Name, Action: action, Args: args}
+	at := AttemptEntry{Call: i, Tool: call.Name, Action: action, Args: args, Effect: tool.effect, Contract: tool.contract}
 	if tool.effect == EffectWrite {
 		at.Key = action.IdempotencyKey()
 	}
@@ -832,14 +857,14 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 
 // unknown records a write's unknown outcome and fails the run (ADR 0004,
 // item 11).
-func (r *modelRun) unknown(ctx context.Context, i int, tool *erasedTool) *ending {
+func (r *modelRun) unknown(ctx context.Context, i int, at *AttemptEntry) *ending {
 	a, t := r.a, r.turn
 	b := a.entries()
 	r.addPending(b)
 	res := &resultRecord{Content: "outcome unknown", IsError: true}
-	b.add(t.step, EntryResult, ResultEntry{Call: i, Tool: tool.def.Name, Status: ResultUnknown, Result: b.artifact(res), IsError: true})
+	b.add(t.step, EntryResult, ResultEntry{Call: i, Tool: at.Tool, Status: ResultUnknown, Result: b.artifact(res), IsError: true})
 	out := OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: ReasonToolError}, Detail: fmt.Sprintf(
-		"call %d (%s): a %s write was attempted and its outcome is unknown (TOOL-12)", i, tool.def.Name, tool.contract)}
+		"call %d (%s): a %s write was attempted and its outcome is unknown (TOOL-12)", i, at.Tool, at.Contract)}
 	if ctx.Err() != nil {
 		return a.endByCause(ctx)
 	}
@@ -870,15 +895,8 @@ func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *Attempt
 		if ctx.Err() != nil && tool.reissuable() {
 			return nil, false, ctx.Err() //nolint:wrapcheck // toolloop classifies the context's error
 		}
-		var read *ReadError
-		switch {
-		case errors.As(err, &read):
-			// A store read that failed is a store failure, not the run's
-			// (ADR 0003, item 15; ADR 0007, item 13).
-			r.abort = &ending{err: storeFailure(read.Err)}
-			return nil, false, errAbort
-		case err != nil:
-			r.abort = a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): %v", i, call.Name, err))
+		if err != nil {
+			r.abort = r.execFailed(ctx, i, err)
 			return nil, false, errAbort
 		}
 		if err := r.checkResult(tool, &res); err != nil {
@@ -910,6 +928,25 @@ func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *Attempt
 		}
 		return nil, false, errAbort
 	}
+}
+
+// execFailed ends the activation after a tool's Execute returned an error.
+func (r *modelRun) execFailed(ctx context.Context, i int, err error) *ending {
+	a := r.a
+	var read *ReadError
+	switch {
+	case ctx.Err() != nil:
+		// A write's error after the context ended, a read the end
+		// interrupted included, ends the activation by the context's
+		// cause; its attempt has no result, so recovery resolves it
+		// (ADR 0008, item 18).
+		return a.endByCause(ctx)
+	case errors.As(err, &read):
+		// A store read that failed is a store failure, not the run's
+		// (ADR 0003, item 15; ADR 0007, item 13).
+		return &ending{err: storeFailure(read.Err)}
+	}
+	return a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): %v", i, r.turn.calls[i].Name, err))
 }
 
 // checkResult refuses a result the runtime cannot record or send.
@@ -1099,6 +1136,12 @@ func (r *modelRun) recoverTurn(ctx context.Context) *ending {
 			return r.flush(ctx)
 		}
 		if r.ms.byName[t.calls[i].Name] == nil {
+			// A tool this version does not declare. A write it attempted
+			// may have had its effect: its outcome is unknown, whatever
+			// the tool's absence (ADR 0008, item 17).
+			if at := t.attempt[i]; at != nil && !at.reissuable() {
+				return r.unknown(ctx, i, at)
+			}
 			t.results[i] = &resultRecord{Content: refusedContent(t.calls[i].Name), IsError: true}
 			r.pending = append(r.pending, i)
 			continue
