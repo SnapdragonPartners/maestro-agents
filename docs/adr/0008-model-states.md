@@ -100,14 +100,18 @@ It amends ADR 0004 item 8 (the commit that carries synthesized results).
    answers as it chooses. Every string is checked as valid UTF-8 where it
    enters, since `encoding/json` would replace invalid bytes: what a model
    state declares (its nudge, its tools' names, descriptions and schemas,
-   which must also be valid JSON) is refused at registration; an invalid
-   prompt's request (messages, system, metadata, provider params) fails the
-   run with `state_error`, an invalid response with `model_error`, and an
-   invalid tool result or policy reason with `tool_error`. Observations
-   that never reach the model (an error's text in a `model_failure` entry
-   or an outcome's detail) are recorded as `encoding/json` encodes them. The parameters are stored in
-   `encoding/json`'s default form and read back with numbers kept exact
-   (`json.Number`).
+   which must also be valid JSON) is refused at registration; a prompt's
+   invalid messages or system instructions fail the run with
+   `state_error`, an invalid response with `model_error`, and an invalid
+   tool result or policy reason with `tool_error`. Observations that never
+   reach the model (an error's text in a `model_failure` entry or an
+   outcome's detail) are recorded as `encoding/json` encodes them. The
+   parameters are stored in `encoding/json`'s default form, read back with
+   numbers kept exact (`json.Number`), and **the request sent is the one
+   decoded from that record**, live as on recovery, so whatever
+   `encoding/json` normalizes (invalid UTF-8 in metadata or provider
+   parameters, typed values) is normalized alike for both; a value it
+   cannot encode (a cycle) fails the run with `state_error`.
 9. **A model attempt records its request as a delta** (ADR 0004, item 2):
    the parameters' digest, `Base` (the number of messages the state's
    latest checkpoint holds) and the digests of the messages added since,

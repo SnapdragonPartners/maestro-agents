@@ -226,27 +226,12 @@ func checkMedia(p *llms.ContentPart) error {
 	return nil
 }
 
-// checkRequest refuses a prompt's request the record could not keep
-// exactly.
+// checkRequest refuses a prompt's messages and system instructions the
+// record could not keep exactly. The other parameters need no check: the
+// request sent is the one decoded from its recorded form (modelRun.load).
 func checkRequest(req *llms.ChatRequest) error {
 	if err := checkStrings(req.System); err != nil {
 		return fmt.Errorf("system: %w", err)
-	}
-	if !utf8.ValidString(string(req.Purpose)) || !utf8.ValidString(string(req.ToolChoice.Type)) || !utf8.ValidString(req.ToolChoice.Name) {
-		return errors.New("purpose or tool choice is not valid UTF-8")
-	}
-	if req.Reasoning != nil && !utf8.ValidString(string(req.Reasoning.Effort)) {
-		return errors.New("reasoning effort is not valid UTF-8")
-	}
-	for k, v := range req.Metadata {
-		if !utf8.ValidString(k) || !utf8.ValidString(v) {
-			return errors.New("metadata holds a string that is not valid UTF-8")
-		}
-	}
-	for p, params := range req.ProviderParams {
-		if !utf8.ValidString(string(p)) || !validStrings(params) {
-			return fmt.Errorf("provider params for %q hold a string that is not valid UTF-8", p)
-		}
 	}
 	for i := range req.Messages {
 		if err := checkMessage(&req.Messages[i]); err != nil {
@@ -270,27 +255,4 @@ func checkResponse(resp *llms.ChatResponse) error {
 		}
 	}
 	return nil
-}
-
-// validStrings reports whether every string in a JSON-like value, map keys
-// included, is valid UTF-8. Values it does not know (numbers, structs)
-// pass: encoding/json then reports what it cannot encode.
-func validStrings(v any) bool {
-	switch x := v.(type) {
-	case string:
-		return utf8.ValidString(x)
-	case map[string]any:
-		for k, e := range x {
-			if !utf8.ValidString(k) || !validStrings(e) {
-				return false
-			}
-		}
-	case []any:
-		for _, e := range x {
-			if !validStrings(e) {
-				return false
-			}
-		}
-	}
-	return true
 }

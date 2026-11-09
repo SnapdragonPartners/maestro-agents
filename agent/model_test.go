@@ -1037,10 +1037,12 @@ func TestModelStateShutdownWithPendingRefusal(t *testing.T) {
 
 func TestModelStateInvalidPromptRequest(t *testing.T) {
 	for name, mutate := range map[string]func(*llms.ChatRequest){
-		"message":  func(r *llms.ChatRequest) { r.Messages = []llms.Message{llms.UserText("\xff")} },
-		"metadata": func(r *llms.ChatRequest) { r.Metadata = map[string]string{"k": "\xff"} },
-		"provider params": func(r *llms.ChatRequest) {
-			r.ProviderParams = map[llms.ProviderID]map[string]any{"p": {"k": []any{"\xff"}}}
+		"message": func(r *llms.ChatRequest) { r.Messages = []llms.Message{llms.UserText("\xff")} },
+		"system":  func(r *llms.ChatRequest) { r.System = []llms.ContentPart{llms.Text("\xff")} },
+		"cyclic provider params": func(r *llms.ChatRequest) {
+			m := map[string]any{}
+			m["self"] = m
+			r.ProviderParams = map[llms.ProviderID]map[string]any{"p": m}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1057,5 +1059,42 @@ func TestModelStateInvalidPromptRequest(t *testing.T) {
 				t.Fatalf("outcome = %+v, %v; want state_error", out, err)
 			}
 		})
+	}
+}
+
+// The parameters sent are the recorded ones: a live run and its recovery
+// send the same, whatever encoding/json normalizes (ADR 0008, item 8).
+func TestModelStateParamsSentAsRecorded(t *testing.T) {
+	typ := ledgerType(&execLog{})
+	typ.States[0].Model.Prompt = func(context.Context, *agent.Env, ledgerData) (llms.ChatRequest, error) {
+		return llms.ChatRequest{
+			Messages: []llms.Message{llms.UserText("items for r1")},
+			Metadata: map[string]string{"k": "a\xffb"},
+			ProviderParams: map[llms.ProviderID]map[string]any{"p": {
+				"list": []string{"x\xff"}, "big": int64(1) << 60,
+			}},
+		}, nil
+	}
+	reg := registry(t, typ)
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	live := scripted(ledgerScript)
+	// Commit 5 is the lookup's permission: the first turn is recorded.
+	if _, err := activateWith(context.Background(), agent.NewController(&crashStore{Store: s, at: 5}, reg), claim(t, s), live, 0); !errors.Is(err, agent.ErrStoreFailure) {
+		t.Fatalf("crashed activation = %v", err)
+	}
+	releaseIfOwned(t, s)
+	recovered := scripted(ledgerScript)
+	if out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), recovered, 0); err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("outcome = %+v, %v", out, err)
+	}
+	first, again := live.Calls()[0], recovered.Calls()[0]
+	if first.Metadata["k"] != again.Metadata["k"] {
+		t.Fatalf("metadata sent live %q, after recovery %q", first.Metadata["k"], again.Metadata["k"])
+	}
+	a, _ := json.Marshal(first.ProviderParams)
+	b, _ := json.Marshal(again.ProviderParams)
+	if string(a) != string(b) || !strings.Contains(string(a), "1152921504606846976") {
+		t.Fatalf("provider params sent live %s, after recovery %s", a, b)
 	}
 }

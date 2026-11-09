@@ -189,12 +189,17 @@ func (a *activation) readArtifact(ctx context.Context, digest string, v any) err
 	if err != nil {
 		return storeFailure(fmt.Errorf("agent: read artifact %s: %w", digest, err))
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(v); err != nil {
+	if err := decodeJSON(raw, v); err != nil {
 		return storeFailure(fmt.Errorf("agent: decode artifact %s: %w", digest, err))
 	}
 	return nil
+}
+
+// decodeJSON decodes a recorded value, keeping numbers exact.
+func decodeJSON(raw []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	return dec.Decode(v) //nolint:wrapcheck // callers wrap it
 }
 
 // modelStep runs a model state from the latest checkpoint until a tool
@@ -283,7 +288,14 @@ func (r *modelRun) load(ctx context.Context) *ending {
 	if err != nil {
 		return a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q prompt: encode request: %v", r.st.name, err))
 	}
-	r.params, r.paramsRaw, r.paramsDigest = req, raw, digestOf(raw)
+	// The request sent is the recorded one, decoded from its artifact as
+	// recovery decodes it, so a live run and its recovery send the same
+	// parameters whatever encoding/json normalizes (ADR 0008, item 8).
+	var sent llms.ChatRequest
+	if err := decodeJSON(raw, &sent); err != nil {
+		return a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q prompt: decode request: %v", r.st.name, err))
+	}
+	r.params, r.paramsRaw, r.paramsDigest = sent, raw, digestOf(raw)
 	return nil
 }
 
