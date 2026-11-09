@@ -88,7 +88,10 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
    the configuration's digest and the next step's number. A checkpoint
    written by another version of the agent type is passed to the type's
    `Migrate`; a type with no `Migrate` refuses it, and the run fails with
-   `state_error` (RUN-5).
+   `state_error` (RUN-5). The migrated data is checkpointed by the next
+   step boundary, so until that commit lands `Migrate` may run again for
+   the same checkpoint and, like `Init`, must have no durable effect of
+   its own.
 9. **The tail holds what an activation commits without a checkpoint**:
    `activation_started` and a non-terminal `outcome`. Every step boundary
    of a code state commits a checkpoint (ADR 0004, item 4), so recovery
@@ -131,7 +134,7 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
     or `Migrate` that returns an error wrapping one ends the activation
     with a store failure, not a run failure (ADR 0003, item 15), and one
     that returns an error after the context ended yields to its cause
-    (item 14). A malformed read (an
+    (item 14). A panic counts as a returned error (item 12). A malformed read (an
     invalid key) is the state's defect and is returned as is.
 
 ### Endings and errors

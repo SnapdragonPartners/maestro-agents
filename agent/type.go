@@ -23,13 +23,17 @@ type Type[D any] struct {
 	// its committed result is kept. Nil starts from D's zero value. An
 	// error fails the run with ReasonStateError, unless, as for a code
 	// state, it wraps a *ReadError (a store failure, ADR 0003 item 15) or
-	// the context has ended (the context's cause decides).
+	// the context has ended (the context's cause decides). A panic is
+	// recovered and treated as an error.
 	Init func(ctx context.Context, env *Env) (D, error)
 
 	// Migrate converts state data checkpointed by another version of this
-	// agent type (RUN-5). Nil refuses such a checkpoint: the run fails
-	// with ReasonStateError. An error fails the run the same way, with
-	// the exceptions Init's has.
+	// agent type (RUN-5). Its result is checkpointed by the next step
+	// boundary; until that commit lands it may run again for the same
+	// checkpoint (after a crash, a shutdown or the step limit), so it must
+	// have no durable effect of its own. Nil refuses such a checkpoint:
+	// the run fails with ReasonStateError. An error or panic fails the run
+	// the same way, with the exceptions Init's has.
 	Migrate func(ctx context.Context, fromVersion string, data json.RawMessage) (D, error)
 
 	// Name is the agent type's registered name, matched against a run
@@ -62,7 +66,8 @@ type State[D any] struct {
 	//
 	// An error fails the run with ReasonStateError, unless it wraps a
 	// *ReadError (a store failure, ADR 0003 item 15) or the context has
-	// ended (the context's cause decides, ADR 0003 item 17).
+	// ended (the context's cause decides, ADR 0003 item 17). A panic is
+	// recovered and treated as an error.
 	Code func(ctx context.Context, env *Env, data D) (Transition[D], error)
 
 	// End makes the state terminal: a run entering it ends with this
