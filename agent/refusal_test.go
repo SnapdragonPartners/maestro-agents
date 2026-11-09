@@ -42,6 +42,27 @@ func TestRegistrationIsASnapshot(t *testing.T) {
 	if err != nil || out.Status != store.StatusSucceeded {
 		t.Fatalf("outcome = %+v, %v", out, err)
 	}
+
+	// Migrate: version 2 resumes version 1's checkpoint with the Migrate
+	// it was registered with.
+	createRun(t, s, "r2", `{"target":2}`)
+	if _, err = activate(context.Background(), agent.NewController(s, registry(t, counterType())), claim(t, s), "r2", 1); err != nil {
+		t.Fatal(err)
+	}
+	v2 := counterType()
+	v2.Version = "2"
+	v2.Migrate = func(_ context.Context, _ string, data json.RawMessage) (counterData, error) {
+		var d counterData
+		return d, json.Unmarshal(data, &d)
+	}
+	r2 := registry(t, v2)
+	v2.Migrate = func(context.Context, string, json.RawMessage) (counterData, error) {
+		return counterData{}, errors.New("changed after registration")
+	}
+	out, err = activate(context.Background(), agent.NewController(s, r2), claim(t, s), "r2", 0)
+	if err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("migrated outcome = %+v, %v", out, err)
+	}
 }
 
 // A nil Init starts the run from D's zero value.

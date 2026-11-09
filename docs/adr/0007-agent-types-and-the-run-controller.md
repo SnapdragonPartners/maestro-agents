@@ -127,9 +127,11 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
     `tool_error` stays with tools.
 13. **A code state reads through `agent.Env`**, which exposes the run's
     identity, trigger, configuration, state and step, and object reads. A
-    read that fails in the store returns a `*ReadError`; a state that
-    returns an error wrapping one ends the activation with a store
-    failure, not a run failure (ADR 0003, item 15). A malformed read (an
+    read that fails in the store returns a `*ReadError`; a state, `Init`
+    or `Migrate` that returns an error wrapping one ends the activation
+    with a store failure, not a run failure (ADR 0003, item 15), and one
+    that returns an error after the context ended yields to its cause
+    (item 14). A malformed read (an
     invalid key) is the state's defect and is returned as is.
 
 ### Endings and errors

@@ -21,12 +21,15 @@ type Type[D any] struct {
 	// than once (after a crash, or a commit whose result is unknown), so,
 	// like a code state, it must have no durable effect of its own: only
 	// its committed result is kept. Nil starts from D's zero value. An
-	// error fails the run with ReasonStateError.
+	// error fails the run with ReasonStateError, unless, as for a code
+	// state, it wraps a *ReadError (a store failure, ADR 0003 item 15) or
+	// the context has ended (the context's cause decides).
 	Init func(ctx context.Context, env *Env) (D, error)
 
 	// Migrate converts state data checkpointed by another version of this
 	// agent type (RUN-5). Nil refuses such a checkpoint: the run fails
-	// with ReasonStateError.
+	// with ReasonStateError. An error fails the run the same way, with
+	// the exceptions Init's has.
 	Migrate func(ctx context.Context, fromVersion string, data json.RawMessage) (D, error)
 
 	// Name is the agent type's registered name, matched against a run
