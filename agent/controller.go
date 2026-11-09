@@ -127,6 +127,8 @@ type activation struct {
 	client llms.ChatClient
 	m      *machine
 	c      *Controller
+	// model is the model state running, if any.
+	model *modelRun
 	// tail is what the execution record holds past the checkpoint.
 	tail tailState
 	// start1 is the run's start while it is not yet committed.
@@ -312,6 +314,8 @@ type entries struct {
 	stored map[string]bool // artifacts already added
 	ops    []store.Op
 	next   uint64
+	// pending reports that the model state's pending results are in ops.
+	pending bool
 }
 
 func (a *activation) entries() *entries { return &entries{a: a, next: a.nextEntry} }
@@ -582,12 +586,27 @@ func (a *activation) end(ctx context.Context, out OutcomeEntry) *ending {
 	if a.start1 != nil && out.Status.Terminal() {
 		a.start1.add(b)
 	}
-	b.add(a.step1(), EntryOutcome, out)
+	// A model state's results not yet committed go with the ending, and
+	// with the turn's checkpoint if they complete it (ADR 0008, item 13).
+	var cs *checkpointState
+	step := a.step1()
+	if a.model != nil {
+		if cs = a.model.endEntries(b); cs != nil {
+			step = cs.Step
+		}
+	}
+	b.add(step, EntryOutcome, out)
 	if b.err != nil {
 		return &ending{err: b.err}
 	}
 	if err := a.commit(ctx, append(b.ops, a.finalOps(&out)...), b.next); err != nil {
 		return commitErr(err)
+	}
+	if a.model != nil && b.pending {
+		a.model.pending = nil
+	}
+	if cs != nil {
+		a.model.completed(cs)
 	}
 	return &ending{out: a.outcome(&out)}
 }

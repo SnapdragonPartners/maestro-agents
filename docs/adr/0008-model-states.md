@@ -92,9 +92,18 @@ It amends ADR 0004 item 8 (the commit that carries synthesized results).
    - each call's **result** as the model receives it (`Content` or `Parts`,
      and `IsError`), so non-text results (TOOL-11) are recorded whole.
 
-   maestro-llms' types carry no JSON tags; they are stored in
-   `encoding/json`'s default form, which their v1 stability contract keeps
-   stable, and read back with numbers kept exact (`json.Number`).
+   **What is recorded reads back byte for byte.** Messages, tool calls and
+   results go through one recorded form (`agent/wire.go`) that keeps
+   tool-call arguments as bytes, since `encoding/json` would compact a
+   `json.RawMessage` and refuse a malformed one; recovery hashes and sends
+   exactly what was received, and malformed arguments reach the tool, which
+   answers as it chooses. Every string is checked as valid UTF-8 where it
+   enters (a prompt's request, a response, a tool's result), since
+   `encoding/json` would replace invalid bytes: an invalid prompt fails the
+   run with `state_error`, an invalid response with `model_error`, an
+   invalid result with `tool_error`. The parameters are stored in
+   `encoding/json`'s default form and read back with numbers kept exact
+   (`json.Number`).
 9. **A model attempt records its request as a delta** (ADR 0004, item 2):
    the parameters' digest, `Base` (the number of messages the state's
    latest checkpoint holds) and the digests of the messages added since,
@@ -130,9 +139,13 @@ It amends ADR 0004 item 8 (the commit that carries synthesized results).
     result, or the decorator's next attempt, or on the loop's return. ADR
     0004 named only the decorator's commits, which suffices when such a call
     is the turn's last, but a later offered call's wrapper commits first.
-    Either way the content recorded is the loop's own, captured from
-    `OnToolCall`, and a commit that completes the turn carries its
-    checkpoint. Recovery refuses such a call with the same text the loop
+    **An ending is a commit too**: one made while a model state runs (a
+    policy failure, a tool's defect, a shutdown) carries the pending results
+    and, if they complete the turn, its checkpoint. Pending results stay
+    pending until a commit carrying them lands, so a rejected or abandoned
+    commit never drops them. Either way the content recorded is the loop's
+    own, captured from `OnToolCall`, and a commit that completes the turn
+    carries its checkpoint. Recovery refuses such a call with the same text the loop
     uses (`tool "x" is not available`), so the transcript reads alike.
 
 ### Completion and failures
@@ -148,8 +161,13 @@ It amends ADR 0004 item 8 (the commit that carries synthesized results).
     an error or panicked, or its result is one the runtime cannot record (a
     transition to an undeclared state or with `IsError`, operations from a
     tool that is not an atomic local transaction, operations of any kind but
-    object puts and deletes, `Parts` that break maestro-llms' rules, or
-    operations the store refuses as invalid). `tool_error` stays with tools
+    object puts and deletes, `Parts` that break maestro-llms' rules, a
+    string that is not valid UTF-8, or operations the store refuses as
+    invalid). The result is checked against all of `toolloop`'s rules
+    (maestro-llms' `CheckToolResult`: no empty text part, a media type that
+    parses and matches its part) before anything is committed, so the loop
+    never refuses a result already recorded; should it still refuse one
+    after a transition committed, the transition stands. `tool_error` stays with tools
     as ADR 0007 item 12 left it, distinct from `state_error`. A model-visible
     failure is a result with `IsError`. As for a code state (ADR 0007,
     item 13), an error wrapping a `*ReadError` from the tool's `Env` ends the

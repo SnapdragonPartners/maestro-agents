@@ -176,11 +176,19 @@ func scripted(script []llms.ChatResponse) *testllm.FakeChatClient {
 	return &testllm.FakeChatClient{
 		ModelRef: llms.ModelRef{Provider: "fake", Name: "scripted"},
 		Func: func(_ context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
-			n := 0
+			n, prompts := 0, 0
 			for _, m := range req.Messages {
 				if m.Role == llms.RoleAssistant {
 					n++
 				}
+				if m.Role == llms.RoleUser && strings.HasPrefix(m.Content[0].Text, "items for ") {
+					prompts++
+				}
+			}
+			// Every request carries the prompt exactly once: the transcript
+			// restored from checkpoints matches what was sent.
+			if prompts != 1 {
+				return llms.ChatResponse{}, fmt.Errorf("request carries the prompt %d times", prompts)
 			}
 			if n >= len(script) {
 				return llms.ChatResponse{}, fmt.Errorf("script has no turn %d", n)
@@ -296,6 +304,11 @@ func TestModelStateRun(t *testing.T) {
 		fourth := calls[3].Messages
 		if last := fourth[len(fourth)-1]; last.Role != llms.RoleUser || last.Content[0].Text != agent.DefaultNudge {
 			t.Fatalf("fourth request ends with %+v, want the nudge", last)
+		}
+		// The prompt, two turns with their results, the text answer and the
+		// nudge.
+		if len(fourth) != 7 {
+			t.Fatalf("fourth request has %d messages, want 7", len(fourth))
 		}
 		if len(calls[0].Tools) != 3 || calls[0].System[0].Text != "Record the items." {
 			t.Fatalf("first request tools %d, system %+v", len(calls[0].Tools), calls[0].System)
@@ -723,6 +736,21 @@ func TestModelStateToolDefects(t *testing.T) {
 		"content and parts": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
 			return agent.Result[ledgerData]{Content: "x", Parts: []llms.ContentPart{llms.Text("y")}}, nil
 		}},
+		"empty text part": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			return agent.Result[ledgerData]{Parts: []llms.ContentPart{llms.Text("")}}, nil
+		}},
+		"empty text part on a terminal path": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			return agent.Result[ledgerData]{Parts: []llms.ContentPart{llms.Text("")}, To: "review"}, nil
+		}},
+		"invalid media type": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			return agent.Result[ledgerData]{Parts: []llms.ContentPart{llms.Document("pdf", []byte("x"))}}, nil
+		}},
+		"image with a document type": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			return agent.Result[ledgerData]{Parts: []llms.ContentPart{llms.Image("application/pdf", []byte("x"))}}, nil
+		}},
+		"invalid UTF-8": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			return agent.Result[ledgerData]{Content: "\xff"}, nil
+		}},
 		"record op kind": {Effect: agent.EffectWrite, Contract: agent.ContractAtomicLocal, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
 			return agent.Result[ledgerData]{Ops: []store.Op{store.ReleaseOp()}}, nil
 		}},
@@ -893,5 +921,110 @@ func TestRegisterModelState(t *testing.T) {
 	ok := mk(with(func(t *agent.Tool[ledgerData]) { t.Effect, t.Contract = agent.EffectWrite, agent.ContractUnprotected }), false)
 	if err := agent.NewRegistry().Register(ok); err != nil {
 		t.Fatalf("Register = %v", err)
+	}
+}
+
+// Tool arguments are recorded byte for byte, so a call reissued by
+// recovery has the digest its attempt recorded, whatever the arguments'
+// spacing, and malformed arguments reach the tool rather than failing the
+// record (ADR 0008, item 8).
+func TestModelStateArgumentsRecordedExactly(t *testing.T) {
+	for name, args := range map[string]string{"spaced": `{ "item" : "a" }`, "malformed": `{"item": `} {
+		t.Run(name, func(t *testing.T) {
+			script := slices.Clone(ledgerScript)
+			script[0] = callsResp(tc("c1", "lookup", `{"key": "a"}`), tc("c2", "record", args), tc("c3", "bogus", `{}`))
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			execs := &execLog{}
+			reg := registry(t, ledgerType(execs))
+			// Commit 10 is the record call's result.
+			cs := &crashStore{Store: s, at: 10}
+			if _, err := activateWith(context.Background(), agent.NewController(cs, reg), claim(t, s), scripted(script), 0); !errors.Is(err, agent.ErrStoreFailure) {
+				t.Fatalf("crashed activation = %v", err)
+			}
+			releaseIfOwned(t, s)
+			client := scripted(script)
+			out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := slices.Index(execs.calls, "record#1.1"); n < 0 || execs.calls[n+1] != "record#1.1" {
+				t.Fatalf("executions = %v, want record#1.1 reissued", execs.calls)
+			}
+			got := client.Calls()[0].Messages[1].Content[1].ToolCall.Parameters
+			if string(got) != args {
+				t.Fatalf("restored transcript holds arguments %q, want %q", got, args)
+			}
+			switch name {
+			case "spaced":
+				if out.Status != store.StatusSucceeded {
+					t.Fatalf("outcome = %+v", out)
+				}
+			case "malformed":
+				// The tool rejected the arguments; a is never recorded.
+				if out.Reason.Code != agent.ReasonInvalidOutput || slices.Contains(ledgerItems(t, s), "a") {
+					t.Fatalf("outcome = %+v, ledger %v", out, ledgerItems(t, s))
+				}
+			}
+		})
+	}
+}
+
+// A policy failure ends the run in a commit that also carries the results
+// toolloop synthesized earlier in the turn (ADR 0008, item 13).
+func TestModelStatePolicyFailureKeepsRefusals(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	script := []llms.ChatResponse{callsResp(tc("c1", "bogus", `{}`), tc("c2", "record", `{"item":"a"}`))}
+	policy := agent.WithPolicy(func(context.Context, *agent.PolicyRequest) (agent.Decision, error) {
+		return agent.Decision{}, errors.New("policy down")
+	})
+	out, err := activateWith(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{})), policy), claim(t, s), scripted(script), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Reason.Code != agent.ReasonToolError {
+		t.Fatalf("outcome = %+v", out)
+	}
+	es := entries(t, s, "r1")
+	want := []string{"activation_started", "run_started", "model_attempt", "turn", "result", "outcome"}
+	if got := kinds(es); !slices.Equal(got, want) {
+		t.Fatalf("record = %v, want %v", got, want)
+	}
+	if r := payload[agent.ResultEntry](t, es[4]); r.Status != agent.ResultRefused || r.Call != 0 {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+// A turn's refused result commits with the next wrapper commit, and an
+// activation that shuts down mid-turn leaves a tail holding it, from which
+// the next activation continues the turn.
+func TestModelStateShutdownWithPendingRefusal(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	reg := registry(t, ledgerType(&execLog{}))
+	ctx, cancel := context.WithCancel(context.Background())
+	tools := ledgerTools(&execLog{})
+	// The lookup after the unknown call cancels the activation; its result
+	// is discarded.
+	tools[0].Execute = func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+		cancel()
+		return agent.TextResult[ledgerData]("x"), nil
+	}
+	script := slices.Clone(ledgerScript)
+	script[0] = callsResp(tc("c2", "record", `{"item":"a"}`), tc("c3", "bogus", `{}`), tc("c1", "lookup", `{}`))
+	out, err := activateWith(ctx, agent.NewController(s, registry(t, ledgerType(&execLog{}, tools...))), claim(t, s), scripted(script), 0)
+	if err != nil || out.Reason.Code != agent.ReasonShutdown {
+		t.Fatalf("outcome = %+v, %v", out, err)
+	}
+	// The refusal rides on the next commit, the lookup's permission; the
+	// tail the next activation reads holds it.
+	es := entries(t, s, "r1")
+	if r := payload[agent.ResultEntry](t, es[7]); es[7].Kind != agent.EntryResult || r.Status != agent.ResultRefused || r.Call != 1 {
+		t.Fatalf("record = %v; want the refusal before the lookup's permission", kinds(es))
+	}
+	out, err = activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(script), 0)
+	if err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("resumed = %+v, %v", out, err)
 	}
 }

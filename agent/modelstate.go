@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/toolloop"
@@ -50,6 +51,9 @@ type modelRun struct {
 	// checkpoint (or empty before its first turn lands).
 	transcript []llms.Message
 	digests    []string
+	// unsent are the prompt's messages before the state's first turn
+	// completes: sent, but not yet in the checkpoint's transcript.
+	unsent []llms.Message
 	// pending are calls whose result toolloop synthesized itself (a call
 	// naming no offered tool), awaiting their result entries (ADR 0004,
 	// item 8).
@@ -85,11 +89,25 @@ func (t *turnState) complete() bool {
 	return true
 }
 
-// resultRecord is a result as the model receives it, stored as an artifact.
+// resultRecord is a result as the model receives it, stored as an artifact
+// in its recorded form (wireResult without a call ID).
 type resultRecord struct {
-	Content string             `json:"content,omitempty"`
-	Parts   []llms.ContentPart `json:"parts,omitempty"`
-	IsError bool               `json:"is_error,omitempty"`
+	Content string
+	Parts   []llms.ContentPart
+	IsError bool
+}
+
+func (r *resultRecord) MarshalJSON() ([]byte, error) {
+	return json.Marshal(wireResult{Content: r.Content, Parts: toWireParts(r.Parts), IsError: r.IsError}) //nolint:wrapcheck // encoding/json wraps a marshaler's error
+}
+
+func (r *resultRecord) UnmarshalJSON(raw []byte) error {
+	var w wireResult
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return err //nolint:wrapcheck // encoding/json wraps an unmarshaler's error
+	}
+	*r = resultRecord{Content: w.Content, Parts: fromWireParts(w.Parts), IsError: w.IsError}
+	return nil
 }
 
 func (r *resultRecord) toolResult(id string) llms.ToolResult {
@@ -99,17 +117,17 @@ func (r *resultRecord) toolResult(id string) llms.ToolResult {
 // responseRecord is a response as recorded: llms.ChatResponse without its
 // provider-specific Raw.
 type responseRecord struct {
-	AppliedReasoning *llms.ReasoningConfig
-	Usage            llms.Usage
-	Text             string
-	StopReason       llms.StopReason
-	Message          llms.Message
-	ToolCalls        []llms.ToolCall
+	AppliedReasoning *llms.ReasoningConfig `json:"applied_reasoning,omitempty"`
+	Usage            llms.Usage            `json:"usage"`
+	Text             string                `json:"text,omitempty"`
+	StopReason       llms.StopReason       `json:"stop_reason,omitempty"`
+	Message          wireMessage           `json:"message"`
+	ToolCalls        []wireCall            `json:"tool_calls,omitempty"`
 }
 
 func (r *responseRecord) response() llms.ChatResponse {
 	return llms.ChatResponse{
-		Message: r.Message, Text: r.Text, ToolCalls: r.ToolCalls, StopReason: r.StopReason,
+		Message: r.Message.message(), Text: r.Text, ToolCalls: fromWireCalls(r.ToolCalls), StopReason: r.StopReason,
 		Usage: r.Usage, AppliedReasoning: r.AppliedReasoning,
 	}
 }
@@ -187,6 +205,8 @@ func (a *activation) modelStep(ctx context.Context, st *erasedState) *ending {
 		return a.fail(ctx, ReasonModelError, fmt.Sprintf("model state %q has no model client: ActivationInput.Client is nil", st.name))
 	}
 	r := &modelRun{a: a, st: st, ms: st.model, client: a.client}
+	a.model = r
+	defer func() { a.model = nil }()
 	if e := r.load(ctx); e != nil {
 		return e
 	}
@@ -215,9 +235,11 @@ func (r *modelRun) load(ctx context.Context) *ending {
 		r.digests = append([]string(nil), p.Transcript...)
 		r.transcript = make([]llms.Message, len(p.Transcript))
 		for i, d := range p.Transcript {
-			if err := a.readArtifact(ctx, d, &r.transcript[i]); err != nil {
+			var w wireMessage
+			if err := a.readArtifact(ctx, d, &w); err != nil {
 				return &ending{err: err}
 			}
+			r.transcript[i] = w.message()
 		}
 		return nil
 	}
@@ -242,10 +264,15 @@ func (r *modelRun) load(ctx context.Context) *ending {
 	case len(req.Tools) > 0:
 		return a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q prompt returned tools; a model state offers its Tools", r.st.name))
 	}
+	if cerr := checkRequest(&req); cerr != nil {
+		return a.fail(ctx, ReasonStateError, fmt.Sprintf("state %q prompt: %v", r.st.name, cerr))
+	}
 	if ctx.Err() != nil {
 		return a.endByCause(ctx)
 	}
-	r.transcript = req.Messages
+	// The prompt's messages become durable with the first attempt's delta,
+	// and part of the transcript when its turn completes.
+	r.unsent = req.Messages
 	req.Messages = nil
 	req.Tools = make([]llms.ToolDefinition, len(r.ms.tools))
 	for i, t := range r.ms.tools {
@@ -272,7 +299,7 @@ func (r *modelRun) loadParams(ctx context.Context, digest string) *ending {
 // follows. stop reports that modelStep returns e.
 func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
 	a := r.a
-	send := r.transcript
+	send := slices.Concat(r.transcript, r.unsent)
 	if r.progress.Answered {
 		if r.progress.Nudged {
 			return a.fail(ctx, ReasonWrapUpFailed, fmt.Sprintf(
@@ -300,9 +327,20 @@ func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
 	if r.abort != nil {
 		return r.abort, true
 	}
+	if r.transitioned {
+		// The transition is committed; whatever toolloop made of the
+		// rest of its turn changes nothing.
+		return r.next, true
+	}
 	if e := r.flush(ctx); e != nil {
 		return e, true
 	}
+	return r.decide(ctx, &out)
+}
+
+// decide maps the loop's outcome to what follows it.
+func (r *modelRun) decide(ctx context.Context, out *toolloop.Outcome) (e *ending, stop bool) {
+	a := r.a
 	switch out.Kind {
 	case toolloop.OutcomeTerminalTool:
 		return r.next, true
@@ -406,7 +444,7 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 		entry.Params = b.rawArtifact(r.paramsRaw)
 	}
 	for i := range delta {
-		entry.Messages = append(entry.Messages, b.artifact(&delta[i]))
+		entry.Messages = append(entry.Messages, b.artifact(toWireMessage(&delta[i])))
 	}
 	b.add(a.step1()+boolStep(cs != nil), EntryModelAttempt, entry)
 	if !r.land(ctx, b, cs) {
@@ -446,8 +484,12 @@ func modelRef(m llms.ModelRef) ModelRef { return ModelRef{Provider: string(m.Pro
 // so its checkpoint commits with it.
 func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delta []llms.Message, ddelta []string) (llms.ChatResponse, error) {
 	a := r.a
+	if err := checkResponse(resp); err != nil {
+		r.abort = a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: response cannot be recorded: %v", r.st.name, err))
+		return llms.ChatResponse{}, errAbort
+	}
 	rec := responseRecord{
-		Message: resp.Message, Text: resp.Text, ToolCalls: resp.ToolCalls, StopReason: resp.StopReason,
+		Message: toWireMessage(&resp.Message), Text: resp.Text, ToolCalls: toWireCalls(resp.ToolCalls), StopReason: resp.StopReason,
 		Usage: resp.Usage, AppliedReasoning: resp.AppliedReasoning,
 	}
 	b := a.entries()
@@ -458,7 +500,7 @@ func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delt
 		attempt: make([]*AttemptEntry, len(resp.ToolCalls)),
 		results: make([]*resultRecord, len(resp.ToolCalls)),
 	}
-	t.msg = b.artifact(&resp.Message)
+	t.msg = b.artifact(rec.Message)
 	b.add(t.step, EntryTurn, TurnEntry{
 		Model: modelRef(r.client.Model()), Response: b.artifact(&rec), Message: t.msg,
 		StopReason: string(resp.StopReason), Usage: usageOf(&resp.Usage), Calls: len(resp.ToolCalls),
@@ -512,7 +554,7 @@ func (r *modelRun) turnCheckpoint(b *entries) *checkpointState {
 	}
 	if len(t.calls) > 0 {
 		msg := r.resultsMessage()
-		p.Transcript = append(p.Transcript, b.artifact(&msg))
+		p.Transcript = append(p.Transcript, b.artifact(toWireMessage(&msg)))
 		p.Answered, p.Nudged = false, false
 	} else {
 		p.Answered = true
@@ -564,6 +606,9 @@ func (r *modelRun) land(ctx context.Context, b *entries, cs *checkpointState) bo
 		r.abort = commitErr(err)
 		return false
 	}
+	if b.pending {
+		r.pending = nil
+	}
 	if cs != nil {
 		r.completed(cs)
 	}
@@ -582,6 +627,7 @@ func (r *modelRun) completed(cs *checkpointState) {
 	}
 	r.digests = cs.Model.Transcript
 	r.progress = *cs.Model
+	r.unsent = nil
 	r.paramsStored = true
 	r.turn = nil
 	r.a.checkpointed(cs)
@@ -616,7 +662,10 @@ func (t *turnState) find(c *llms.ToolCall) int {
 }
 
 // addPending adds result entries for the pending synthesized results and
-// reports whether, with them, the turn is complete.
+// reports whether, with them, the turn is complete. They stay pending
+// until a commit carrying them lands (land, commitResult, endEntries), so a
+// commit that is rejected and re-run, or abandoned for an ending, never
+// loses them (ADR 0008, item 13).
 func (r *modelRun) addPending(b *entries) bool {
 	if len(r.pending) == 0 || r.turn == nil {
 		return false
@@ -627,8 +676,19 @@ func (r *modelRun) addPending(b *entries) bool {
 			Call: i, Tool: r.turn.calls[i].Name, Status: ResultRefused, Result: b.artifact(res), IsError: res.IsError,
 		})
 	}
-	r.pending = nil
+	b.pending = true
 	return r.turn.complete()
+}
+
+// endEntries adds to an ending's commit what the model state has not yet
+// committed: the pending synthesized results and, if they complete the
+// turn, its checkpoint. The controller calls it for every ending made while
+// the state runs, so no ending drops them.
+func (r *modelRun) endEntries(b *entries) *checkpointState {
+	if !r.addPending(b) {
+		return nil
+	}
+	return r.pendingCheckpoint(b, true)
 }
 
 // flush commits pending synthesized results when the loop returns, unless
@@ -859,31 +919,6 @@ func (r *modelRun) checkResult(tool *erasedTool, res *erasedResult) error {
 	return checkParts(res.content, res.parts)
 }
 
-// checkParts applies toolloop's rules for a result's parts (maestro-llms
-// ADR-0041) before the result is recorded, so the loop never refuses a
-// recorded result.
-func checkParts(content string, parts []llms.ContentPart) error {
-	if len(parts) == 0 {
-		return nil
-	}
-	if content != "" {
-		return errors.New("result sets both Content and Parts")
-	}
-	for i := range parts {
-		p := &parts[i]
-		switch p.Type {
-		case llms.ContentText:
-		case llms.ContentImage, llms.ContentDocument:
-			if p.Media == nil || p.Media.MediaType == "" || len(p.Media.Data) == 0 {
-				return fmt.Errorf("part %d (%s) has no media type or data", i, p.Type)
-			}
-		default:
-			return fmt.Errorf("part %d has type %q; a result holds text, image and document parts only", i, p.Type)
-		}
-	}
-	return nil
-}
-
 // commitResult commits a call's result with its operations and, for a
 // transition, the turn's other results, the transition entry and the new
 // state's checkpoint, and entering a terminal state, the run's ending
@@ -893,7 +928,7 @@ func checkParts(content string, parts []llms.ContentPart) error {
 func (r *modelRun) commitResult(ctx context.Context, i int, tool *erasedTool, res *erasedResult, rec *resultRecord) (bool, *store.ConflictError) {
 	a, t := r.a, r.turn
 	b := a.entries()
-	r.addPendingSnapshot(b)
+	r.addPending(b)
 	b.ops = append(b.ops, res.ops...)
 	b.add(t.step, EntryResult, ResultEntry{
 		Call: i, Tool: tool.def.Name, Status: ResultExecuted, Result: b.artifact(rec), Ops: res.ops, IsError: rec.IsError,
@@ -981,17 +1016,6 @@ func (r *modelRun) addTransition(ctx context.Context, b *entries, i int, tool *e
 	return &cs, out, terminal
 }
 
-// addPendingSnapshot adds the pending synthesized results to b without
-// clearing them, for a commit that may be rejected and re-run.
-func (r *modelRun) addPendingSnapshot(b *entries) {
-	for _, i := range r.pending {
-		res := r.turn.results[i]
-		b.add(r.turn.step, EntryResult, ResultEntry{
-			Call: i, Tool: r.turn.calls[i].Name, Status: ResultRefused, Result: b.artifact(res), IsError: res.IsError,
-		})
-	}
-}
-
 // loadTurn rebuilds a recorded turn from the tail: its request messages,
 // its response, and each call's permission, attempt and result.
 func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, error) {
@@ -1008,12 +1032,15 @@ func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, er
 	if len(rec.ToolCalls) != tt.entry.Calls {
 		return nil, storeFailure(fmt.Errorf("agent: run %q turn response holds %d calls; its entry says %d", a.run.ID, len(rec.ToolCalls), tt.entry.Calls))
 	}
-	t.resp, t.calls = rec.response(), cloneCalls(rec.ToolCalls)
+	t.resp = rec.response()
+	t.calls = cloneCalls(t.resp.ToolCalls)
 	t.delta = make([]llms.Message, len(tt.attempt.Messages))
 	for i, d := range tt.attempt.Messages {
-		if err := a.readArtifact(ctx, d, &t.delta[i]); err != nil {
+		var w wireMessage
+		if err := a.readArtifact(ctx, d, &w); err != nil {
 			return nil, err
 		}
+		t.delta[i] = w.message()
 	}
 	for i := range t.calls {
 		if p, ok := tt.perms[i]; ok {
