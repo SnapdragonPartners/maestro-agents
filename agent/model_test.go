@@ -490,6 +490,9 @@ func TestModelStatePolicyPendingAndError(t *testing.T) {
 		"bad verdict": func(context.Context, *agent.PolicyRequest) (agent.Decision, error) {
 			return agent.Decision{Verdict: "maybe"}, nil
 		},
+		"invalid reason": func(context.Context, *agent.PolicyRequest) (agent.Decision, error) {
+			return agent.Decision{Verdict: agent.VerdictDeny, Reason: "\xff"}, nil
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newBackend(t, "memstore").open()
@@ -903,15 +906,18 @@ func TestRegisterModelState(t *testing.T) {
 		return &agent.ModelState[ledgerData]{Prompt: prompt, Tools: []agent.Tool[ledgerData]{tool}}
 	}
 	cases := map[string]*agent.Type[ledgerData]{
-		"code and model":     mk(&agent.ModelState[ledgerData]{Prompt: prompt}, true),
-		"no prompt":          mk(&agent.ModelState[ledgerData]{}, false),
-		"unnamed tool":       mk(with(func(t *agent.Tool[ledgerData]) { t.Definition.Name = "" }), false),
-		"no execute":         mk(with(func(t *agent.Tool[ledgerData]) { t.Execute = nil }), false),
-		"no effect":          mk(with(func(t *agent.Tool[ledgerData]) { t.Effect = "" }), false),
-		"read with contract": mk(with(func(t *agent.Tool[ledgerData]) { t.Contract = agent.ContractIdempotent }), false),
-		"write without":      mk(with(func(t *agent.Tool[ledgerData]) { t.Effect = agent.EffectWrite }), false),
-		"unknown contract":   mk(with(func(t *agent.Tool[ledgerData]) { t.Effect, t.Contract = agent.EffectWrite, "hope" }), false),
-		"duplicate tool":     mk(&agent.ModelState[ledgerData]{Prompt: prompt, Tools: []agent.Tool[ledgerData]{read, read}}, false),
+		"code and model":      mk(&agent.ModelState[ledgerData]{Prompt: prompt}, true),
+		"no prompt":           mk(&agent.ModelState[ledgerData]{}, false),
+		"unnamed tool":        mk(with(func(t *agent.Tool[ledgerData]) { t.Definition.Name = "" }), false),
+		"no execute":          mk(with(func(t *agent.Tool[ledgerData]) { t.Execute = nil }), false),
+		"no effect":           mk(with(func(t *agent.Tool[ledgerData]) { t.Effect = "" }), false),
+		"read with contract":  mk(with(func(t *agent.Tool[ledgerData]) { t.Contract = agent.ContractIdempotent }), false),
+		"write without":       mk(with(func(t *agent.Tool[ledgerData]) { t.Effect = agent.EffectWrite }), false),
+		"unknown contract":    mk(with(func(t *agent.Tool[ledgerData]) { t.Effect, t.Contract = agent.EffectWrite, "hope" }), false),
+		"invalid nudge":       mk(&agent.ModelState[ledgerData]{Prompt: prompt, Nudge: "\xff"}, false),
+		"invalid description": mk(with(func(t *agent.Tool[ledgerData]) { t.Definition.Description = "\xff" }), false),
+		"invalid schema":      mk(with(func(t *agent.Tool[ledgerData]) { t.Definition.InputSchema = json.RawMessage(`{`) }), false),
+		"duplicate tool":      mk(&agent.ModelState[ledgerData]{Prompt: prompt, Tools: []agent.Tool[ledgerData]{read, read}}, false),
 	}
 	for name, typ := range cases {
 		if err := agent.NewRegistry().Register(typ); !errors.Is(err, agent.ErrInvalidType) {
@@ -1026,5 +1032,30 @@ func TestModelStateShutdownWithPendingRefusal(t *testing.T) {
 	out, err = activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(script), 0)
 	if err != nil || out.Status != store.StatusSucceeded {
 		t.Fatalf("resumed = %+v, %v", out, err)
+	}
+}
+
+func TestModelStateInvalidPromptRequest(t *testing.T) {
+	for name, mutate := range map[string]func(*llms.ChatRequest){
+		"message":  func(r *llms.ChatRequest) { r.Messages = []llms.Message{llms.UserText("\xff")} },
+		"metadata": func(r *llms.ChatRequest) { r.Metadata = map[string]string{"k": "\xff"} },
+		"provider params": func(r *llms.ChatRequest) {
+			r.ProviderParams = map[llms.ProviderID]map[string]any{"p": {"k": []any{"\xff"}}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			typ := ledgerType(&execLog{})
+			typ.States[0].Model.Prompt = func(context.Context, *agent.Env, ledgerData) (llms.ChatRequest, error) {
+				r := llms.ChatRequest{Messages: []llms.Message{llms.UserText("items for r1")}}
+				mutate(&r)
+				return r, nil
+			}
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			out, err := activateWith(context.Background(), agent.NewController(s, registry(t, typ)), claim(t, s), scripted(ledgerScript), 0)
+			if err != nil || out.Reason.Code != agent.ReasonStateError {
+				t.Fatalf("outcome = %+v, %v; want state_error", out, err)
+			}
+		})
 	}
 }

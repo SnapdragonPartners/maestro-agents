@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"unicode/utf8"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 
@@ -339,6 +340,11 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 	if ms.Prompt == nil {
 		return t.invalid("model state %q has no Prompt", s.Name)
 	}
+	// What a model state declares reaches the transcript and the record,
+	// which keep only valid UTF-8 and valid JSON exactly (ADR 0008, item 8).
+	if !utf8.ValidString(ms.Nudge) {
+		return t.invalid("model state %q nudge is not valid UTF-8", s.Name)
+	}
 	seen := map[string]bool{}
 	for i := range ms.Tools {
 		tool := &ms.Tools[i]
@@ -350,24 +356,41 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 			return t.invalid("model state %q declares tool %q twice", s.Name, name)
 		case tool.Execute == nil:
 			return t.invalid("model state %q tool %q has no Execute", s.Name, name)
+		case !utf8.ValidString(name) || !utf8.ValidString(tool.Definition.Description):
+			return t.invalid("model state %q tool %d has a name or description that is not valid UTF-8", s.Name, i)
+		}
+		if schema := tool.Definition.InputSchema; schema != nil {
+			if err := store.ValidJSON(schema); err != nil {
+				return t.invalid("tool %q input schema: %v", name, err)
+			}
 		}
 		seen[name] = true
-		switch tool.Effect {
-		case EffectRead:
-			if tool.Contract != "" {
-				return t.invalid("read tool %q declares a write contract", name)
-			}
-		case EffectWrite:
-			switch tool.Contract {
-			case ContractAtomicLocal, ContractIdempotent, ContractReconcile, ContractUnprotected:
-			case "":
-				return t.invalid("write tool %q declares no write contract (TOOL-12)", name)
-			default:
-				return t.invalid("write tool %q has unknown write contract %q", name, tool.Contract)
-			}
-		default:
-			return t.invalid("tool %q has effect %q; want read or write (TOOL-2)", name, tool.Effect)
+		if err := t.checkEffect(tool); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// checkEffect checks a tool's effect classification and write contract
+// (TOOL-2, TOOL-12).
+func (t *Type[D]) checkEffect(tool *Tool[D]) error {
+	name := tool.Definition.Name
+	switch tool.Effect {
+	case EffectRead:
+		if tool.Contract != "" {
+			return t.invalid("read tool %q declares a write contract", name)
+		}
+	case EffectWrite:
+		switch tool.Contract {
+		case ContractAtomicLocal, ContractIdempotent, ContractReconcile, ContractUnprotected:
+		case "":
+			return t.invalid("write tool %q declares no write contract (TOOL-12)", name)
+		default:
+			return t.invalid("write tool %q has unknown write contract %q", name, tool.Contract)
+		}
+	default:
+		return t.invalid("tool %q has effect %q; want read or write (TOOL-2)", name, tool.Effect)
 	}
 	return nil
 }

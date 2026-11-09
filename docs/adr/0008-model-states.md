@@ -98,10 +98,14 @@ It amends ADR 0004 item 8 (the commit that carries synthesized results).
    `json.RawMessage` and refuse a malformed one; recovery hashes and sends
    exactly what was received, and malformed arguments reach the tool, which
    answers as it chooses. Every string is checked as valid UTF-8 where it
-   enters (a prompt's request, a response, a tool's result), since
-   `encoding/json` would replace invalid bytes: an invalid prompt fails the
-   run with `state_error`, an invalid response with `model_error`, an
-   invalid result with `tool_error`. The parameters are stored in
+   enters, since `encoding/json` would replace invalid bytes: what a model
+   state declares (its nudge, its tools' names, descriptions and schemas,
+   which must also be valid JSON) is refused at registration; an invalid
+   prompt's request (messages, system, metadata, provider params) fails the
+   run with `state_error`, an invalid response with `model_error`, and an
+   invalid tool result or policy reason with `tool_error`. Observations
+   that never reach the model (an error's text in a `model_failure` entry
+   or an outcome's detail) are recorded as `encoding/json` encodes them. The parameters are stored in
    `encoding/json`'s default form and read back with numbers kept exact
    (`json.Number`).
 9. **A model attempt records its request as a delta** (ADR 0004, item 2):

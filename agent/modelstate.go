@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/toolloop"
@@ -800,6 +801,10 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 	switch {
 	case err != nil:
 		return p, a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): policy: %v", i, call.Name, err))
+	case !utf8.ValidString(d.Reason):
+		// The reason is model-visible and recorded; the record could not
+		// keep it exactly (ADR 0008, item 8).
+		return p, a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): policy reason is not valid UTF-8", i, call.Name))
 	case d.Verdict == VerdictAllow:
 		p.Permission = PermissionAllowed
 	case d.Verdict == VerdictDeny:
