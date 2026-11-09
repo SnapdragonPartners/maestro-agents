@@ -138,6 +138,10 @@ func (r *responseRecord) response() llms.ChatResponse {
 // as one refused by the loop.
 func refusedContent(name string) string { return fmt.Sprintf("tool %q is not available", name) }
 
+func changedContent(name string) string {
+	return fmt.Sprintf("tool %q changed since this call was authorized; call it again if it is still needed", name)
+}
+
 func deniedContent(p *PermissionEntry) string {
 	msg := fmt.Sprintf("tool call not permitted (%s)", p.Permission)
 	if p.Reason != "" {
@@ -586,6 +590,12 @@ func (r *modelRun) turnCheckpoint(b *entries) *checkpointState {
 	t := r.turn
 	p := r.progress
 	p.Params = r.paramsDigest
+	if !r.paramsStored {
+		// Parameters not yet recorded (re-recorded for changed tools while
+		// a recovered turn completes) are stored with the first commit
+		// that references them (ADR 0004, item 1).
+		p.Params = b.rawArtifact(r.paramsRaw)
+	}
 	p.Transcript = append(append([]string(nil), r.digests...), t.ddelta...)
 	if !isEmpty(&t.resp) {
 		p.Transcript = append(p.Transcript, t.msg)
@@ -834,7 +844,7 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 		})
 		return err
 	})
-	p := PermissionEntry{Call: i, Tool: call.Name, Reason: d.Reason}
+	p := PermissionEntry{Call: i, Tool: call.Name, Effect: tool.effect, Reason: d.Reason}
 	switch {
 	case err != nil:
 		return p, a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): policy: %v", i, call.Name, err))
@@ -1117,6 +1127,23 @@ func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, er
 	return t, nil
 }
 
+// unavailable reports whether recovery refuses a recorded call, and with
+// what content: its tool is one this version does not declare, or declares
+// with an effect other than the one its recorded permission was granted
+// for, so the permission does not cover it (ADR 0008, item 11).
+func (r *modelRun) unavailable(i int) (string, bool) {
+	t := r.turn
+	name := t.calls[i].Name
+	tool := r.ms.byName[name]
+	switch {
+	case tool == nil:
+		return refusedContent(name), true
+	case t.perm[i] != nil && t.perm[i].Effect != tool.effect:
+		return changedContent(name), true
+	}
+	return "", false
+}
+
 // recoverTurn resolves the tail's recorded turn (ADR 0004, item 10): the
 // model is not asked again; each call is resolved by STM-6's partition, in
 // order, through the same path a live call takes.
@@ -1135,14 +1162,13 @@ func (r *modelRun) recoverTurn(ctx context.Context) *ending {
 		if ctx.Err() != nil {
 			return r.flush(ctx)
 		}
-		if r.ms.byName[t.calls[i].Name] == nil {
-			// A tool this version does not declare. A write it attempted
-			// may have had its effect: its outcome is unknown, whatever
-			// the tool's absence (ADR 0008, item 17).
+		if content, refuse := r.unavailable(i); refuse {
+			// A write it attempted may have had its effect: its outcome
+			// is unknown, whatever the tool's absence (ADR 0008, item 17).
 			if at := t.attempt[i]; at != nil && !at.reissuable() {
 				return r.unknown(ctx, i, at)
 			}
-			t.results[i] = &resultRecord{Content: refusedContent(t.calls[i].Name), IsError: true}
+			t.results[i] = &resultRecord{Content: content, IsError: true}
 			r.pending = append(r.pending, i)
 			continue
 		}

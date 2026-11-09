@@ -120,7 +120,9 @@ state's third kind, item 1) and 9 (the tail's model-state kinds, item 11).
    recorded parameters (a changed schema, a tool added or removed), its
    next attempt records new parameters, with the recorded system
    instructions and settings and the current tools, so every attempt's
-   parameters are what it sent; `Prompt` does not run again.
+   parameters are what it sent; `Prompt` does not run again. New
+   parameters are stored with the first commit that references them,
+   an attempt's or a recovered turn's checkpoint.
 9. **A model attempt records its request as a delta** (ADR 0004, item 2):
    the parameters' digest, `Base` (the number of messages the state's
    latest checkpoint holds) and the digests of the messages added since,
@@ -143,7 +145,12 @@ state's third kind, item 1) and 9 (the tail's model-state kinds, item 11).
     written. A recovered turn is rebuilt from its recorded attempt and
     response, so `Prompt` never runs again for it, and its unresolved calls
     are resolved in order by ADR 0004 item 10's table through the same path
-    a live call takes.
+    a live call takes. **A permission records the effect it was granted
+    for**: a recorded call whose tool the recovering version no longer
+    declares, or declares with another effect, is refused (a model-visible
+    error result, the turn continuing), since its permission does not cover
+    the tool as it is now; the model may call it again, and the policy
+    decides afresh. A write it attempted is still unknown (item 17).
 12. **A call issued again commits a new attempt entry** before it is sent,
     with the same action identity, arguments digest and idempotency key: an
     attempt entry records each send.

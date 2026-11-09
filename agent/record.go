@@ -128,7 +128,10 @@ type ModelFailureEntry struct {
 // PermissionEntry is the payload of a permission entry: a call's
 // permission and the policy decision behind it (STM-6, TOOL-3).
 type PermissionEntry struct {
-	Tool       string     `json:"tool"`
+	Tool string `json:"tool"`
+	// Effect is the tool's effect the policy decided on (TOOL-2): recovery
+	// refuses a call whose tool a later version declares with another.
+	Effect     Effect     `json:"effect"`
 	Permission Permission `json:"permission"`
 	Reason     string     `json:"reason,omitempty"`
 	Call       int        `json:"call"`

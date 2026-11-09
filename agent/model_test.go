@@ -1314,3 +1314,72 @@ func TestModelStateChangedToolsRecorded(t *testing.T) {
 		t.Fatalf("schema sent = %s", got)
 	}
 }
+
+// TestModelStateChangedToolsDuringRecoveredTurn: parameters re-recorded
+// for changed tools while a recovered turn completes are stored with the
+// checkpoint that first references them, so a later activation restores
+// them (ADR 0004, item 1).
+func TestModelStateChangedToolsDuringRecoveredTurn(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	// Commit 5 is the lookup's permission: the first turn is recorded,
+	// its calls unresolved.
+	if _, err := activateWith(context.Background(), agent.NewController(&crashStore{Store: s, at: 5}, registry(t, ledgerType(&execLog{}))), claim(t, s), scripted(ledgerScript), 0); !errors.Is(err, agent.ErrStoreFailure) {
+		t.Fatalf("crashed activation = %v", err)
+	}
+	releaseIfOwned(t, s)
+	tools := ledgerTools(&execLog{})
+	tools[0].Definition.InputSchema = json.RawMessage(`{"type":"object","required":["key"]}`)
+	reg := registry(t, ledgerType(&execLog{}, tools...))
+	// One step: the recovered turn completes, and its checkpoint is the
+	// first to reference the new parameters.
+	if out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(ledgerScript), 1); err != nil || out.Reason.Code != agent.ReasonStepLimit {
+		t.Fatalf("recovering activation = %+v, %v", out, err)
+	}
+	out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(ledgerScript), 0)
+	if err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("next activation = %+v, %v", out, err)
+	}
+}
+
+// TestModelStateRecoveredCallChangedEffect: a recorded call whose tool a
+// later version declares with another effect is refused, not issued under
+// the permission granted for the old one (ADR 0008, item 11).
+func TestModelStateRecoveredCallChangedEffect(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	// Commit 7 is the lookup's result: the read was attempted, its result
+	// did not land.
+	if _, err := activateWith(context.Background(), agent.NewController(&crashStore{Store: s, at: 7}, registry(t, ledgerType(&execLog{}))), claim(t, s), scripted(ledgerScript), 0); !errors.Is(err, agent.ErrStoreFailure) {
+		t.Fatalf("crashed activation = %v", err)
+	}
+	releaseIfOwned(t, s)
+	execs := &execLog{}
+	tools := ledgerTools(execs)
+	tools[0].Effect, tools[0].Contract = agent.EffectWrite, agent.ContractAtomicLocal
+	var asked []string
+	policy := agent.WithPolicy(func(_ context.Context, req *agent.PolicyRequest) (agent.Decision, error) {
+		asked = append(asked, fmt.Sprintf("%s/%s", req.Tool, req.Effect))
+		return agent.Decision{Verdict: agent.VerdictAllow}, nil
+	})
+	if _, err := activateWith(context.Background(), agent.NewController(s, registry(t, ledgerType(execs, tools...)), policy), claim(t, s), scripted(ledgerScript), 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range execs.calls {
+		if strings.HasPrefix(c, "lookup#1.") {
+			t.Fatalf("executions = %v: the redeclared write ran under the read's permission", execs.calls)
+		}
+	}
+	for _, e := range entries(t, s, "r1") {
+		if e.Kind != agent.EntryResult {
+			continue
+		}
+		if r := payload[agent.ResultEntry](t, e); r.Call == 0 && r.Tool == "lookup" {
+			if r.Status != agent.ResultRefused || !r.IsError {
+				t.Fatalf("lookup's result = %+v, want refused", r)
+			}
+			return
+		}
+	}
+	t.Fatal("no result recorded for the lookup call")
+}
