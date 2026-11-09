@@ -17,12 +17,12 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
   library
 
 Current state: **MVP, step 2 (the vertical slice)**. The store interface,
-the memory and file stores and the conformance suite exist (`store/`); the
-run controller, the execution record's runtime and the intake agent come
-next. The requirements are in
+the memory and file stores and the conformance suite exist (`store/`), and
+so do agent types and the run controller for code states (`agent/`); model
+states, then the intake agent, come next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
-and storage design are ADRs 0003 to 0005; further design arrives with the
+and storage design are ADRs 0003 to 0006, the runtime's API ADR 0007; further design arrives with the
 code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -46,6 +46,11 @@ Load-bearing decisions so far:
   both reference stores run on one engine (`internal/storecore`), and a
   host store proves itself with `store/storetest`
   ([ADR 0006](docs/adr/0006-store-interface.md))
+- An agent type is `agent.Type[D]`, a state machine over its own data
+  type; `Controller.Activate` runs a claimed run, and a code state's only
+  durable output is its transition with object operations, committed with
+  the checkpoint; a code state's defect fails the run with `state_error`
+  ([ADR 0007](docs/adr/0007-agent-types-and-the-run-controller.md))
 
 ### Related repositories
 
@@ -112,6 +117,7 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
+agent/               # Agent types, registry, run controller, record entries (ADR 0007)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock

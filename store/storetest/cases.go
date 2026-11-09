@@ -435,6 +435,10 @@ func testArtifacts(t testing.TB, h Harness) {
 	if err != nil || !bytes.Equal(got, content) || meta != (store.ArtifactMeta{Digest: d, MediaType: "application/pdf", Size: int64(len(content))}) {
 		t.Fatalf("Artifact = %+v, %q, %v", meta, got, err)
 	}
+	// A no-op commit is still fenced.
+	stale := e.own.Fence()
+	stale.Epoch++
+	wantErr(t, e.s.Commit(ctx, stale, []store.Op{store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "application/pdf", Content: content})}), store.ErrOwnership)
 	empty := digest(nil)
 	commit(t, e.s, e.own.Fence(), store.PutArtifactOp(store.Artifact{Digest: empty, MediaType: "text/plain"}))
 	if meta, got, err := e.s.Artifact(ctx, empty); err != nil || len(got) != 0 || meta.Size != 0 {

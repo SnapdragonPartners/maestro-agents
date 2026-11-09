@@ -1,7 +1,8 @@
 // Package store defines the durable records an agent host keeps and the
 // interface through which the runtime and the host read and write them.
 //
-// The design is ADR 0005 (docs/adr/0005-storage-one-fenced-commit.md):
+// The design is ADR 0005 (docs/adr/0005-storage-one-fenced-commit.md), as
+// amended by ADR 0006 (docs/adr/0006-store-interface.md):
 //
 //   - Every durable write an activation makes goes through [Committer.Commit],
 //     fenced on the instance's owner epoch and applied atomically: all of a

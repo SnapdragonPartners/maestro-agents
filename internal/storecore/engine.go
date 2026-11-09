@@ -209,6 +209,12 @@ func (e *Engine) Commit(ctx context.Context, f store.Fence, ops []store.Op) erro
 		}
 		release = release || op.Kind == store.OpRelease
 	}
+	// A commit whose operations change nothing (a re-stored artifact, say)
+	// has passed the fence and its preconditions; it lands without touching
+	// the backend, so a no-op cannot fail or journal.
+	if len(t.order) == 0 {
+		return nil
+	}
 	if err = e.apply(t.order); err != nil {
 		return err
 	}
