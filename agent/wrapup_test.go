@@ -326,7 +326,7 @@ func TestWrapUpOverridesStateToolChoice(t *testing.T) {
 
 // TestWrapUpCutsOffSlowCall: a model call still in flight at the wrap-up
 // point is cut off there and recorded as failed, and the wrap-up follows
-// within the reserve.
+// within the reserve, its request carrying the wrap-up message once.
 func TestWrapUpCutsOffSlowCall(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, b backend) {
 		s := b.open()
@@ -363,6 +363,10 @@ func TestWrapUpCutsOffSlowCall(t *testing.T) {
 		}
 		if at := attempts(t, es); len(at) != 2 || at[0].WrapUp || !at[1].WrapUp {
 			t.Fatalf("attempts = %+v", at)
+		}
+		calls := client.Calls()
+		if n := countWrapUpMessages(&calls[len(calls)-1]); n != 1 {
+			t.Fatalf("the wrap-up request carries the message %d times, want 1", n)
 		}
 		if a := out.Consumed.ActiveTime; a < 300*time.Millisecond || a > 2*time.Second {
 			t.Fatalf("active time %s, want the wrap-up to begin at 300ms and end well within the reserve", a)
@@ -637,7 +641,9 @@ func crashWhere(t *testing.T, reg *agent.Registry, budgets agent.Budgets, answer
 // TestWrapUpSurvivesAnInterruptedAttempt: a wrap-up attempt that commits
 // and is interrupted before its turn lands keeps the state in wrap-up,
 // even when the recovering version's reserve would not start one (ADR
-// 0010, item 3).
+// 0010, item 3). The retry is built from the durable transcript, which the
+// interrupted attempt did not extend, so it carries the wrap-up message
+// once.
 func TestWrapUpSurvivesAnInterruptedAttempt(t *testing.T) {
 	budgets := agent.Budgets{Deadline: time.Now().Add(time.Hour)}
 	answer := func(int, bool) llms.ChatResponse { return callsResp(tc("s", "submit", `{}`)) }
@@ -650,10 +656,12 @@ func TestWrapUpSurvivesAnInterruptedAttempt(t *testing.T) {
 	}
 	log := &wrapLog{}
 	var offered [][]string
+	var messages []int
 	client := wrapClient(answer)
 	inner := client.Func
 	client.Func = func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
 		offered = append(offered, toolNames(&req))
+		messages = append(messages, countWrapUpMessages(&req))
 		return inner(ctx, req)
 	}
 	reg := registry(t, wrapType(log, agent.WrapUp{Tools: []string{"submit"}, Reserve: time.Nanosecond}))
@@ -663,6 +671,9 @@ func TestWrapUpSurvivesAnInterruptedAttempt(t *testing.T) {
 	}
 	if len(offered) != 1 || !slices.Equal(offered[0], []string{"submit"}) {
 		t.Fatalf("recovery offered %v, want only the wrap-up's tool", offered)
+	}
+	if !slices.Equal(messages, []int{1}) {
+		t.Fatalf("the recovered request carries the wrap-up message %v times, want 1", messages)
 	}
 	if got := log.get(); !slices.Equal(got, []string{"submit/wrap-up=true"}) {
 		t.Fatalf("executions = %v, want submit in wrap-up", got)
