@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"errors"
 
 	"github.com/SnapdragonPartners/maestro-agents/store"
@@ -23,10 +22,13 @@ const (
 	ReasonNoChange = "no_change"
 
 	// ReasonBudgetExhausted: failed; a budget ran out (Reason.Budget names
-	// it). Retrying as-is cannot help.
+	// it: BudgetTokens, BudgetTurns, BudgetActiveTime or BudgetDeadline).
+	// Retrying as-is cannot help.
 	ReasonBudgetExhausted = "budget_exhausted"
 	// ReasonBudgetUnenforceable: failed; a budget cannot be enforced or
-	// computed. A configuration error: retrying as-is cannot help.
+	// computed (Reason.Budget names it), such as a hard token budget with
+	// no known-safe input bound (BUD-3). A configuration error: retrying
+	// as-is cannot help.
 	ReasonBudgetUnenforceable = "budget_unenforceable"
 	// ReasonModelError: failed; the model call failed, or a model state
 	// was reached with no model client (ADR 0008).
@@ -70,7 +72,8 @@ var (
 
 // BudgetExhausted is the context cause with which the runtime's time
 // budgets end an activation (BUD-2): the run fails with
-// ReasonBudgetExhausted naming Budget.
+// ReasonBudgetExhausted naming Budget (BudgetActiveTime or
+// BudgetDeadline).
 type BudgetExhausted struct {
 	Budget string
 }
@@ -117,9 +120,9 @@ type Outcome struct {
 	// Detail explains a failure, such as a code state's error; it is also
 	// in the execution record's outcome entry.
 	Detail string
-	// Consumed holds the run's consumed budgets. Budgets are not tracked
-	// yet; it is nil.
-	Consumed json.RawMessage
+	// Consumed is what the run has consumed of its budgets, including
+	// this activation (BUD-1, ADR 0009); it is also in the outcome entry.
+	Consumed Consumption
 	// Steps is the number of steps the run has completed.
 	Steps uint64
 	// CheckpointSeq is the run's latest checkpoint sequence.

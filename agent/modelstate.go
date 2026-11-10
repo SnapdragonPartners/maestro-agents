@@ -58,8 +58,10 @@ type modelRun struct {
 	// pending are calls whose result toolloop synthesized itself (a call
 	// naming no offered tool), awaiting their result entries (ADR 0004,
 	// item 8).
-	pending      []int
-	progress     modelProgress
+	pending  []int
+	progress modelProgress
+	// res is the reservation of the attempt in flight (BUD-3).
+	res          Reservation
 	paramsStored bool
 	transitioned bool
 	stoppedLimit bool
@@ -259,7 +261,11 @@ func (r *modelRun) load(ctx context.Context) *ending {
 	if t := a.tail.turn; t != nil {
 		// The state's first turn is recorded but not complete: its request
 		// is the recorded one, so Prompt does not run again.
-		if e := r.loadParams(ctx, t.attempt.Params); e != nil {
+		params := t.attempt.Params
+		if t.attempt.StateParams != "" {
+			params = t.attempt.StateParams
+		}
+		if e := r.loadParams(ctx, params); e != nil {
 			return e
 		}
 		return r.offerTools(ctx)
@@ -430,13 +436,24 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 	if err := r.stopBeforeAttempt(ctx, b, completes); err != nil {
 		return llms.ChatResponse{}, err
 	}
+	// The budgets admit the attempt, lowering its output cap to what the
+	// token budget leaves, or refuse it and end the run (BUD-1, BUD-3).
+	// What admission charges is applied before the commit: a commit that
+	// does not land ends the activation, and the next charges the attempt
+	// from the record.
+	res, refusal := r.a.admit(&req)
+	if refusal != nil {
+		r.abort = r.a.refuseBudget(ctx, refusal)
+		return llms.ChatResponse{}, errAbort
+	}
+	r.res = res
 	delta, ddelta, err := r.recordAttempt(ctx, b, completes, &req)
 	if err != nil {
 		return llms.ChatResponse{}, err
 	}
 	resp, err := c.client.Complete(ctx, req)
 	if err != nil {
-		return llms.ChatResponse{}, r.recordFailure(ctx, err)
+		return llms.ChatResponse{}, r.recordFailure(ctx, err, nil)
 	}
 	return r.recordTurn(ctx, &resp, delta, ddelta)
 }
@@ -481,14 +498,29 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 		return nil, nil, errAbort
 	}
 	delta := req.Messages[len(base):]
-	entry := ModelAttemptEntry{Model: modelRef(r.client.Model()), State: r.st.name, Base: len(base), Params: r.paramsDigest}
+	// The turn counts from this commit on: after the checkpoint the
+	// pending results complete, which covers only the entries before it.
+	model := modelRef(r.client.Model())
+	a.used.admitTurn(model)
+	entry := ModelAttemptEntry{
+		Model: model, State: r.st.name, Base: len(base), Params: r.paramsDigest,
+		Reservation: &r.res,
+	}
 	if !r.paramsStored {
 		entry.Params = b.rawArtifact(r.paramsRaw)
+	}
+	if req.MaxTokens != r.params.MaxTokens {
+		// Admission lowered the output cap: the attempt records the
+		// parameters it sent, and the state's own, which a recovered
+		// first turn restores and later admissions lower from (ADR 0009).
+		sent := r.params
+		sent.MaxTokens = req.MaxTokens
+		entry.StateParams, entry.Params = entry.Params, b.artifact(&sent)
 	}
 	for i := range delta {
 		entry.Messages = append(entry.Messages, b.artifact(toWireMessage(&delta[i])))
 	}
-	b.add(a.step1()+boolStep(cs != nil), EntryModelAttempt, entry)
+	b.add(a.step1()+boolStep(cs != nil), EntryModelAttempt, &entry)
 	if !r.land(ctx, b, cs) {
 		return nil, nil, errAbort
 	}
@@ -498,14 +530,18 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 
 // recordFailure commits the attempt's model_failure entry and returns the
 // error for the loop to classify.
-func (r *modelRun) recordFailure(ctx context.Context, err error) error {
-	f := ModelFailureEntry{Message: err.Error()}
+func (r *modelRun) recordFailure(ctx context.Context, err error, usage *Usage) error {
+	f := ModelFailureEntry{Message: err.Error(), Usage: usage}
 	var pe *llms.ProviderError
 	if errors.As(err, &pe) {
 		f.Kind, f.Status = string(pe.Kind), pe.StatusCode
 	}
+	// maestro-llms errors carry no usage, so a provider failure is charged
+	// its reservation; a response the runtime cannot record is charged the
+	// usage it reports (BUD-3, BUD-4).
+	r.a.used.charge(modelRef(r.client.Model()), usage, &r.res)
 	b := r.a.entries()
-	b.add(r.a.step1(), EntryModelFailure, f)
+	b.add(r.a.step1(), EntryModelFailure, &f)
 	if !r.land(ctx, b, nil) {
 		return errAbort
 	}
@@ -527,6 +563,12 @@ func modelRef(m llms.ModelRef) ModelRef { return ModelRef{Provider: string(m.Pro
 func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delta []llms.Message, ddelta []string) (llms.ChatResponse, error) {
 	a := r.a
 	if err := checkResponse(resp); err != nil {
+		// The provider call completed: its failure is recorded with the
+		// usage it reports, so the attempt is charged (ADR 0009).
+		usage := usageOf(&resp.Usage)
+		if r.recordFailure(ctx, fmt.Errorf("response cannot be recorded: %w", err), &usage) == errAbort { //nolint:errorlint // recordFailure returns errAbort itself
+			return llms.ChatResponse{}, errAbort
+		}
 		r.abort = a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: response cannot be recorded: %v", r.st.name, err))
 		return llms.ChatResponse{}, errAbort
 	}
@@ -534,6 +576,8 @@ func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delt
 		Message: toWireMessage(&resp.Message), Text: resp.Text, ToolCalls: toWireCalls(resp.ToolCalls), StopReason: resp.StopReason,
 		Usage: resp.Usage, AppliedReasoning: resp.AppliedReasoning,
 	}
+	usage := usageOf(&resp.Usage)
+	a.used.charge(modelRef(r.client.Model()), &usage, &r.res)
 	b := a.entries()
 	t := &turnState{
 		resp: rec.response(), delta: delta, ddelta: ddelta, step: a.step1(),
@@ -543,9 +587,9 @@ func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delt
 		results: make([]*resultRecord, len(resp.ToolCalls)),
 	}
 	t.msg = b.artifact(rec.Message)
-	b.add(t.step, EntryTurn, TurnEntry{
+	b.add(t.step, EntryTurn, &TurnEntry{
 		Model: modelRef(r.client.Model()), Response: b.artifact(&rec), Message: t.msg,
-		StopReason: string(resp.StopReason), Usage: usageOf(&resp.Usage), Calls: len(resp.ToolCalls),
+		StopReason: string(resp.StopReason), Usage: usage, Calls: len(resp.ToolCalls),
 	})
 	r.turn = t
 	if !r.commitTurnEntries(ctx, b, t.complete()) {
@@ -720,7 +764,7 @@ func (r *modelRun) addPending(b *entries) bool {
 	}
 	for _, i := range r.pending {
 		res := r.turn.results[i]
-		b.add(r.turn.step, EntryResult, ResultEntry{
+		b.add(r.turn.step, EntryResult, &ResultEntry{
 			Call: i, Tool: r.turn.calls[i].Name, Status: ResultRefused, Result: b.artifact(res), IsError: res.IsError,
 		})
 	}
@@ -791,7 +835,7 @@ func (r *modelRun) resolve(ctx context.Context, i int) (*resultRecord, bool, err
 		}
 		b := a.entries()
 		completes := r.addPending(b)
-		b.add(t.step, EntryPermission, p)
+		b.add(t.step, EntryPermission, &p)
 		t.perm[i] = &p
 		if !p.Permission.Sendable() {
 			t.results[i] = &resultRecord{Content: deniedContent(&p), IsError: true}
@@ -825,7 +869,7 @@ func (r *modelRun) resolve(ctx context.Context, i int) (*resultRecord, bool, err
 	}
 	b := a.entries()
 	completes := r.addPending(b)
-	b.add(t.step, EntryAttempt, at)
+	b.add(t.step, EntryAttempt, &at)
 	if !r.commitTurnEntries(ctx, b, completes) {
 		return nil, false, errAbort
 	}
@@ -872,13 +916,13 @@ func (r *modelRun) unknown(ctx context.Context, i int, at *AttemptEntry) *ending
 	b := a.entries()
 	r.addPending(b)
 	res := &resultRecord{Content: "outcome unknown", IsError: true}
-	b.add(t.step, EntryResult, ResultEntry{Call: i, Tool: at.Tool, Status: ResultUnknown, Result: b.artifact(res), IsError: true})
+	b.add(t.step, EntryResult, &ResultEntry{Call: i, Tool: at.Tool, Status: ResultUnknown, Result: b.artifact(res), IsError: true})
 	out := OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: ReasonToolError}, Detail: fmt.Sprintf(
 		"call %d (%s): a %s write was attempted and its outcome is unknown (TOOL-12)", i, at.Tool, at.Contract)}
 	if ctx.Err() != nil {
 		return a.endByCause(ctx)
 	}
-	b.add(t.step, EntryOutcome, out)
+	b.outcome(t.step, &out)
 	if b.err != nil {
 		return &ending{err: b.err}
 	}
@@ -994,7 +1038,7 @@ func (r *modelRun) commitResult(ctx context.Context, i int, tool *erasedTool, re
 	b := a.entries()
 	r.addPending(b)
 	b.ops = append(b.ops, res.ops...)
-	b.add(t.step, EntryResult, ResultEntry{
+	b.add(t.step, EntryResult, &ResultEntry{
 		Call: i, Tool: tool.def.Name, Status: ResultExecuted, Result: b.artifact(rec), Ops: res.ops, IsError: rec.IsError,
 	})
 	prev := t.results[i]
@@ -1060,18 +1104,18 @@ func (r *modelRun) addTransition(ctx context.Context, b *entries, i int, tool *e
 		if j < i {
 			status, content = ResultRefused, refusedContent(c.Name)
 		}
-		b.add(t.step, EntryResult, ResultEntry{
+		b.add(t.step, EntryResult, &ResultEntry{
 			Call: j, Tool: c.Name, Status: status, Result: b.artifact(&resultRecord{Content: content, IsError: true}), IsError: true,
 		})
 	}
-	b.add(t.step, EntryTransition, TransitionEntry{From: r.st.name, To: res.to, Data: res.data, Ops: res.ops})
+	b.add(t.step, EntryTransition, &TransitionEntry{From: r.st.name, To: res.to, Data: res.data, Ops: res.ops})
 	cs := a.cs
 	cs.State, cs.Data, cs.Step, cs.Model = res.to, res.data, t.step+1, nil
 	next := a.m.states[res.to]
 	terminal := next.end != "" && ctx.Err() == nil
 	out := next.end.outcome()
 	if terminal {
-		b.add(t.step, EntryOutcome, out)
+		b.outcome(t.step, &out)
 	}
 	b.checkpoint(&cs)
 	if terminal {

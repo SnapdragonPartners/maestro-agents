@@ -70,7 +70,8 @@ func (s Status) Terminal() bool {
 
 // Reason qualifies a status (RUN-3). The store keeps it as given; which
 // codes are valid for which status is the runtime's contract, not the
-// store's. Budget names the budget for a budget_exhausted failure.
+// store's. Budget names the budget for a budget_exhausted or
+// budget_unenforceable failure.
 type Reason struct {
 	Code   string `json:"code,omitempty"`
 	Budget string `json:"budget,omitempty"`

@@ -18,13 +18,13 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 
 Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
-so do agent types and the run controller for code and model states
-(`agent/`); budgets, manifests and grants, then the intake agent, come
+so do agent types, the run controller for code and model states, and
+budgets (`agent/`); manifests and grants, then the intake agent, come
 next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
-and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 and
-0008; further design arrives with the code, each piece with its ADR.
+and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
+0009; further design arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -58,6 +58,14 @@ Load-bearing decisions so far:
   result can transition, recovery resolves a recorded turn's calls without
   asking the model again, and TEST-5 runs in `storetest`
   ([ADR 0008](docs/adr/0008-model-states.md))
+- Budgets are `ActivationInput.Budgets`, recorded with the run's start
+  and fixed for the run; the recording client admits each turn (a logical
+  call, counted even if it fails or is interrupted) and its tokens,
+  recording the reservation in `model_attempt`; until `maestro-llms#149`
+  a hard token budget fails closed with `budget_unenforceable`, so token
+  budgets are estimated; the clocks cancel the activation's context;
+  consumption is checkpointed and rebuilt from the tail
+  ([ADR 0009](docs/adr/0009-budgets.md))
 
 ### Related repositories
 
@@ -124,7 +132,7 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, run controller, model states, record entries (ADR 0007, 0008)
+agent/               # Agent types, registry, run controller, model states, budgets, record entries (ADR 0007-0009)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock

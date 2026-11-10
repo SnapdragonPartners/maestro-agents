@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 
@@ -23,6 +24,16 @@ const (
 	EntryOutcome           = "outcome"
 )
 
+// Clock is the run's active time when an entry was committed (BUD-2, ADR
+// 0009 item 10). Every entry payload embeds it, and the runtime stamps it on
+// each entry as it adds it, so recovery restores active time as of the
+// latest entry and a crash loses at most the time since then.
+type Clock struct {
+	Active time.Duration `json:"active,omitempty"`
+}
+
+func (c *Clock) stamp(d time.Duration) { c.Active = d }
+
 // ActivationStarted is the payload of an activation_started entry: the
 // claim and the starting point, committed before anything else the
 // activation does. CheckpointSeq and RecordSeq are zero for a run's first
@@ -32,17 +43,20 @@ type ActivationStarted struct {
 	Epoch         uint64 `json:"epoch"`
 	CheckpointSeq uint64 `json:"checkpoint_seq"`
 	RecordSeq     uint64 `json:"record_seq"`
+	Clock
 }
 
 // RunStarted is the payload of a run_started entry (REC-1). Config is the
 // digest of the resolved configuration's artifact, empty if the run has
-// none.
+// none; Budgets are the run's budgets, nil if it has none (ADR 0009).
 type RunStarted struct {
+	Budgets      *Budgets        `json:"budgets,omitempty"`
 	AgentType    string          `json:"agent_type"`
 	AgentVersion string          `json:"agent_version"`
 	TriggerID    string          `json:"trigger_id"`
 	Config       string          `json:"config,omitempty"`
 	Trigger      json.RawMessage `json:"trigger,omitempty"`
+	Clock
 }
 
 // TransitionEntry is the payload of a transition entry: the state left and
@@ -52,14 +66,18 @@ type TransitionEntry struct {
 	To   string          `json:"to"`
 	Data json.RawMessage `json:"data"`
 	Ops  []store.Op      `json:"ops,omitempty"`
+	Clock
 }
 
 // OutcomeEntry is the payload of an outcome entry: the status and reason
-// the activation ended with (RUN-3), and a failure's detail.
+// the activation ended with (RUN-3), a failure's detail, and the run's
+// consumption as the activation ended (ADR 0009).
 type OutcomeEntry struct {
-	Status store.Status `json:"status"`
-	Reason store.Reason `json:"reason"`
-	Detail string       `json:"detail,omitempty"`
+	Consumed *Consumption `json:"consumed,omitempty"`
+	Status   store.Status `json:"status"`
+	Reason   store.Reason `json:"reason"`
+	Detail   string       `json:"detail,omitempty"`
+	Clock
 }
 
 // ModelRef is the model route a client reported (LLM-3).
@@ -73,12 +91,19 @@ type ModelRef struct {
 // parameters' artifact (system instructions, tools, tool choice and the
 // rest, without messages) and the transcript: the Base messages the state's
 // latest checkpoint holds, followed by the Messages artifacts added since.
+// Reservation is what the attempt was admitted on (BUD-3); an attempt
+// recorded before budgets were built has none. Params are the parameters sent;
+// when a token budget lowered the output cap, StateParams are the state's
+// own, from which later attempts are admitted.
 type ModelAttemptEntry struct {
-	Model    ModelRef `json:"model"`
-	State    string   `json:"state"`
-	Params   string   `json:"params"`
-	Messages []string `json:"messages,omitempty"`
-	Base     int      `json:"base"`
+	Reservation *Reservation `json:"reservation,omitempty"`
+	Model       ModelRef     `json:"model"`
+	State       string       `json:"state"`
+	Params      string       `json:"params"`
+	StateParams string       `json:"state_params,omitempty"`
+	Messages    []string     `json:"messages,omitempty"`
+	Base        int          `json:"base"`
+	Clock
 }
 
 // TurnEntry is the payload of a turn entry: the attempt's response,
@@ -93,6 +118,7 @@ type TurnEntry struct {
 	StopReason string   `json:"stop_reason,omitempty"`
 	Usage      Usage    `json:"usage"`
 	Calls      int      `json:"calls"`
+	Clock
 }
 
 // Usage is a response's observed token usage (maestro-llms' llms.Usage,
@@ -118,11 +144,15 @@ func usageOf(u *llms.Usage) Usage {
 
 // ModelFailureEntry is the payload of a model_failure entry: the attempt's
 // observed error (ADR 0004, item 2). Kind is the maestro-llms error kind of
-// a provider error, empty for any other error.
+// a provider error, empty for any other error. Usage is the usage reported,
+// nil when none was: a provider error carries none, a response the runtime
+// cannot record does (ADR 0009).
 type ModelFailureEntry struct {
+	Usage   *Usage `json:"usage,omitempty"`
 	Kind    string `json:"kind,omitempty"`
 	Message string `json:"message"`
 	Status  int    `json:"status,omitempty"`
+	Clock
 }
 
 // PermissionEntry is the payload of a permission entry: a call's
@@ -135,6 +165,7 @@ type PermissionEntry struct {
 	Permission Permission `json:"permission"`
 	Reason     string     `json:"reason,omitempty"`
 	Call       int        `json:"call"`
+	Clock
 }
 
 // AttemptEntry is the payload of an attempt entry, committed immediately
@@ -151,6 +182,7 @@ type AttemptEntry struct {
 	Key      string        `json:"key,omitempty"`
 	Action   ActionID      `json:"action"`
 	Call     int           `json:"call"`
+	Clock
 }
 
 // reissuable reports whether the attempt, with no recorded result, is
@@ -184,6 +216,7 @@ type ResultEntry struct {
 	Ops     []store.Op   `json:"ops,omitempty"`
 	Call    int          `json:"call"`
 	IsError bool         `json:"is_error,omitempty"`
+	Clock
 }
 
 // checkpointFormat is the version of checkpointState.
@@ -191,10 +224,15 @@ const checkpointFormat = 1
 
 // checkpointState is the library's checkpoint contents (ADR 0004, item 3),
 // opaque to the host (RUN-5). Step is the number of the next step to run:
-// 1 at the run's start.
+// 1 at the run's start. Budgets are the run's budgets and Consumed what it
+// has consumed of them as of the entries the checkpoint covers (ADR 0009);
+// older checkpoints, which lack them, read as no budgets and nothing
+// consumed.
 type checkpointState struct {
 	// Model is a model state's progress, nil before its first turn lands.
 	Model        *modelProgress  `json:"model,omitempty"`
+	Budgets      *Budgets        `json:"budgets,omitempty"`
+	Consumed     *Consumption    `json:"consumed,omitempty"`
 	AgentType    string          `json:"agent_type"`
 	AgentVersion string          `json:"agent_version"`
 	State        string          `json:"state"`

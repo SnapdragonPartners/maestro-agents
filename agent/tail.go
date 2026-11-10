@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
@@ -30,15 +31,37 @@ type tailTurn struct {
 // interrupted, and at most one turn with its calls' entries.
 type tailFold struct {
 	open *ModelAttemptEntry // an attempt with no turn or failure yet
+	// used is the run's consumption, restored from the checkpoint; the
+	// fold charges it the tail's attempts (ADR 0009).
+	used *Consumption
 	turn *tailTurn
 	// states are the states the tail's model attempts name.
 	states map[string]bool
-	// interrupted counts attempts with neither a turn nor a failure after
-	// them; budgets charge them their reservation (ADR 0004, item 13).
-	interrupted int
+}
+
+// interrupt charges the open attempt, which has neither a turn nor a
+// failure after it, its reservation (ADR 0004, item 13).
+func (f *tailFold) interrupt() {
+	if f.open == nil {
+		return
+	}
+	f.used.charge(f.open.Model, nil, f.open.Reservation)
+	f.open = nil
+}
+
+// active keeps the latest active time the tail records.
+func (f *tailFold) active(d time.Duration) {
+	f.used.ActiveTime = max(f.used.ActiveTime, d)
 }
 
 func (f *tailFold) add(e *store.Entry) error {
+	// Every entry carries the run's active time when it was committed
+	// (ADR 0009, item 10); entries written before budgets carry none.
+	var c Clock
+	if err := decode(e, &c); err != nil {
+		return err
+	}
+	f.active(c.Active)
 	switch e.Kind {
 	case EntryActivationStarted:
 		return nil
@@ -57,6 +80,11 @@ func (f *tailFold) add(e *store.Entry) error {
 		if f.open == nil {
 			return errors.New("a model failure with no attempt")
 		}
+		var mf ModelFailureEntry
+		if err := decode(e, &mf); err != nil {
+			return err
+		}
+		f.used.charge(f.open.Model, mf.Usage, f.open.Reservation)
 		f.open = nil
 		return nil
 	case EntryTurn:
@@ -65,7 +93,10 @@ func (f *tailFold) add(e *store.Entry) error {
 		if f.turn == nil {
 			return errors.New("a call entry with no turn")
 		}
-		return f.turn.add(e)
+		if err := f.turn.add(e); err != nil {
+			return err
+		}
+		return nil
 	}
 	return errors.New("a kind this version cannot recover")
 }
@@ -81,14 +112,13 @@ func (f *tailFold) addAttempt(e *store.Entry) error {
 	if f.turn != nil {
 		return errors.New("an attempt after a turn that has no checkpoint")
 	}
-	if f.open != nil {
-		f.interrupted++
-	}
+	f.interrupt()
 	var m ModelAttemptEntry
 	if err := decode(e, &m); err != nil {
 		return err
 	}
 	f.open = &m
+	f.used.admitTurn(m.Model)
 	if f.states == nil {
 		f.states = map[string]bool{}
 	}
@@ -104,6 +134,7 @@ func (f *tailFold) addTurn(e *store.Entry) error {
 	if err := decode(e, &t); err != nil {
 		return err
 	}
+	f.used.charge(f.open.Model, &t.Usage, f.open.Reservation)
 	f.turn = &tailTurn{
 		attempt: *f.open, entry: t, step: e.Step,
 		perms: map[int]PermissionEntry{}, attempts: map[int]AttemptEntry{}, results: map[int]ResultEntry{},

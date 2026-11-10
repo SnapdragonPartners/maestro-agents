@@ -41,5 +41,6 @@ template.
 | [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008 |
 | [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Amended by ADR-0006 |
 | [0006](0006-store-interface.md) | The store interface | Amended by ADR-0008 |
-| [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008 |
+| [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009 |
 | [0008](0008-model-states.md) | Model states | Accepted |
+| [0009](0009-budgets.md) | Budgets | Accepted |
