@@ -1,6 +1,6 @@
 # 0007. Agent types and the run controller
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0008
 - **Date:** 2026-11-08
 
 ## Context

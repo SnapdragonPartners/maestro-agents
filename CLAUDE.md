@@ -18,12 +18,13 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 
 Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
-so do agent types and the run controller for code states (`agent/`); model
-states, then the intake agent, come next. The requirements are in
+so do agent types and the run controller for code and model states
+(`agent/`); budgets, manifests and grants, then the intake agent, come
+next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
-and storage design are ADRs 0003 to 0006, the runtime's API ADR 0007; further design arrives with the
-code, each piece with its ADR.
+and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 and
+0008; further design arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -51,6 +52,12 @@ Load-bearing decisions so far:
   durable output is its transition with object operations, committed with
   the checkpoint; a code state's defect fails the run with `state_error`
   ([ADR 0007](docs/adr/0007-agent-types-and-the-run-controller.md))
+- A model state is `State.Model`: a prompt and tools over `toolloop.Run`
+  with the host's client from `ActivationInput.Client`; each attempt, turn
+  and call (permission, attempt, result) is recorded write-ahead, a tool's
+  result can transition, recovery resolves a recorded turn's calls without
+  asking the model again, and TEST-5 runs in `storetest`
+  ([ADR 0008](docs/adr/0008-model-states.md))
 
 ### Related repositories
 
@@ -117,11 +124,11 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, run controller, record entries (ADR 0007)
+agent/               # Agent types, registry, run controller, model states, record entries (ADR 0007, 0008)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
-store/storetest/     # Store conformance suite, TEST-6 included
+store/storetest/     # Store conformance suite, TEST-5 and TEST-6 included
 internal/storecore/  # The engine both reference stores share
 cmd/<agent>/         # (planned) Standalone agent executables
 docs/requirements.md # Library requirements (input to the design ADRs)

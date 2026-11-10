@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/SnapdragonPartners/maestro-llms/llms"
+
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
@@ -18,9 +20,9 @@ type Store interface {
 	store.Reader
 }
 
-// DefaultConflictRetries is how many times a code state is run again when
-// its object operations conflict with another instance's commit (ADR 0005,
-// item 10).
+// DefaultConflictRetries is how many times a code state, or a model
+// state's atomic-local-transaction tool, is run again when its object
+// operations conflict with another instance's commit (ADR 0005, item 10).
 const DefaultConflictRetries = 3
 
 // Controller runs activations (ADR 0003, item 12). It holds no per-run
@@ -28,6 +30,7 @@ const DefaultConflictRetries = 3
 type Controller struct {
 	store    Store
 	registry *Registry
+	policy   Policy
 	retries  int
 }
 
@@ -35,16 +38,30 @@ type Controller struct {
 type Option func(*Controller)
 
 // WithConflictRetries sets how many times a code state is re-run on an
-// object conflict before the run fails with ReasonObjectConflict. Negative
-// values count as zero.
+// object conflict before the run fails with ReasonObjectConflict, and how
+// many times an atomic-local-transaction tool is re-run before its call's
+// result becomes a tool error the model receives (ADR 0005, item 10); the
+// run does not fail. Negative values count as zero.
 func WithConflictRetries(n int) Option {
 	return func(c *Controller) { c.retries = max(n, 0) }
+}
+
+// WithPolicy sets the policy hook every tool call passes through before its
+// effect (TOOL-3). The default, AllowAll, allows every call; nil restores
+// it.
+func WithPolicy(p Policy) Option {
+	return func(c *Controller) {
+		if p == nil {
+			p = AllowAll
+		}
+		c.policy = p
+	}
 }
 
 // NewController returns a controller that runs the registry's agent types
 // against s.
 func NewController(s Store, r *Registry, opts ...Option) *Controller {
-	c := &Controller{store: s, registry: r, retries: DefaultConflictRetries}
+	c := &Controller{store: s, registry: r, retries: DefaultConflictRetries, policy: AllowAll}
 	for _, o := range opts {
 		o(c)
 	}
@@ -56,10 +73,15 @@ func NewController(s Store, r *Registry, opts ...Option) *Controller {
 // record's tail through the store, so the input never duplicates durable
 // state.
 type ActivationInput struct {
-	// Fence is the host's claim on the run's instance (ADR 0003, item 8).
-	Fence store.Fence
+	// Client is the model client the host built (LLM-1), used by every
+	// model state this activation runs; the route it reports is recorded
+	// with every attempt (LLM-3). A model state reached with no client
+	// fails the run with ReasonModelError.
+	Client llms.ChatClient
 	// Scope is the run's scope: kind run, with the run's ID.
 	Scope store.Scope
+	// Fence is the host's claim on the run's instance (ADR 0003, item 8).
+	Fence store.Fence
 	// Config is the resolved configuration, recorded when the run starts
 	// and used by every later activation in its place (RUN-1). A later
 	// activation ignores this field.
@@ -96,7 +118,6 @@ func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome,
 			e = a.end(ctx, OutcomeEntry{Status: store.StatusRunnable, Reason: store.Reason{Code: ReasonStepLimit}})
 		default:
 			e = a.step(ctx)
-			a.steps++
 		}
 	}
 	return e.out, e.err
@@ -105,23 +126,31 @@ func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome,
 // activation is one activation's view of its run. Only the activation
 // writes the run's records, so the view stays exact (ADR 0005, item 5).
 type activation struct {
-	// start1 is the run's start while it is not yet committed.
-	start1 *runStart
+	client llms.ChatClient
 	m      *machine
 	c      *Controller
+	// model is the model state running, if any.
+	model *modelRun
+	// tail is what the execution record holds past the checkpoint.
+	tail tailState
+	// start1 is the run's start while it is not yet committed.
+	start1 *runStart
+	cs     checkpointState
 	scope  store.Scope
 	fence  store.Fence
 	// config is the run's resolved configuration; cs.Config its digest.
 	config json.RawMessage
 	run    store.Run
-	cs     checkpointState
 	// ckSeq is the run's latest checkpoint, nextCk the instance's next
 	// checkpoint sequence.
 	ckSeq  uint64
 	nextCk uint64
 	// nextEntry is the run's next execution-record sequence.
 	nextEntry uint64
-	steps     int
+	// steps counts the steps this activation completed, maxSteps the
+	// host's limit (zero: none).
+	steps    int
+	maxSteps int
 	// own reports whether the run has a checkpoint.
 	own bool
 }
@@ -167,7 +196,7 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 	if !ok {
 		return nil, refuse("run %q names agent type %q, which is not registered", run.ID, run.AgentType)
 	}
-	a := &activation{c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1}
+	a := &activation{c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1, client: in.Client, maxSteps: max(in.MaxSteps, 0)}
 	latest, ok, err := c.store.LatestCheckpoint(durable(ctx), run.Instance)
 	if err != nil {
 		return nil, storeFailure(err)
@@ -209,25 +238,30 @@ func (c *Controller) activatableRun(ctx context.Context, in *ActivationInput) (s
 	return run, nil
 }
 
-// readTail reads the entries after the checkpoint. Every step boundary
-// commits a checkpoint, so the tail holds only what an activation commits
-// without one: its start, and a non-terminal ending.
+// readTail reads the entries after the checkpoint (ADR 0004, item 5) and
+// folds them into a.tail, refusing a record this version cannot recover
+// before anything is written.
 func (a *activation) readTail(ctx context.Context, after uint64) error {
 	tail, err := a.c.store.Entries(durable(ctx), a.run.ID, after)
 	if err != nil {
 		return storeFailure(err)
 	}
 	next := after + 1
-	for _, e := range tail {
+	var f tailFold
+	for i := range tail {
+		e := &tail[i]
 		if e.Seq != next {
 			return storeFailure(fmt.Errorf("agent: run %q record has entry %d where %d belongs", a.run.ID, e.Seq, next))
 		}
-		if e.Kind != EntryActivationStarted && e.Kind != EntryOutcome {
-			return refuse("run %q record has a %q entry past its checkpoint, which this version cannot recover", a.run.ID, e.Kind)
+		if err := f.add(e); err != nil {
+			return refuse("run %q record entry %d (%s) past its checkpoint: %v", a.run.ID, e.Seq, e.Kind, err)
 		}
 		next++
 	}
 	a.nextEntry = next
+	if err := a.checkTail(&f); err != nil {
+		return refuse("run %q: %v", a.run.ID, err)
+	}
 	return nil
 }
 
@@ -277,10 +311,13 @@ func (a *activation) commit(ctx context.Context, ops []store.Op, next uint64) er
 
 // entries numbers execution-record entries from a.nextEntry.
 type entries struct {
-	err  error
-	a    *activation
-	ops  []store.Op
-	next uint64
+	err    error
+	a      *activation
+	stored map[string]bool // artifacts already added
+	ops    []store.Op
+	next   uint64
+	// pending reports that the model state's pending results are in ops.
+	pending bool
 }
 
 func (a *activation) entries() *entries { return &entries{a: a, next: a.nextEntry} }
@@ -432,6 +469,8 @@ func (a *activation) step(ctx context.Context) *ending {
 			fmt.Sprintf("checkpointed state %q is not declared by agent type %q", a.cs.State, a.m.name))
 	case st.end != "":
 		return a.end(ctx, st.end.outcome())
+	case st.model != nil:
+		return a.modelStep(ctx, st)
 	}
 	for attempt := 0; ; attempt++ {
 		var tr erasedTransition
@@ -508,6 +547,7 @@ func (a *activation) commitTransition(ctx context.Context, st, next *erasedState
 	switch {
 	case err == nil:
 		a.checkpointed(&cs)
+		a.steps++
 		if terminal {
 			return &ending{out: a.outcome(&out)}, false
 		}
@@ -548,12 +588,27 @@ func (a *activation) end(ctx context.Context, out OutcomeEntry) *ending {
 	if a.start1 != nil && out.Status.Terminal() {
 		a.start1.add(b)
 	}
-	b.add(a.step1(), EntryOutcome, out)
+	// A model state's results not yet committed go with the ending, and
+	// with the turn's checkpoint if they complete it (ADR 0008, item 13).
+	var cs *checkpointState
+	step := a.step1()
+	if a.model != nil {
+		if cs = a.model.endEntries(b); cs != nil {
+			step = cs.Step
+		}
+	}
+	b.add(step, EntryOutcome, out)
 	if b.err != nil {
 		return &ending{err: b.err}
 	}
 	if err := a.commit(ctx, append(b.ops, a.finalOps(&out)...), b.next); err != nil {
 		return commitErr(err)
+	}
+	if a.model != nil && b.pending {
+		a.model.pending = nil
+	}
+	if cs != nil {
+		a.model.completed(cs)
 	}
 	return &ending{out: a.outcome(&out)}
 }

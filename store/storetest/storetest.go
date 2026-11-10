@@ -1,8 +1,10 @@
 // Package storetest is the conformance suite for [store.Store]
 // implementations (ADR 0005, item 6): the operations' semantics, claims and
 // leases, run creation and queued triggers, durability across a reopen,
-// and TEST-6's two stale-owner interleavings through the store's pause
-// hook.
+// TEST-6's two stale-owner interleavings through the store's pause hook,
+// and TEST-5: an agent's activation stopped at every durable boundary and
+// continued by a new one, with no effect duplicated and no work lost
+// (ADR 0008).
 //
 // A host store that claims HOST-6 runs the same suite as the reference
 // stores:
@@ -62,6 +64,7 @@ func Run(t *testing.T, h Harness) {
 	}
 	t.Run("StaleOwnerBeforeCommit", func(t *testing.T) { staleOwnerBeforeCommit(t, h) })
 	t.Run("StaleOwnerInsideCommit", func(t *testing.T) { staleOwnerInsideCommit(t, h) })
+	t.Run("CrashRecovery", func(t *testing.T) { crashRecovery(t, h) })
 	t.Run("Durability", func(t *testing.T) {
 		if h.Reopen == nil {
 			t.Skip("store is not durable: Harness.Reopen is nil")

@@ -30,10 +30,11 @@ type Type[D any] struct {
 	// Migrate converts state data checkpointed by another version of this
 	// agent type (RUN-5). Its result is checkpointed by the next step
 	// boundary; until that commit lands it may run again for the same
-	// checkpoint (after a crash, a shutdown or the step limit), so it must
-	// have no durable effect of its own. Nil refuses such a checkpoint:
-	// the run fails with ReasonStateError. An error or panic fails the run
-	// the same way, with the exceptions Init's has.
+	// checkpoint (after a crash, an indeterminate commit, or a shutdown
+	// before the next step boundary), so it must have no durable effect of
+	// its own. Nil refuses such a checkpoint: the run fails with
+	// ReasonStateError. An error or panic fails the run the same way, with
+	// the exceptions Init's has.
 	Migrate func(ctx context.Context, fromVersion string, data json.RawMessage) (D, error)
 
 	// Name is the agent type's registered name, matched against a run
@@ -51,9 +52,10 @@ type Type[D any] struct {
 	States []State[D]
 }
 
-// State is one state of an agent type. Exactly one of Code and End is set:
-// a code state runs Go code that chooses the next state (STM-2); a terminal
-// state ends the run with its End (STM-4).
+// State is one state of an agent type. Exactly one of Code, Model and End
+// is set: a code state runs Go code that chooses the next state, a model
+// state runs a tool loop that one of its tools leaves (STM-2, STM-3), and a
+// terminal state ends the run with its End (STM-4).
 type State[D any] struct {
 	// Code runs the state's work and returns the transition it chooses. It
 	// must have no durable effect of its own (ADR 0003, item 5): its only
@@ -70,6 +72,9 @@ type State[D any] struct {
 	// recovered and treated as an error.
 	Code func(ctx context.Context, env *Env, data D) (Transition[D], error)
 
+	// Model makes the state a model state (ADR 0008).
+	Model *ModelState[D]
+
 	// End makes the state terminal: a run entering it ends with this
 	// status and reason.
 	End End
@@ -77,9 +82,9 @@ type State[D any] struct {
 	// Name is the state's name, unique within the agent type.
 	Name string
 
-	// Next declares the states a code state may transition to (STM-1).
-	// A transition to any other state fails the run with
-	// ReasonStateError.
+	// Next declares the states a code or model state may transition to
+	// (STM-1). A code state's transition to any other state fails the run
+	// with ReasonStateError, a tool's with ReasonToolError.
 	Next []string
 }
 
@@ -156,10 +161,11 @@ type machine struct {
 }
 
 type erasedState struct {
-	code func(ctx context.Context, env *Env, data json.RawMessage) (erasedTransition, error)
-	end  End
-	next map[string]bool
-	name string
+	code  func(ctx context.Context, env *Env, data json.RawMessage) (erasedTransition, error)
+	model *erasedModel
+	end   End
+	next  map[string]bool
+	name  string
 }
 
 type erasedTransition struct {
@@ -206,6 +212,9 @@ func (t *Type[D]) compile() (*machine, error) {
 	for i := range t.States {
 		s := &t.States[i]
 		es := &erasedState{name: s.Name, end: s.End, next: map[string]bool{}}
+		if s.Model != nil {
+			es.model = eraseModel(s.Model)
+		}
 		for _, n := range s.Next {
 			es.next[n] = true
 		}
@@ -280,15 +289,26 @@ func (t *Type[D]) check() error {
 
 func (t *Type[D]) checkState(s *State[D], byName map[string]*State[D]) error {
 	_, validEnd := s.End.status()
+	kinds := 0
+	for _, set := range []bool{s.Code != nil, s.Model != nil, s.End != ""} {
+		if set {
+			kinds++
+		}
+	}
 	switch {
-	case (s.Code == nil) == (s.End == ""):
-		return t.invalid("state %q must set exactly one of Code and End", s.Name)
+	case kinds != 1:
+		return t.invalid("state %q must set exactly one of Code, Model and End", s.Name)
 	case s.End != "" && len(s.Next) > 0:
 		return t.invalid("terminal state %q declares transitions", s.Name)
 	case s.End != "" && !validEnd:
 		return t.invalid("terminal state %q has End %q, which an agent type cannot declare", s.Name, s.End)
-	case s.Code != nil && len(s.Next) == 0:
-		return t.invalid("code state %q declares no transitions", s.Name)
+	case s.End == "" && len(s.Next) == 0:
+		return t.invalid("state %q declares no transitions", s.Name)
+	}
+	if s.Model != nil {
+		if err := t.checkModel(s); err != nil {
+			return err
+		}
 	}
 	for _, n := range s.Next {
 		if byName[n] == nil {

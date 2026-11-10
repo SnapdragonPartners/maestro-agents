@@ -1,6 +1,6 @@
 # 0006. The store interface
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0008
 - **Date:** 2026-11-08
 
 ## Context

@@ -157,3 +157,35 @@ func TestFencingTestsFailWithoutPauseHook(t *testing.T) {
 		}
 	}
 }
+
+// staleCheckpoints serves the checkpoint before the latest, as a store
+// reading checkpoints from a lagging replica would (ADR 0005, item 5).
+type staleCheckpoints struct{ store.Store }
+
+func (s staleCheckpoints) LatestCheckpoint(ctx context.Context, instance string) (store.Checkpoint, bool, error) {
+	c, ok, err := s.Store.LatestCheckpoint(ctx, instance)
+	if err != nil || !ok || c.Seq == 1 {
+		return c, ok, err
+	}
+	prev, err := s.Checkpoint(ctx, instance, c.Seq-1)
+	return prev, err == nil, err
+}
+
+// TEST-5 detects a store whose reads of an instance's own records are not
+// fresh: the continuing activation cannot continue from what landed.
+func TestCrashRecoveryDetectsStaleReads(t *testing.T) {
+	// Commit 14 falls in the second turn, after the first turn's
+	// checkpoint landed.
+	run := func(tb testing.TB, h Harness) { crashAt(tb, h, 14, false, false) }
+	if got := record(t, run, correctHarness()); len(got) != 0 {
+		t.Fatalf("correct store failed: %v", got)
+	}
+	stale := Harness{Open: func(_ testing.TB, o Options) store.Store {
+		return staleCheckpoints{memstore.New(memstore.WithClock(o.Now))}
+	}}
+	got := record(t, run, stale)
+	if len(got) == 0 {
+		t.Fatal("a store serving stale checkpoints passed TEST-5")
+	}
+	t.Logf("stale store: %v", got)
+}
