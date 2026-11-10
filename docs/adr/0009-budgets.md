@@ -79,8 +79,11 @@ amended.
      (`budget_exhausted`, `tokens`) when that estimate leaves no output
      token, or, for a request with a thinking budget
      (`Reasoning.BudgetTokens`), no output cap above it (Anthropic's
-     thinking budget must be below `MaxTokens`), so a request that cannot
-     fit is refused rather than sent to fail; otherwise it lowers `MaxTokens` to what the budget leaves after
+     thinking budget must be below `MaxTokens`), so lowering the cap never
+     turns a valid request into one the provider rejects. A prompt whose
+     own cap is not above its thinking budget is invalid with or without a
+     budget and is sent as it is: it is not a budget's refusal, and the
+     runtime does not predict what a provider accepts. Otherwise it lowers `MaxTokens` to what the budget leaves after
      the input, keeping the prompt's own cap where that is lower.
 
    **An attempt records the parameters it sent** (ADR 0008, item 8): when

@@ -788,15 +788,23 @@ func TestBudgetsThinkingBudgetFits(t *testing.T) {
 	for name, tc := range map[string]struct {
 		limit int64
 		fits  bool
+		cap   int // the prompt's own MaxTokens, above the thinking budget
 	}{
-		"does not fit": {limit: input + 1000},
-		"fits":         {limit: input + 3000, fits: true},
+		"does not fit":    {limit: input + 1000},
+		"fits":            {limit: input + 3000, fits: true},
+		"prompt cap kept": {limit: input + 10_000, fits: true, cap: 3000},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newBackend(t, "memstore").open()
 			createLedgerRun(t, s)
 			client := scripted(ledgerScript)
-			out, err := activateBudgets(context.Background(), agent.NewController(s, registry(t, typ)), claim(t, s),
+			capped := ledgerType(&execLog{})
+			capped.States[0].Model.Prompt = func(ctx context.Context, env *agent.Env, d ledgerData) (llms.ChatRequest, error) {
+				req, err := typ.States[0].Model.Prompt(ctx, env, d)
+				req.MaxTokens = tc.cap
+				return req, err
+			}
+			out, err := activateBudgets(context.Background(), agent.NewController(s, registry(t, capped)), claim(t, s),
 				client, 1, agent.Budgets{Tokens: agent.TokenBudget{Limit: tc.limit, Estimated: true}})
 			if err != nil {
 				t.Fatal(err)
@@ -808,8 +816,8 @@ func TestBudgetsThinkingBudgetFits(t *testing.T) {
 				}
 				return
 			}
-			if calls := client.Calls(); len(calls) != 1 || calls[0].MaxTokens <= thinking {
-				t.Fatalf("calls %d, MaxTokens %d; want one, above the thinking budget %d", len(calls), calls[0].MaxTokens, thinking)
+			if calls := client.Calls(); len(calls) != 1 || calls[0].MaxTokens <= thinking || (tc.cap > 0 && calls[0].MaxTokens != tc.cap) {
+				t.Fatalf("calls %d, MaxTokens %d; want one, above the thinking budget %d (the prompt's %d if set)", len(calls), calls[0].MaxTokens, thinking, tc.cap)
 			}
 		})
 	}
