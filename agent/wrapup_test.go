@@ -326,8 +326,25 @@ func TestWrapUpOverridesStateToolChoice(t *testing.T) {
 
 // TestWrapUpCutsOffSlowCall: a model call still in flight at the wrap-up
 // point is cut off there and recorded as failed, and the wrap-up follows
-// within the reserve, its request carrying the wrap-up message once.
+// within the reserve, its request carrying the wrap-up message once. The
+// point is the active-time one, the deadline one, or the earlier of the
+// two.
 func TestWrapUpCutsOffSlowCall(t *testing.T) {
+	cases := map[string]func() agent.Budgets{
+		"active time": func() agent.Budgets { return agent.Budgets{ActiveTime: 2*time.Second + 300*time.Millisecond} },
+		"deadline": func() agent.Budgets {
+			return agent.Budgets{Deadline: time.Now().Add(2*time.Second + 300*time.Millisecond)}
+		},
+		"deadline earlier": func() agent.Budgets {
+			return agent.Budgets{ActiveTime: time.Minute, Deadline: time.Now().Add(2*time.Second + 300*time.Millisecond)}
+		},
+	}
+	for name, budgets := range cases {
+		t.Run(name, func(t *testing.T) { testWrapUpCutsOffSlowCall(t, budgets) })
+	}
+}
+
+func testWrapUpCutsOffSlowCall(t *testing.T, budgets func() agent.Budgets) {
 	forEachBackend(t, func(t *testing.T, b backend) {
 		s := b.open()
 		defer s.Close()
@@ -343,8 +360,7 @@ func TestWrapUpCutsOffSlowCall(t *testing.T) {
 			},
 		}
 		reg := registry(t, wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}, Reserve: 2 * time.Second}))
-		out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0,
-			agent.Budgets{ActiveTime: 2*time.Second + 300*time.Millisecond})
+		out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0, budgets())
 		if err != nil {
 			t.Fatal(err)
 		}

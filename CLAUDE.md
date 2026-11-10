@@ -71,8 +71,9 @@ Load-bearing decisions so far:
   within its wrap-up turns, the next turns offer only those tools (tool
   choice auto: some providers reject a forced one), with `Call.WrapUp`
   set, and a model call in flight at that point is cut off; the bound
-  spent fails the run with `wrap_up_failed`; each tool result ends with
-  the budget status, recorded as sent
+  spent fails the run with `wrap_up_failed`; each tool result that does
+  not transition ends with the budget status, recorded as sent (refusals
+  and denials carry none)
   ([ADR 0010](docs/adr/0010-wrap-up-and-the-visible-clock.md))
 
 ### Related repositories
