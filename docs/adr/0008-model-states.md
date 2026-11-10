@@ -34,8 +34,8 @@ state's third kind, item 1), 4 (the activation input's client, item 6), 8
 kinds, item 11), and builds what ADR 0006 item 11 and ADR 0007's
 consequences left for later (model states, the write-ahead turn, TEST-5).
 It applies ADR 0007 items 12 to 14 unchanged. As the ADR index requires,
-the amended ADRs record the amendment in their status lines only; this
-paragraph is the list of what is amended.
+the amended ADRs record the amendment in their status line and in the index,
+and nowhere else; this paragraph is the list of what is amended.
 
 ## Decision
 
