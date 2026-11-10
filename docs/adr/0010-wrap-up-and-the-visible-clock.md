@@ -76,8 +76,9 @@ and nowhere else; this paragraph is the list of what is amended.
 3. **A wrap-up never ends** until the state transitions or the run ends.
    Consumption only grows (ADR 0009, item 7), so recovery reaches the same
    decision from the record; in addition the wrap-up turns a checkpoint
-   counts, and a recovered turn's attempt, carry it (item 6), so a version
-   with a different reserve does not leave a wrap-up half way.
+   counts, and any wrap-up attempt past the checkpoint (landed, failed or
+   interrupted), carry it (item 6), so a version with a different reserve
+   does not leave a wrap-up half way.
 4. **A model call in flight at the wrap-up point is cut off there.** Before
    the wrap-up, the client's call runs under a context whose deadline is
    the earlier of the two clocks' points, with its own cause; when that
@@ -109,7 +110,9 @@ and nowhere else; this paragraph is the list of what is amended.
    error gets no message, as buggrit's does not. A call naming a declared tool
    the turn did not offer is refused by `toolloop` with its usual text
    (`tool "x" is not available`), recorded as a refused result, and
-   refused alike by recovery (amends ADR 0008, item 11). **A call executing
+   refused alike by recovery, which also refuses a call naming a tool the
+   attempt's recorded parameters did not offer, whatever the recovering
+   version declares (amends ADR 0008, item 11). **A call executing
    in a wrap-up turn sees `Call.WrapUp`**, so its tool can relax what it
    accepts from a model out of budget: this replaces buggrit's
    `beforeWrapUp` hook, since tools here hold no state between executions.

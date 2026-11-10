@@ -64,8 +64,7 @@ func wrapType(log *wrapLog, w agent.WrapUp) *agent.Type[wrapData] {
 		States: []agent.State[wrapData]{
 			{Name: "work", Next: []string{"done", "manual"}, Model: &agent.ModelState[wrapData]{
 				Prompt: func(_ context.Context, env *agent.Env, _ wrapData) (llms.ChatRequest, error) {
-					st := env.Budget()
-					return llms.ChatRequest{Messages: []llms.Message{llms.UserText("work " + st.String())}}, nil
+					return llms.ChatRequest{Messages: []llms.Message{llms.UserText(fmt.Sprint("work ", env.Budget()))}}, nil
 				},
 				Tools: []agent.Tool[wrapData]{
 					{
@@ -606,5 +605,102 @@ func TestBudgetStatusString(t *testing.T) {
 		if got := c.st.String(); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
+		// A value and a pointer both render with fmt (a fmt.Stringer).
+		if got, gotp := fmt.Sprint(c.st), fmt.Sprint(&c.st); got != c.want || gotp != c.want {
+			t.Errorf("%s: fmt.Sprint %q and %q, want %q", c.name, got, gotp, c.want)
+		}
+	}
+}
+
+// crashWhere crashes a run at the first commit after which its record
+// satisfies cond, and returns the store, the run left for recovery.
+func crashWhere(t *testing.T, reg *agent.Registry, budgets agent.Budgets, answer func(int, bool) llms.ChatResponse,
+	landing bool, cond func([]store.Entry) bool,
+) store.Store {
+	t.Helper()
+	for at := 1; at <= 20; at++ {
+		s := newBackend(t, "memstore").open()
+		createLedgerRun(t, s)
+		cs := &crashStore{Store: s, at: at, landing: landing}
+		if _, err := activateBudgets(context.Background(), agent.NewController(cs, reg), claim(t, s), wrapClient(answer), 0, budgets); !errors.Is(err, agent.ErrStoreFailure) {
+			t.Fatalf("crashed activation = %v, want a store failure", err)
+		}
+		if cond(entries(t, s, "r1")) {
+			releaseIfOwned(t, s)
+			return s
+		}
+	}
+	t.Fatal("no commit leaves the record wanted")
+	return nil
+}
+
+// TestWrapUpSurvivesAnInterruptedAttempt: a wrap-up attempt that commits
+// and is interrupted before its turn lands keeps the state in wrap-up,
+// even when the recovering version's reserve would not start one (ADR
+// 0010, item 3).
+func TestWrapUpSurvivesAnInterruptedAttempt(t *testing.T) {
+	budgets := agent.Budgets{Deadline: time.Now().Add(time.Hour)}
+	answer := func(int, bool) llms.ChatResponse { return callsResp(tc("s", "submit", `{}`)) }
+	s := crashWhere(t, registry(t, wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}, Reserve: 2 * time.Hour})),
+		budgets, answer, true, func(es []store.Entry) bool {
+			return len(attempts(t, es)) == 1 && countKind(es, agent.EntryTurn) == 0
+		})
+	if a := attempts(t, entries(t, s, "r1")); !a[0].WrapUp {
+		t.Fatalf("interrupted attempt = %+v, want a wrap-up attempt", a[0])
+	}
+	log := &wrapLog{}
+	var offered [][]string
+	client := wrapClient(answer)
+	inner := client.Func
+	client.Func = func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+		offered = append(offered, toolNames(&req))
+		return inner(ctx, req)
+	}
+	reg := registry(t, wrapType(log, agent.WrapUp{Tools: []string{"submit"}, Reserve: time.Nanosecond}))
+	out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0, budgets)
+	if err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("recovered run = %+v, %v", out, err)
+	}
+	if len(offered) != 1 || !slices.Equal(offered[0], []string{"submit"}) {
+		t.Fatalf("recovery offered %v, want only the wrap-up's tool", offered)
+	}
+	if got := log.get(); !slices.Equal(got, []string{"submit/wrap-up=true"}) {
+		t.Fatalf("executions = %v, want submit in wrap-up", got)
+	}
+}
+
+// TestWrapUpRecoveryRefusesUnofferedCall: a wrap-up turn's call naming a
+// tool its attempt did not offer is refused by recovery even when the
+// recovering version adds that tool to the wrap-up (ADR 0010, item 5).
+func TestWrapUpRecoveryRefusesUnofferedCall(t *testing.T) {
+	budgets := agent.Budgets{Deadline: time.Now().Add(time.Hour)}
+	answer := func(turn int, _ bool) llms.ChatResponse {
+		if turn == 0 {
+			return callsResp(tc("e", "escalate", `{}`))
+		}
+		return callsResp(tc("s", "submit", `{}`))
+	}
+	s := crashWhere(t, registry(t, wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}, Reserve: 2 * time.Hour})),
+		budgets, answer, false, func(es []store.Entry) bool {
+			return countKind(es, agent.EntryTurn) == 1 && countKind(es, agent.EntryResult) == 0
+		})
+	log := &wrapLog{}
+	reg := registry(t, wrapType(log, agent.WrapUp{Tools: []string{"submit", "escalate"}, Reserve: 2 * time.Hour}))
+	out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), wrapClient(answer), 0, budgets)
+	if err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("recovered run = %+v, %v", out, err)
+	}
+	if got := log.get(); !slices.Equal(got, []string{"submit/wrap-up=true"}) {
+		t.Fatalf("executions = %v: the unoffered escalate ran", got)
+	}
+	var first agent.ResultEntry
+	for _, e := range entries(t, s, "r1") {
+		if e.Kind == agent.EntryResult {
+			first = payload[agent.ResultEntry](t, e)
+			break
+		}
+	}
+	if first.Status != agent.ResultRefused {
+		t.Fatalf("escalate's result = %+v, want refused", first)
 	}
 }

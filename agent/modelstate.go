@@ -76,6 +76,9 @@ type modelRun struct {
 
 // turnState is a recorded turn and how far its calls are resolved.
 type turnState struct {
+	// sent holds the tools a recovered wrap-up turn's attempt recorded it
+	// offered; recovery refuses a call naming any other (ADR 0010, item 5).
+	sent    map[string]bool
 	resp    llms.ChatResponse
 	msg     string // the assistant message's artifact
 	delta   []llms.Message
@@ -232,7 +235,11 @@ func (a *activation) modelStep(ctx context.Context, st *erasedState) *ending {
 	if e := r.load(ctx); e != nil {
 		return e
 	}
-	r.wrapUp = r.progress.WrapUp > 0
+	// A wrap-up never ends (ADR 0010, item 3): it began if the checkpoint
+	// counts a wrap-up turn or the tail holds a wrap-up attempt, landed,
+	// failed or interrupted, whatever this version's reserve.
+	r.wrapUp = r.progress.WrapUp > 0 || a.tail.wrapUp
+	a.tail.wrapUp = false
 	if a.tail.turn != nil {
 		if e := r.recoverTurn(ctx); e != nil || r.transitioned || r.stoppedLimit || ctx.Err() != nil {
 			return e
@@ -1234,6 +1241,16 @@ func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, er
 	}
 	t.resp = rec.response()
 	t.calls = cloneCalls(t.resp.ToolCalls)
+	if t.wrapUp {
+		var sent llms.ChatRequest
+		if err := a.readArtifact(ctx, tt.attempt.Params, &sent); err != nil {
+			return nil, err
+		}
+		t.sent = make(map[string]bool, len(sent.Tools))
+		for i := range sent.Tools {
+			t.sent[sent.Tools[i].Name] = true
+		}
+	}
 	t.delta = make([]llms.Message, len(tt.attempt.Messages))
 	for i, d := range tt.attempt.Messages {
 		var w wireMessage
@@ -1264,15 +1281,17 @@ func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, er
 }
 
 // unavailable reports whether recovery refuses a recorded call, and with
-// what content: its tool is one this version does not declare, or declares
-// with an effect other than the one its recorded permission was granted
-// for, so the permission does not cover it (ADR 0008, item 11).
+// what content: its tool is one this version does not declare or does not
+// offer in the turn, one a wrap-up turn's attempt did not offer (ADR 0010,
+// item 5), or one declared with an effect other than the one its recorded
+// permission was granted for, so the permission does not cover it (ADR
+// 0008, item 11).
 func (r *modelRun) unavailable(i int) (string, bool) {
 	t := r.turn
 	name := t.calls[i].Name
 	tool := r.ms.byName[name]
 	switch {
-	case tool == nil, !r.ms.offered(name, t.wrapUp):
+	case tool == nil, !r.ms.offered(name, t.wrapUp), t.sent != nil && !t.sent[name]:
 		return refusedContent(name), true
 	case t.perm[i] != nil && t.perm[i].Effect != tool.effect:
 		return changedContent(name), true

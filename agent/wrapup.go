@@ -95,8 +95,9 @@ type BudgetStatus struct {
 // String renders the budgets the run sets, and their consumption, for the
 // model: for example "[budget: active time 4 min of 20 min used, wrap-up at
 // 18 min; turns 7 of 30 used, wrap-up after 27]". It is empty when the run
-// sets no budget it shows (cost budgets are not built).
-func (s *BudgetStatus) String() string {
+// sets no budget it shows (cost budgets are not built). Its receiver is a
+// value, so Env.Budget's result renders with fmt as well as with String.
+func (s BudgetStatus) String() string { //nolint:gocritic // hugeParam: a value receiver makes BudgetStatus a fmt.Stringer
 	b, c, w := &s.Budgets, &s.Consumed, s.WrapUp
 	var parts []string
 	if b.ActiveTime > 0 {

@@ -13,6 +13,10 @@ import (
 // (ADR 0004, item 10): a recorded turn whose calls are not all resolved.
 type tailState struct {
 	turn *tailTurn
+	// wrapUp reports that the tail holds a wrap-up attempt (ADR 0010):
+	// the state's wrap-up began, even if that attempt failed or was
+	// interrupted before its turn landed.
+	wrapUp bool
 }
 
 // tailTurn is a recorded turn with its request and each call's entries.
@@ -37,6 +41,8 @@ type tailFold struct {
 	turn *tailTurn
 	// states are the states the tail's model attempts name.
 	states map[string]bool
+	// wrapUp reports that a tail attempt was a wrap-up attempt.
+	wrapUp bool
 }
 
 // interrupt charges the open attempt, which has neither a turn nor a
@@ -118,6 +124,7 @@ func (f *tailFold) addAttempt(e *store.Entry) error {
 		return err
 	}
 	f.open = &m
+	f.wrapUp = f.wrapUp || m.WrapUp
 	f.used.admitTurn(m.Model)
 	if f.states == nil {
 		f.states = map[string]bool{}
@@ -243,6 +250,7 @@ func (a *activation) checkTail(f *tailFold) error {
 			return fmt.Errorf("the record holds an attempt of state %q, but the checkpoint is in state %q", s, a.cs.State)
 		}
 	}
+	a.tail.wrapUp = f.wrapUp
 	t := f.turn
 	if t == nil {
 		return nil
