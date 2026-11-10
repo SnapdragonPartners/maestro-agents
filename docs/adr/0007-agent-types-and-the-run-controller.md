@@ -1,6 +1,6 @@
 # 0007. Agent types and the run controller
 
-- **Status:** Accepted; amended by [ADR 0008](0008-model-states.md)
+- **Status:** Amended by ADR-0008
 - **Date:** 2026-11-08
 
 ## Context
@@ -24,8 +24,7 @@ It amends ADR 0003 items 12 (the trigger is read from the run record) and
 14 (a third error, for an activation refused before it writes).
 
 Model states (the write-ahead turn, tool permissions, attempts and
-results, ADR 0004 items 6 to 10) build on this API; [ADR 0008](0008-model-states.md)
-records them and amends items 2 and 9.
+results, ADR 0004 items 6 to 10) build on this API in the next PR.
 
 ## Decision
 
@@ -39,8 +38,7 @@ records them and amends items 2 and 9.
    name, a version, an initial state and its states. A state sets exactly
    one of `Code` (a code state, STM-2) and `End` (a terminal state, STM-4);
    a code state declares `Next`, the states it may transition to (STM-1).
-   (Amended by ADR 0008, item 1: a state sets exactly one of `Code`,
-   `Model` and `End`.) **`Registry.Register`** checks the
+   Model states add a third field. **`Registry.Register`** checks the
    declaration (unique names, declared transitions naming declared states,
    a non-terminal initial state) and refuses a malformed one or a
    duplicate name with `ErrInvalidType` (MAN-3). The registry erases `D`,
@@ -59,8 +57,7 @@ records them and amends items 2 and 9.
    the run's scope, the resolved configuration and the host's step limit
    (STM-7). **The trigger is read from the run record**, where `CreateRun`
    stored it, rather than passed again: ADR 0003 item 12's rule that the
-   input never duplicates durable state applies to it too. (Amended by
-   ADR 0008, item 6: the input also carries the host's model client.)
+   input never duplicates durable state applies to it too.
 5. **An activation commits `activation_started` alone, first**, so its
    fence is verified and its starting point recorded before it runs any
    agent-type code (ADR 0004, item 2).
@@ -88,10 +85,7 @@ records them and amends items 2 and 9.
    from there and ignore the input's `Config`.
 8. **The checkpoint's contents** (format 1, opaque to the host, RUN-5) are
    the agent type's name and version, the current state, the state data,
-   the configuration's digest and the next step's number. (Amended by ADR
-   0008, item 10: in a model state, also its progress, the request
-   parameters' and transcript's artifacts and the nudge state; the format
-   stays 1.) A checkpoint
+   the configuration's digest and the next step's number. A checkpoint
    written by another version of the agent type is passed to the type's
    `Migrate`; a type with no `Migrate` refuses it, and the run fails with
    `state_error` (RUN-5). The migrated data is checkpointed by the next
@@ -103,8 +97,7 @@ records them and amends items 2 and 9.
    of a code state commits a checkpoint (ADR 0004, item 4), so recovery
    of a code-state run is restoring the checkpoint (ADR 0004, item 12). An
    entry of any other kind past the checkpoint is refused as one this
-   version cannot recover. (Amended by ADR 0008, item 11: the tail also
-   holds a model state's attempts and at most one turn with its calls.)
+   version cannot recover, until model states add theirs.
 
 ### Code states
 
@@ -184,10 +177,11 @@ records them and amends items 2 and 9.
 - Replaying a code state needs no record of its object reads, since its
   output is recorded whole; the replay harness (TEST-1) is decided with
   its own work.
-- Not yet built, and decided with their own work (model states, the
-  write-ahead turn and TEST-5 in `storetest` followed in ADR 0008): budgets and their consumption (`Outcome.Consumed`);
+- Not yet built, and decided with their own work: model states and the
+  write-ahead turn; budgets and their consumption (`Outcome.Consumed`);
   manifests, tool grants and the namespaces a state may touch (MAN-1,
-  MAN-2); telemetry events (HOST-1).
+  MAN-2); telemetry events (HOST-1); TEST-5 in `storetest`, which needs
+  model states to have effects worth testing (ADR 0006, item 11).
   Heartbeats remain the host's (HOST-4): a long activation's host extends
   the lease while it runs.
 
