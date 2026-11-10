@@ -404,13 +404,13 @@ func TestBudgetsActiveTimeCutsOffACall(t *testing.T) {
 			},
 		}
 		out, err := activateBudgets(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s),
-			client, 0, agent.Budgets{ActiveTime: 200 * time.Millisecond})
+			client, 0, agent.Budgets{ActiveTime: time.Second})
 		if err != nil {
 			t.Fatal(err)
 		}
 		wantBudgetFailure(t, out, agent.ReasonBudgetExhausted, agent.BudgetActiveTime)
 		es := entries(t, s, "r1")
-		if n := countKind(es, agent.EntryModelFailure); n == 0 || n != countKind(es, agent.EntryModelAttempt) || out.Consumed.ActiveTime < 200*time.Millisecond {
+		if n := countKind(es, agent.EntryModelFailure); n == 0 || n != countKind(es, agent.EntryModelAttempt) || out.Consumed.ActiveTime < time.Second {
 			t.Fatalf("record %v, consumed %+v", kinds(es), out.Consumed)
 		}
 	})

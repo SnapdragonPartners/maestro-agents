@@ -488,6 +488,79 @@ func TestWrapUpCrashAtEveryCommit(t *testing.T) {
 	}
 }
 
+// TestWrapUpHonorsStepLimit: the activation's step limit comes before a
+// completion-policy ending, however the last step completed: a text answer,
+// a tool error, or a turn recovered after a crash. The bound is enforced by
+// the next activation.
+func TestWrapUpHonorsStepLimit(t *testing.T) {
+	budgets := agent.Budgets{Turns: 1}
+	wrap := agent.WrapUp{Tools: []string{"submit"}, Turns: 1}
+	answers := map[string]llms.ChatResponse{
+		"text answer": textResp("thinking"),
+		"tool error":  callsResp(tc("s", "submit", `{"bad":true}`)),
+	}
+	for name, resp := range answers {
+		for _, crash := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/crash-%v", name, crash), func(t *testing.T) {
+				if crash && name == "text answer" {
+					t.Skip("a text answer's turn completes with its own commit")
+				}
+				s := newBackend(t, "memstore").open()
+				createLedgerRun(t, s)
+				reg := registry(t, wrapType(&wrapLog{}, wrap))
+				client := wrapClient(func(int, bool) llms.ChatResponse { return resp })
+				if crash {
+					// Commits: activation_started, the run's start, the
+					// attempt, the turn, the permission, the call's attempt;
+					// the result, commit 7, never lands.
+					cs := &crashStore{Store: s, at: 7}
+					if _, err := activateBudgets(context.Background(), agent.NewController(cs, reg), claim(t, s), client, 1, budgets); !errors.Is(err, agent.ErrStoreFailure) {
+						t.Fatalf("crashed activation = %v", err)
+					}
+					releaseIfOwned(t, s)
+				}
+				out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), client, 1, budgets)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if out.Status != store.StatusRunnable || out.Reason.Code != agent.ReasonStepLimit {
+					t.Fatalf("outcome = %+v, want runnable at the step limit", out)
+				}
+				out, err = activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonWrapUpFailed {
+					t.Fatalf("next activation = %+v, want wrap_up_failed", out)
+				}
+			})
+		}
+	}
+}
+
+// TestNudgeHonorsStepLimit: the nudge's failure, like the wrap-up's, waits
+// for the next attempt, after the step limit.
+func TestNudgeHonorsStepLimit(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	reg := registry(t, wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}}))
+	client := wrapClient(func(int, bool) llms.ChatResponse { return textResp("thinking") })
+	out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), client, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != store.StatusRunnable || out.Reason.Code != agent.ReasonStepLimit {
+		t.Fatalf("outcome = %+v, want runnable at the step limit", out)
+	}
+	out, err = activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonWrapUpFailed {
+		t.Fatalf("next activation = %+v, want wrap_up_failed", out)
+	}
+}
+
 func TestWrapUpRegister(t *testing.T) {
 	cases := map[string]agent.WrapUp{
 		"no tools":         {},

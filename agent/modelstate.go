@@ -354,23 +354,31 @@ func (r *modelRun) loadParams(ctx context.Context, digest string) *ending {
 	return nil
 }
 
-// loop runs toolloop once from the durable transcript and decides what
-// follows. stop reports that modelStep returns e.
-func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
+// prepare builds the next toolloop run's request and tools from the
+// durable transcript, applying the completion policy (LOOP-3, ADR 0010).
+// stop reports that modelStep returns e instead.
+func (r *modelRun) prepare(ctx context.Context) (req llms.ChatRequest, tools []toolloop.Tool, e *ending, stop bool) {
 	a := r.a
+	// The activation's step limit comes first: a completion-policy ending
+	// (the nudge's, the wrap-up's bound) is decided at the next attempt,
+	// whichever way the last step completed (live, recovered, a text
+	// answer), as stopBeforeAttempt orders it (STM-7, ADR 0010).
+	if a.maxSteps > 0 && a.steps >= a.maxSteps {
+		return req, nil, nil, true
+	}
 	if !r.wrapUp && a.wrapUpDue(&r.point) {
 		r.wrapUp = true
 	}
 	send := slices.Concat(r.transcript, r.unsent)
 	offered := r.ms.tools
-	req := r.params
+	req = r.params
 	switch {
 	case r.wrapUp:
 		// A wrap-up turn offers only the wrap-up's tools, with tool choice
 		// auto; its message starts the wrap-up and follows a wrap-up turn
 		// that called no tool (ADR 0010).
 		if r.wrapUpSpent(false) {
-			return r.wrapUpFailed(ctx), true
+			return req, nil, r.wrapUpFailed(ctx), true
 		}
 		if r.progress.WrapUp == 0 || r.progress.Answered {
 			send = append(send[:len(send):len(send)], llms.UserText(r.ms.wrapMsg))
@@ -378,19 +386,29 @@ func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
 		offered, req.ToolChoice = r.ms.wrapUpTools()
 	case r.progress.Answered:
 		if r.progress.Nudged {
-			return a.fail(ctx, ReasonWrapUpFailed, fmt.Sprintf(
+			return req, nil, a.fail(ctx, ReasonWrapUpFailed, fmt.Sprintf(
 				"state %q: the model answered without calling a tool after it was nudged (LOOP-3)", r.st.name)), true
 		}
 		send = append(send[:len(send):len(send)], llms.UserText(r.ms.nudge))
 	}
 	if ctx.Err() != nil {
-		return nil, true
+		return req, nil, nil, true
 	}
 	req.Messages = send
 	req.Tools = nil
-	tools := make([]toolloop.Tool, len(offered))
+	tools = make([]toolloop.Tool, len(offered))
 	for i, t := range offered {
 		tools[i] = toolloop.Tool{Definition: t.def, Execute: r.execute}
+	}
+	return req, tools, nil, false
+}
+
+// loop runs toolloop once from the durable transcript and decides what
+// follows. stop reports that modelStep returns e.
+func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
+	req, tools, e, stop := r.prepare(ctx)
+	if stop {
+		return e, true
 	}
 	out := toolloop.Run(ctx, toolloop.Config{
 		Request:       req,

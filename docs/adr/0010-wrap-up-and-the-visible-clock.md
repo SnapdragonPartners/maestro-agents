@@ -120,7 +120,13 @@ and nowhere else; this paragraph is the list of what is amended.
    resubmission or a text answer); before a further attempt with the bound
    spent, the run fails with **`wrap_up_failed`**, its pending results
    committed with the ending (ADR 0008, item 13). A failed or interrupted
-   attempt does not count: it is a model failure or is recovered.
+   attempt does not count: it is a model failure or is recovered. **The
+   step limit comes first**: this ending, like the nudge's (ADR 0008 item
+   14, so amended), is decided before the next attempt and after the
+   activation's step limit (STM-7), so a step that completes at the limit
+   ends the activation runnable with `step_limit` however it completed (a
+   tool error, a text answer, a turn recovered after a crash), and the next
+   activation fails the run.
 6. **The record carries the wrap-up.** A wrap-up attempt's
    `ModelAttemptEntry` has `WrapUp` set and records the parameters it sent
    (the wrap-up's tools and tool choice) as `Params`, with the state's own
