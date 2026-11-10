@@ -58,8 +58,10 @@ type modelRun struct {
 	// pending are calls whose result toolloop synthesized itself (a call
 	// naming no offered tool), awaiting their result entries (ADR 0004,
 	// item 8).
-	pending      []int
-	progress     modelProgress
+	pending  []int
+	progress modelProgress
+	// res is the reservation of the attempt in flight (BUD-3).
+	res          Reservation
 	paramsStored bool
 	transitioned bool
 	stoppedLimit bool
@@ -430,6 +432,18 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 	if err := r.stopBeforeAttempt(ctx, b, completes); err != nil {
 		return llms.ChatResponse{}, err
 	}
+	// The budgets admit the attempt, lowering its output cap to what the
+	// token budget leaves, or refuse it and end the run (BUD-1, BUD-3).
+	// What admission charges is applied before the commit: a commit that
+	// does not land ends the activation, and the next charges the attempt
+	// from the record.
+	res, refusal := r.a.admit(&req)
+	if refusal != nil {
+		r.abort = r.a.refuseBudget(ctx, refusal)
+		return llms.ChatResponse{}, errAbort
+	}
+	r.res = res
+	r.a.used.admitTurn(modelRef(r.client.Model()))
 	delta, ddelta, err := r.recordAttempt(ctx, b, completes, &req)
 	if err != nil {
 		return llms.ChatResponse{}, err
@@ -481,7 +495,10 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 		return nil, nil, errAbort
 	}
 	delta := req.Messages[len(base):]
-	entry := ModelAttemptEntry{Model: modelRef(r.client.Model()), State: r.st.name, Base: len(base), Params: r.paramsDigest}
+	entry := ModelAttemptEntry{
+		Model: modelRef(r.client.Model()), State: r.st.name, Base: len(base), Params: r.paramsDigest,
+		Reservation: &r.res, Active: a.consumed().ActiveTime,
+	}
 	if !r.paramsStored {
 		entry.Params = b.rawArtifact(r.paramsRaw)
 	}
@@ -504,6 +521,9 @@ func (r *modelRun) recordFailure(ctx context.Context, err error) error {
 	if errors.As(err, &pe) {
 		f.Kind, f.Status = string(pe.Kind), pe.StatusCode
 	}
+	// Errors carry no usage: the attempt is charged its reservation
+	// (BUD-3, BUD-4).
+	r.a.used.charge(modelRef(r.client.Model()), nil, &r.res)
 	b := r.a.entries()
 	b.add(r.a.step1(), EntryModelFailure, f)
 	if !r.land(ctx, b, nil) {
@@ -534,6 +554,8 @@ func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delt
 		Message: toWireMessage(&resp.Message), Text: resp.Text, ToolCalls: toWireCalls(resp.ToolCalls), StopReason: resp.StopReason,
 		Usage: resp.Usage, AppliedReasoning: resp.AppliedReasoning,
 	}
+	usage := usageOf(&resp.Usage)
+	a.used.charge(modelRef(r.client.Model()), &usage, &r.res)
 	b := a.entries()
 	t := &turnState{
 		resp: rec.response(), delta: delta, ddelta: ddelta, step: a.step1(),
@@ -545,7 +567,7 @@ func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delt
 	t.msg = b.artifact(rec.Message)
 	b.add(t.step, EntryTurn, TurnEntry{
 		Model: modelRef(r.client.Model()), Response: b.artifact(&rec), Message: t.msg,
-		StopReason: string(resp.StopReason), Usage: usageOf(&resp.Usage), Calls: len(resp.ToolCalls),
+		StopReason: string(resp.StopReason), Usage: usage, Calls: len(resp.ToolCalls),
 	})
 	r.turn = t
 	if !r.commitTurnEntries(ctx, b, t.complete()) {
@@ -878,7 +900,7 @@ func (r *modelRun) unknown(ctx context.Context, i int, at *AttemptEntry) *ending
 	if ctx.Err() != nil {
 		return a.endByCause(ctx)
 	}
-	b.add(t.step, EntryOutcome, out)
+	b.outcome(t.step, &out)
 	if b.err != nil {
 		return &ending{err: b.err}
 	}
@@ -1071,7 +1093,7 @@ func (r *modelRun) addTransition(ctx context.Context, b *entries, i int, tool *e
 	terminal := next.end != "" && ctx.Err() == nil
 	out := next.end.outcome()
 	if terminal {
-		b.add(t.step, EntryOutcome, out)
+		b.outcome(t.step, &out)
 	}
 	b.checkpoint(&cs)
 	if terminal {

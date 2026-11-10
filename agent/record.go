@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 
@@ -36,8 +37,9 @@ type ActivationStarted struct {
 
 // RunStarted is the payload of a run_started entry (REC-1). Config is the
 // digest of the resolved configuration's artifact, empty if the run has
-// none.
+// none; Budgets are the run's budgets, nil if it has none (ADR 0009).
 type RunStarted struct {
+	Budgets      *Budgets        `json:"budgets,omitempty"`
 	AgentType    string          `json:"agent_type"`
 	AgentVersion string          `json:"agent_version"`
 	TriggerID    string          `json:"trigger_id"`
@@ -55,11 +57,13 @@ type TransitionEntry struct {
 }
 
 // OutcomeEntry is the payload of an outcome entry: the status and reason
-// the activation ended with (RUN-3), and a failure's detail.
+// the activation ended with (RUN-3), a failure's detail, and the run's
+// consumption as the activation ended (ADR 0009).
 type OutcomeEntry struct {
-	Status store.Status `json:"status"`
-	Reason store.Reason `json:"reason"`
-	Detail string       `json:"detail,omitempty"`
+	Consumed *Consumption `json:"consumed,omitempty"`
+	Status   store.Status `json:"status"`
+	Reason   store.Reason `json:"reason"`
+	Detail   string       `json:"detail,omitempty"`
 }
 
 // ModelRef is the model route a client reported (LLM-3).
@@ -73,12 +77,17 @@ type ModelRef struct {
 // parameters' artifact (system instructions, tools, tool choice and the
 // rest, without messages) and the transcript: the Base messages the state's
 // latest checkpoint holds, followed by the Messages artifacts added since.
+// Reservation is what the attempt was admitted on (BUD-3), and Active the
+// run's active time when it was committed (ADR 0009); an attempt recorded
+// before budgets were built has neither.
 type ModelAttemptEntry struct {
-	Model    ModelRef `json:"model"`
-	State    string   `json:"state"`
-	Params   string   `json:"params"`
-	Messages []string `json:"messages,omitempty"`
-	Base     int      `json:"base"`
+	Reservation *Reservation  `json:"reservation,omitempty"`
+	Model       ModelRef      `json:"model"`
+	State       string        `json:"state"`
+	Params      string        `json:"params"`
+	Messages    []string      `json:"messages,omitempty"`
+	Base        int           `json:"base"`
+	Active      time.Duration `json:"active,omitempty"`
 }
 
 // TurnEntry is the payload of a turn entry: the attempt's response,
@@ -191,10 +200,15 @@ const checkpointFormat = 1
 
 // checkpointState is the library's checkpoint contents (ADR 0004, item 3),
 // opaque to the host (RUN-5). Step is the number of the next step to run:
-// 1 at the run's start.
+// 1 at the run's start. Budgets are the run's budgets and Consumed what it
+// has consumed of them as of the entries the checkpoint covers (ADR 0009);
+// older checkpoints, which lack them, read as no budgets and nothing
+// consumed.
 type checkpointState struct {
 	// Model is a model state's progress, nil before its first turn lands.
 	Model        *modelProgress  `json:"model,omitempty"`
+	Budgets      *Budgets        `json:"budgets,omitempty"`
+	Consumed     *Consumption    `json:"consumed,omitempty"`
 	AgentType    string          `json:"agent_type"`
 	AgentVersion string          `json:"agent_version"`
 	State        string          `json:"state"`

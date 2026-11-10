@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 
@@ -86,6 +87,10 @@ type ActivationInput struct {
 	// and used by every later activation in its place (RUN-1). A later
 	// activation ignores this field.
 	Config json.RawMessage
+	// Budgets are the run's budgets (BUD-1, ADR 0009), recorded when the
+	// run starts and fixed for the run: a later activation ignores this
+	// field. The zero value sets no limit.
+	Budgets Budgets
 	// MaxSteps is how many steps this activation may complete before it
 	// stops with the run runnable (STM-7). Zero is no limit.
 	MaxSteps int
@@ -104,11 +109,14 @@ type ActivationInput struct {
 //
 // The controller's own reads and writes use a context that is not
 // cancelled with ctx, so a cancelled activation still commits its outcome.
+// The run's time budgets end ctx with a *BudgetExhausted cause (BUD-2).
 func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome, error) { //nolint:gocritic // hugeParam: the input is passed by value, as ADR 0003 item 12 shows
 	a, err := c.begin(ctx, &in)
 	if err != nil {
 		return Outcome{}, err
 	}
+	ctx, stop := a.clocks(ctx)
+	defer stop()
 	e := a.start(ctx, in.Config)
 	for e == nil {
 		switch {
@@ -126,21 +134,28 @@ func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome,
 // activation is one activation's view of its run. Only the activation
 // writes the run's records, so the view stays exact (ADR 0005, item 5).
 type activation struct {
-	client llms.ChatClient
-	m      *machine
-	c      *Controller
+	// clockStart is when this activation's clocks started (ADR 0009).
+	clockStart time.Time
+	client     llms.ChatClient
+	m          *machine
+	c          *Controller
 	// model is the model state running, if any.
 	model *modelRun
 	// tail is what the execution record holds past the checkpoint.
 	tail tailState
 	// start1 is the run's start while it is not yet committed.
 	start1 *runStart
-	cs     checkpointState
 	scope  store.Scope
 	fence  store.Fence
 	// config is the run's resolved configuration; cs.Config its digest.
 	config json.RawMessage
 	run    store.Run
+	cs     checkpointState
+	// budgets are the run's budgets; used is what it has consumed of them
+	// as of the entries committed, its active time as of the activation's
+	// start (activeBase; consumed adds the time since clockStart).
+	budgets Budgets
+	used    Consumption
 	// ckSeq is the run's latest checkpoint, nextCk the instance's next
 	// checkpoint sequence.
 	ckSeq  uint64
@@ -149,8 +164,9 @@ type activation struct {
 	nextEntry uint64
 	// steps counts the steps this activation completed, maxSteps the
 	// host's limit (zero: none).
-	steps    int
-	maxSteps int
+	steps      int
+	maxSteps   int
+	activeBase time.Duration
 	// own reports whether the run has a checkpoint.
 	own bool
 }
@@ -196,7 +212,10 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 	if !ok {
 		return nil, refuse("run %q names agent type %q, which is not registered", run.ID, run.AgentType)
 	}
-	a := &activation{c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1, client: in.Client, maxSteps: max(in.MaxSteps, 0)}
+	a := &activation{
+		c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1, client: in.Client, maxSteps: max(in.MaxSteps, 0),
+		budgets: in.Budgets,
+	}
 	latest, ok, err := c.store.LatestCheckpoint(durable(ctx), run.Instance)
 	if err != nil {
 		return nil, storeFailure(err)
@@ -209,6 +228,14 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 		if latest.Scope == a.scope {
 			if err := a.restore(ctx, &latest); err != nil {
 				return nil, err
+			}
+			// The run's budgets are the ones recorded with its start.
+			a.budgets = Budgets{}
+			if a.cs.Budgets != nil {
+				a.budgets = *a.cs.Budgets
+			}
+			if a.cs.Consumed != nil {
+				a.used = a.cs.Consumed.clone()
 			}
 			after = latest.RecordSeq
 		}
@@ -247,7 +274,7 @@ func (a *activation) readTail(ctx context.Context, after uint64) error {
 		return storeFailure(err)
 	}
 	next := after + 1
-	var f tailFold
+	f := tailFold{used: &a.used}
 	for i := range tail {
 		e := &tail[i]
 		if e.Seq != next {
@@ -259,6 +286,9 @@ func (a *activation) readTail(ctx context.Context, after uint64) error {
 		next++
 	}
 	a.nextEntry = next
+	// An attempt the tail leaves open was interrupted: it is charged its
+	// reservation before any new attempt is admitted (ADR 0004, item 13).
+	f.interrupt()
 	if err := a.checkTail(&f); err != nil {
 		return refuse("run %q: %v", a.run.ID, err)
 	}
@@ -335,11 +365,14 @@ func (b *entries) add(step uint64, kind string, payload any) {
 	b.next++
 }
 
-// checkpoint adds the checkpoint covering every entry added so far.
+// checkpoint adds the checkpoint covering every entry added so far, with
+// the run's consumption as of those entries (ADR 0009).
 func (b *entries) checkpoint(cs *checkpointState) {
 	if b.err != nil {
 		return
 	}
+	used := b.a.consumed()
+	cs.Consumed = &used
 	raw, err := json.Marshal(cs)
 	if err != nil {
 		b.err = storeFailure(fmt.Errorf("agent: encode checkpoint: %w", err))
@@ -349,6 +382,13 @@ func (b *entries) checkpoint(cs *checkpointState) {
 		Instance: b.a.run.Instance, Scope: b.a.scope, Seq: b.a.nextCk, RecordSeq: b.next - 1,
 		Format: checkpointFormat, State: raw,
 	}))
+}
+
+// outcome adds the activation's outcome entry, with the run's consumption.
+func (b *entries) outcome(step uint64, out *OutcomeEntry) {
+	used := b.a.consumed()
+	out.Consumed = &used
+	b.add(step, EntryOutcome, *out)
 }
 
 // start commits activation_started, then either starts the run (Init, the
@@ -404,6 +444,18 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	if err := store.ValidJSON(config); err != nil {
 		return a.fail(ctx, ReasonStateError, "configuration: "+err.Error())
 	}
+	if err := a.budgets.validate(); err != nil {
+		return a.fail(ctx, ReasonStateError, "budgets: "+err.Error())
+	}
+	if a.budgets.Cost > 0 {
+		return a.refuseBudget(ctx, &budgetRefusal{ReasonBudgetUnenforceable, BudgetCost,
+			"cost budgets are not built yet (MVP.md, BUD-1)"})
+	}
+	var budgets *Budgets
+	if a.budgets != (Budgets{}) {
+		budgets = &a.budgets
+		start.entry.Budgets = budgets
+	}
 	if config != nil {
 		sum := sha256.Sum256(config)
 		start.entry.Config = hex.EncodeToString(sum[:])
@@ -424,6 +476,7 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	}
 	cs := checkpointState{
 		AgentType: a.m.name, AgentVersion: a.m.version, State: a.m.initial, Data: data, Step: 1, Config: start.entry.Config,
+		Budgets: budgets,
 	}
 	b := a.entries()
 	start.add(b)
@@ -533,7 +586,7 @@ func (a *activation) commitTransition(ctx context.Context, st, next *erasedState
 	terminal := next.end != ""
 	out := next.end.outcome()
 	if terminal {
-		b.add(step, EntryOutcome, out)
+		b.outcome(step, &out)
 	}
 	b.checkpoint(&cs)
 	if terminal {
@@ -575,7 +628,11 @@ func (a *activation) finalOps(out *OutcomeEntry) []store.Op {
 }
 
 func (a *activation) outcome(out *OutcomeEntry) Outcome {
-	return Outcome{Status: out.Status, Reason: out.Reason, Detail: out.Detail, Steps: a.step1() - 1, CheckpointSeq: a.ckSeq}
+	o := Outcome{Status: out.Status, Reason: out.Reason, Detail: out.Detail, Steps: a.step1() - 1, CheckpointSeq: a.ckSeq}
+	if out.Consumed != nil {
+		o.Consumed = *out.Consumed
+	}
+	return o
 }
 
 // end commits the activation's ending outside a transition: its outcome
@@ -597,7 +654,7 @@ func (a *activation) end(ctx context.Context, out OutcomeEntry) *ending {
 			step = cs.Step
 		}
 	}
-	b.add(step, EntryOutcome, out)
+	b.outcome(step, &out)
 	if b.err != nil {
 		return &ending{err: b.err}
 	}
@@ -620,6 +677,17 @@ func (a *activation) fail(ctx context.Context, reason, detail string) *ending {
 		return a.endByCause(ctx)
 	}
 	return a.end(ctx, OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: reason}, Detail: detail})
+}
+
+// refuseBudget ends the run on an attempt its budgets refuse (BUD-1,
+// BUD-3), unless the context has ended, whose cause then decides.
+func (a *activation) refuseBudget(ctx context.Context, r *budgetRefusal) *ending {
+	if ctx.Err() != nil {
+		return a.endByCause(ctx)
+	}
+	return a.end(ctx, OutcomeEntry{
+		Status: store.StatusFailed, Reason: store.Reason{Code: r.code, Budget: r.budget}, Detail: r.detail,
+	})
 }
 
 // endByCause ends an activation whose context has ended, by the context's

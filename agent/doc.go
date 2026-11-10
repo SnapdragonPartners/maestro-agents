@@ -23,4 +23,10 @@
 // commit with its result (ADR 0005). An activation continuing mid-turn
 // resolves each recorded call by STM-6's partition without asking the model
 // again.
+//
+// A run's [Budgets] (ADR 0009) come with its first activation and are fixed
+// for the run. Each model turn is admitted against the turn and token
+// budgets before its attempt is recorded, the time budgets cancel the
+// activation's context, and the run's [Consumption] is checkpointed and
+// returned in every [Outcome].
 package agent

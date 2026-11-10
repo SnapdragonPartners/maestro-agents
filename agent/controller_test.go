@@ -25,6 +25,10 @@ func TestRunToCompletion(t *testing.T) {
 			t.Fatalf("Activate: %v", err)
 		}
 		want := agent.Outcome{Status: store.StatusSucceeded, Reason: store.Reason{Code: agent.ReasonChanged}, Steps: 3, CheckpointSeq: 4}
+		if out.Consumed.ActiveTime <= 0 || out.Consumed.Turns != 0 || out.Consumed.Tokens != 0 {
+			t.Fatalf("consumed = %+v, want active time only", out.Consumed)
+		}
+		out.Consumed = agent.Consumption{}
 		if fmt.Sprint(out) != fmt.Sprint(want) {
 			t.Fatalf("outcome = %+v, want %+v", out, want)
 		}
