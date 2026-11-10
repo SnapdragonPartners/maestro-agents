@@ -68,10 +68,11 @@ Load-bearing decisions so far:
   ([ADR 0009](docs/adr/0009-budgets.md))
 - Every model state declares `WrapUp.Tools`, its exits: when a time
   budget's remaining is within the state's reserve, or the turns left
-  within its wrap-up turns, the next turns offer only those tools, forced,
-  with `Call.WrapUp` set, and a model call in flight at that point is cut
-  off; the bound spent fails the run with `wrap_up_failed`; each tool
-  result ends with the budget status, recorded as sent
+  within its wrap-up turns, the next turns offer only those tools (tool
+  choice auto: some providers reject a forced one), with `Call.WrapUp`
+  set, and a model call in flight at that point is cut off; the bound
+  spent fails the run with `wrap_up_failed`; each tool result ends with
+  the budget status, recorded as sent
   ([ADR 0010](docs/adr/0010-wrap-up-and-the-visible-clock.md))
 
 ### Related repositories

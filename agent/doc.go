@@ -31,7 +31,7 @@
 // returned in every [Outcome].
 //
 // Near a budget's end a model state wraps up (ADR 0010): its next turns
-// offer only the exits its [WrapUp] declares, forced, and their calls see
+// offer only the exits its [WrapUp] declares, and their calls see
 // [Call.WrapUp]; a state that does not transition within the wrap-up's
 // turns fails the run with ReasonWrapUpFailed. Each tool result ends with
 // the run's [BudgetStatus], the visible clock.

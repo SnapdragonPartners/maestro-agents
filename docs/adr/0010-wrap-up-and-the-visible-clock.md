@@ -22,6 +22,15 @@ reserve, forced wrap-up and the visible clock to this ADR. Here wrap-up has
 to survive recovery: it is decided, recorded and resumed like everything
 else a model state does (ADR 0004).
 
+buggrit forces its terminal tool with `tool_choice`, which works on the
+OpenAI-compatible models it runs on (DeepSeek, GLM, Qwen). Anthropic
+rejects a forced tool choice (`any` or `tool`) with manual extended
+thinking, and Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 and 5.2 reject it
+on every request; buggrit's own benchmark judge, which runs on Claude
+Opus 5.5, uses auto with a nudge for that reason (`internal/bench/judge.go`).
+The host chooses the model, and the runtime cannot know which providers
+accept a forced choice.
+
 It amends ADR 0007 item 13 (`Env` gains the budget status, item 9), ADR
 0008 items 8 and 11 (a wrap-up turn's parameters and the tools it offers,
 items 4 and 6), 10 (the checkpoint counts wrap-up turns, item 6) and 14
@@ -44,8 +53,8 @@ and nowhere else; this paragraph is the list of what is amended.
    (`ErrInvalidType`). The reserve is the agent type's, per state, since
    the agent type knows what its wrap-up costs; the host sets the budgets.
 
-   Rejected: forcing every tool when `Tools` is empty (forcing a call does
-   not force a transition, so it would spend the bound and fail), and
+   Rejected: offering every tool when `Tools` is empty (requiring a call
+   does not require a transition, so it would spend the bound and fail), and
    "the next call is terminal, whatever it names" (whether a call
    transitions is its tool's result, which the runtime cannot impose).
    Several exits are allowed because a state can have several ways out
@@ -89,19 +98,25 @@ and nowhere else; this paragraph is the list of what is amended.
 
 ### The wrap-up turn
 
-5. **A wrap-up turn offers only the wrap-up's tools and forces them**: one
-   tool by name (`ToolChoiceTool`), several with `ToolChoiceRequired`, in
-   declaration order. The wrap-up message is appended to the request that
-   starts the wrap-up, and again after a wrap-up turn that called no tool
-   (a provider that cannot force tools); a resubmission after a tool error
-   gets no message, as buggrit's does not. A call naming a declared tool
+5. **A wrap-up turn offers only the wrap-up's tools**, in declaration
+   order, **with tool choice auto**, whatever the state's own (which could
+   name a tool the wrap-up does not offer, or forbid tools). LOOP-3's
+   forcing is the restriction, the message and the bound, not
+   `tool_choice`: a forced choice would fail the run with `model_error` on
+   the providers that reject one (Context), so it is not used. The wrap-up
+   message is appended to the request that starts the wrap-up, and again
+   after a wrap-up turn that called no tool; a resubmission after a tool
+   error gets no message, as buggrit's does not. A call naming a declared tool
    the turn did not offer is refused by `toolloop` with its usual text
    (`tool "x" is not available`), recorded as a refused result, and
    refused alike by recovery (amends ADR 0008, item 11). **A call executing
    in a wrap-up turn sees `Call.WrapUp`**, so its tool can relax what it
    accepts from a model out of budget: this replaces buggrit's
    `beforeWrapUp` hook, since tools here hold no state between executions.
-   **The bound counts completed wrap-up turns** (a forced call, a
+   Rejected: an opt-in to force the choice for models that accept it; the
+   agent type does not choose the model, and one that rejects it fails the
+   run. It can be added when a use case appears.
+   **The bound counts completed wrap-up turns** (the first call, a
    resubmission or a text answer); before a further attempt with the bound
    spent, the run fails with **`wrap_up_failed`**, its pending results
    committed with the ending (ADR 0008, item 13). A failed or interrupted
@@ -169,4 +184,7 @@ and nowhere else; this paragraph is the list of what is amended.
 - [ADR 0009](0009-budgets.md): item 5 amended; the clocks (item 9) and
   charging (item 8) applied
 - buggrit `internal/review/stage.go` (investigate, nudge, forced wrap-up,
-  `wrapUpTurns`) and `clock.go` (the footer); design §9
+  `wrapUpTurns`) and `clock.go` (the footer); design §9; `internal/bench/judge.go`
+  (auto with a nudge on Claude Opus 5.5)
+- Anthropic: [extended thinking](https://docs.claude.com/en/docs/build-with-claude/extended-thinking)
+  (tool choice with thinking), [What's new in Claude Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5)

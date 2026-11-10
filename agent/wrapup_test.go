@@ -87,10 +87,10 @@ func wrapType(log *wrapLog, w agent.WrapUp) *agent.Type[wrapData] {
 	}
 }
 
-// wrapClient answers each request with answer(turn, forced), where turn
-// counts the transcript's assistant messages and forced reports a tool
-// choice that forces a call.
-func wrapClient(answer func(turn int, forced bool) llms.ChatResponse) *testllm.FakeChatClient {
+// wrapClient answers each request with answer(turn, wrapUp), where turn
+// counts the transcript's assistant messages and wrapUp reports a request
+// that offers only some tools, as a wrap-up turn does.
+func wrapClient(answer func(turn int, wrapUp bool) llms.ChatResponse) *testllm.FakeChatClient {
 	return &testllm.FakeChatClient{
 		ModelRef: llms.ModelRef{Provider: "fake", Name: "wrap"},
 		Func: func(_ context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
@@ -100,8 +100,7 @@ func wrapClient(answer func(turn int, forced bool) llms.ChatResponse) *testllm.F
 					n++
 				}
 			}
-			forced := req.ToolChoice.Type == llms.ToolChoiceTool || req.ToolChoice.Type == llms.ToolChoiceRequired
-			return answer(n, forced), nil
+			return answer(n, len(req.Tools) < 3), nil
 		},
 	}
 }
@@ -150,7 +149,8 @@ func attempts(t *testing.T, es []store.Entry) []agent.ModelAttemptEntry {
 
 // TestWrapUpByTurnBudget: with four turns and the default three wrap-up
 // turns, the second turn is a wrap-up turn. It offers only the wrap-up's
-// tool, forces it, starts with the wrap-up message, and its call executes
+// tool, with tool choice auto (never forced, ADR 0010 item 5), starts with
+// the wrap-up message, and its call executes
 // with Call.WrapUp. The prompt and each tool result show the clock.
 func TestWrapUpByTurnBudget(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, b backend) {
@@ -158,8 +158,8 @@ func TestWrapUpByTurnBudget(t *testing.T) {
 		defer s.Close()
 		createLedgerRun(t, s)
 		log := &wrapLog{}
-		client := wrapClient(func(turn int, forced bool) llms.ChatResponse {
-			if forced {
+		client := wrapClient(func(turn int, wrapUp bool) llms.ChatResponse {
+			if wrapUp {
 				return callsResp(tc(fmt.Sprintf("s%d", turn), "submit", `{}`))
 			}
 			return callsResp(tc(fmt.Sprintf("l%d", turn), "lookup", `{}`))
@@ -176,14 +176,14 @@ func TestWrapUpByTurnBudget(t *testing.T) {
 		if len(calls) != 2 {
 			t.Fatalf("%d requests, want 2", len(calls))
 		}
-		if got := toolNames(&calls[0]); !slices.Equal(got, []string{"lookup", "submit", "escalate"}) || calls[0].ToolChoice.Type == llms.ToolChoiceTool {
+		if got := toolNames(&calls[0]); !slices.Equal(got, []string{"lookup", "submit", "escalate"}) {
 			t.Fatalf("first request offers %v with %+v", got, calls[0].ToolChoice)
 		}
 		if got := calls[0].Messages[0].Content[0].Text; got != "work [budget: turns 0 of 4 used, wrap-up after 1]" {
 			t.Fatalf("prompt = %q", got)
 		}
 		if got := toolNames(&calls[1]); !slices.Equal(got, []string{"submit"}) ||
-			calls[1].ToolChoice != (llms.ToolChoice{Type: llms.ToolChoiceTool, Name: "submit"}) {
+			calls[1].ToolChoice != (llms.ToolChoice{Type: llms.ToolChoiceAuto}) {
 			t.Fatalf("wrap-up request offers %v with %+v", got, calls[1].ToolChoice)
 		}
 		if lastText(&calls[1]) != agent.DefaultWrapUpMessage {
@@ -238,8 +238,7 @@ func TestWrapUpResubmissionsBounded(t *testing.T) {
 	}
 }
 
-// TestWrapUpTextAnswers: a wrap-up turn that calls no tool (a provider that
-// cannot force tools) is followed by the wrap-up message again, and counts
+// TestWrapUpTextAnswers: a wrap-up turn that calls no tool is followed by the wrap-up message again, and counts
 // toward the bound.
 func TestWrapUpTextAnswers(t *testing.T) {
 	s := newBackend(t, "memstore").open()
@@ -260,7 +259,7 @@ func TestWrapUpTextAnswers(t *testing.T) {
 }
 
 // TestWrapUpSeveralTools: a wrap-up naming several tools offers them alone,
-// in declaration order, and requires a call; a call naming another declared
+// in declaration order, with tool choice auto; a call naming another declared
 // tool is refused as the loop refuses any tool not offered, and recorded.
 func TestWrapUpSeveralTools(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, b backend) {
@@ -280,7 +279,7 @@ func TestWrapUpSeveralTools(t *testing.T) {
 			t.Fatalf("outcome = %+v", out)
 		}
 		req := client.Calls()[0]
-		if got := toolNames(&req); !slices.Equal(got, []string{"submit", "escalate"}) || req.ToolChoice.Type != llms.ToolChoiceRequired {
+		if got := toolNames(&req); !slices.Equal(got, []string{"submit", "escalate"}) || req.ToolChoice.Type != llms.ToolChoiceAuto {
 			t.Fatalf("wrap-up request offers %v with %+v", got, req.ToolChoice)
 		}
 		if got := log.get(); !slices.Equal(got, []string{"escalate/wrap-up=true"}) {
@@ -300,6 +299,32 @@ func TestWrapUpSeveralTools(t *testing.T) {
 	})
 }
 
+// TestWrapUpOverridesStateToolChoice: a wrap-up turn's tool choice is auto
+// whatever the state's own, here one naming a tool the wrap-up does not
+// offer, which toolloop would refuse.
+func TestWrapUpOverridesStateToolChoice(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	typ := wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}})
+	typ.States[0].Model.Prompt = func(context.Context, *agent.Env, wrapData) (llms.ChatRequest, error) {
+		return llms.ChatRequest{
+			Messages:   []llms.Message{llms.UserText("work")},
+			ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceTool, Name: "lookup"},
+		}, nil
+	}
+	client := wrapClient(func(int, bool) llms.ChatResponse { return callsResp(tc("s", "submit", `{}`)) })
+	out, err := activateBudgets(context.Background(), agent.NewController(s, registry(t, typ)), claim(t, s), client, 0, agent.Budgets{Turns: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != store.StatusSucceeded {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if got := client.Calls()[0].ToolChoice; got != (llms.ToolChoice{Type: llms.ToolChoiceAuto}) {
+		t.Fatalf("wrap-up tool choice = %+v, want auto", got)
+	}
+}
+
 // TestWrapUpCutsOffSlowCall: a model call still in flight at the wrap-up
 // point is cut off there and recorded as failed, and the wrap-up follows
 // within the reserve.
@@ -311,7 +336,7 @@ func TestWrapUpCutsOffSlowCall(t *testing.T) {
 		client := &testllm.FakeChatClient{
 			ModelRef: llms.ModelRef{Provider: "fake", Name: "slow"},
 			Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
-				if req.ToolChoice.Type != llms.ToolChoiceTool {
+				if len(req.Tools) == 3 {
 					<-ctx.Done()
 					return llms.ChatResponse{}, ctx.Err()
 				}
@@ -362,8 +387,8 @@ func TestWrapUpByDeadline(t *testing.T) {
 		t.Fatalf("outcome = %+v", out)
 	}
 	req := client.Calls()[0]
-	if req.ToolChoice.Type != llms.ToolChoiceTool {
-		t.Fatalf("first request's tool choice = %+v, want submit forced", req.ToolChoice)
+	if got := toolNames(&req); !slices.Equal(got, []string{"submit"}) {
+		t.Fatalf("first request offers %v, want submit alone", got)
 	}
 	if got := req.Messages[0].Content[0].Text; got != "work [budget: deadline in 60 min, wrap-up in 0 s]" {
 		t.Fatalf("prompt = %q", got)
@@ -384,7 +409,7 @@ func TestWrapUpDefaultDeadlineReserve(t *testing.T) {
 		t.Fatalf("outcome = %+v, %v", out, err)
 	}
 	req := client.Calls()[0]
-	if req.ToolChoice.Type == llms.ToolChoiceTool {
+	if len(req.Tools) != 3 {
 		t.Fatal("the first turn wrapped up with most of the time left")
 	}
 	if got := req.Messages[0].Content[0].Text; got != "work [budget: deadline in 100 min, wrap-up in 90 min]" {

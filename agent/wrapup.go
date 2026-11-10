@@ -11,7 +11,7 @@ import (
 )
 
 // errWrapUp stops toolloop when the model state enters its wrap-up (ADR
-// 0010): the loop runs again with the wrap-up's tools forced.
+// 0010): the loop runs again offering only the wrap-up's tools.
 var errWrapUp = errors.New("agent: wrap-up begins")
 
 // errWrapUpDue is the cause that cuts a model call off at the wrap-up point.

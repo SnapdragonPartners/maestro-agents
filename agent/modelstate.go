@@ -366,9 +366,9 @@ func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
 	req := r.params
 	switch {
 	case r.wrapUp:
-		// A wrap-up turn offers only the wrap-up's tools and forces them;
-		// its message starts the wrap-up and follows a wrap-up turn that
-		// called no tool (ADR 0010).
+		// A wrap-up turn offers only the wrap-up's tools, with tool choice
+		// auto; its message starts the wrap-up and follows a wrap-up turn
+		// that called no tool (ADR 0010).
 		if r.wrapUpSpent(false) {
 			return r.wrapUpFailed(ctx), true
 		}
@@ -411,8 +411,8 @@ func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
 		return e, true
 	}
 	if r.restart {
-		// The loop stopped to begin the wrap-up: it runs again with the
-		// wrap-up's tools forced.
+		// The loop stopped to begin the wrap-up: it runs again offering
+		// only the wrap-up's tools.
 		r.restart = false
 		return nil, false
 	}
@@ -572,7 +572,7 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 	}
 	if req.MaxTokens != r.params.MaxTokens || r.wrapUp {
 		// Admission lowered the output cap, or a wrap-up turn offered only
-		// the wrap-up's tools and forced them: the attempt records the
+		// the wrap-up's tools: the attempt records the
 		// parameters it sent, and the state's own, which a recovered first
 		// turn restores and later attempts are prepared from (ADR 0009,
 		// ADR 0010).

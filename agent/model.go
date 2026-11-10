@@ -56,8 +56,10 @@ const DefaultNudge = "You have not called a tool. This step is complete only whe
 // run's budget nears its end while the state runs (the active time or the
 // time to the deadline left is within Reserve, or the turns left within
 // Turns), the state's next turns are wrap-up turns: only Tools are offered,
-// and the model must call one of them. A tool executing a wrap-up turn's
-// call sees Call.WrapUp, so it can relax what it accepts from a model out
+// with tool choice auto, and the wrap-up message tells the model to call
+// one of them. Tool choice is not forced, since some providers reject a
+// forced tool (with reasoning on, or on every request). A tool executing a
+// wrap-up turn's call sees Call.WrapUp, so it can relax what it accepts from a model out
 // of budget. A state that has not transitioned after Turns wrap-up turns
 // fails the run with ReasonWrapUpFailed. Once the state wraps up it does
 // not go back, and a state entered with a budget already within its
@@ -68,14 +70,13 @@ type WrapUp struct {
 	// DefaultWrapUpMessage.
 	Message string
 	// Tools names the tools that leave the state: at least one, each
-	// declared in the state's Tools. One is forced by name; several are
-	// offered alone, and the model must call one of them.
+	// declared in the state's Tools. A wrap-up turn offers only these.
 	Tools []string
 	// Reserve is the time held back for wrap-up from each time budget the
 	// run sets. Zero is a tenth of each: of the active-time budget, and of
 	// the time from the run's creation to its deadline.
 	Reserve time.Duration
-	// Turns bounds the wrap-up turns, the forced call and any
+	// Turns bounds the wrap-up turns, the first call and any
 	// resubmissions after a tool error, and is the reserve held back from
 	// the turn budget. Zero uses DefaultWrapUpTurns.
 	Turns int
@@ -315,7 +316,9 @@ func (m *erasedModel) offered(name string, wrapUp bool) bool {
 }
 
 // wrapUpTools returns the tools a wrap-up turn offers, in declaration
-// order, and the tool choice that forces them.
+// order, and its tool choice: auto, whatever the state's own, which could
+// name a tool not offered or forbid tools; a forced choice is not used
+// because some providers reject one (ADR 0010, item 5).
 func (m *erasedModel) wrapUpTools() ([]*erasedTool, llms.ToolChoice) {
 	var out []*erasedTool
 	for _, t := range m.tools {
@@ -323,10 +326,7 @@ func (m *erasedModel) wrapUpTools() ([]*erasedTool, llms.ToolChoice) {
 			out = append(out, t)
 		}
 	}
-	if len(out) == 1 {
-		return out, llms.ToolChoice{Type: llms.ToolChoiceTool, Name: out[0].def.Name}
-	}
-	return out, llms.ToolChoice{Type: llms.ToolChoiceRequired}
+	return out, llms.ToolChoice{Type: llms.ToolChoiceAuto}
 }
 
 // definitions returns the tool definitions the state offers, in order.
