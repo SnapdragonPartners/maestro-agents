@@ -23,14 +23,18 @@ decisions building model states raised:
    end a run;
 7. where TEST-5 runs.
 
-It amends ADR 0004 item 8 (the commit that carries synthesized results),
+It amends ADR 0004 items 8 (the commit that carries synthesized results,
+item 13) and 10 (recovery's partition: a call whose permission does not
+cover the tool as now declared is refused, item 11, and an attempt with no
+result is partitioned by its recorded effect and contract, item 17),
 ADR 0006 item 11 (TEST-5 joins the suite, item 20) and ADR 0007 items 2 (a
 state's third kind, item 1), 4 (the activation input's client, item 6), 8
 (the checkpoint's model progress, item 10) and 9 (the tail's model-state
 kinds, item 11), and builds what ADR 0006 item 11 and ADR 0007's
 consequences left for later (model states, the write-ahead turn, TEST-5).
 It applies ADR 0007 items 12 to 14 unchanged. As the ADR index requires,
-the amended ADRs record the amendment in their status lines only.
+the amended ADRs record the amendment in their status lines only; this
+paragraph is the list of what is amended.
 
 ## Decision
 
@@ -150,8 +154,8 @@ the amended ADRs record the amendment in their status lines only.
     written. A recovered turn is rebuilt from its recorded attempt and
     response, so `Prompt` never runs again for it, and its unresolved calls
     are resolved in order by ADR 0004 item 10's table through the same path
-    a live call takes. **A permission records the effect it was granted
-    for**: a recorded call whose tool the recovering version no longer
+    a live call takes. **(Amends ADR 0004, item 10.) A permission records
+    the effect it was granted for**: a recorded call whose tool the recovering version no longer
     declares, or declares with another effect, is refused (a model-visible
     error result, the turn continuing), since its permission does not cover
     the tool as it is now; the model may call it again, and the policy
@@ -208,8 +212,8 @@ the amended ADRs record the amendment in their status lines only.
 17. **An unknown write fails the run** (ADR 0004, item 11): a write that is
     not an atomic local transaction, attempted with no result, gets a
     `result` entry with status `unknown` in the commit that fails the run
-    with `tool_error`. **An attempt records its tool's effect and write
-    contract**, and recovery partitions an attempt with no result by what
+    with `tool_error`. **(Amends ADR 0004, item 10.) An attempt records its
+    tool's effect and write contract**, and recovery partitions an attempt with no result by what
     it recorded, not by what the recovering version declares: a write
     attempted by a tool since removed or redeclared still has an unknown
     outcome.
@@ -269,11 +273,12 @@ the amended ADRs record the amendment in their status lines only.
 - [ADR 0003](0003-run-model-identities-and-activation-results.md): action
   identities (item 4), endings (item 17)
 - [ADR 0004](0004-execution-record-and-recovery.md): the write-ahead turn
-  and recovery (items 2, 4 to 13), which this ADR amends (item 8)
+  and recovery (items 2, 4 to 13), amended as listed in the Context
 - [ADR 0005](0005-storage-one-fenced-commit.md): atomic local transactions
   (items 7 to 10)
 - [ADR 0006](0006-store-interface.md): TEST-5 in the suite (item 11)
 - [ADR 0007](0007-agent-types-and-the-run-controller.md): the API this
-  extends (items 2, 8, 9, 12 to 14)
+  extends (items 2, 4, 8, 9 amended as listed in the Context; 12 to 14
+  applied)
 - `maestro-llms`: `llms/toolloop` (`Run`, `ToolResult.Stop`,
   `OnToolCall`), ADR 0017, ADR 0041
