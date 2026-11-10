@@ -597,10 +597,9 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 	}
 	if req.MaxTokens != r.params.MaxTokens || r.wrapUp {
 		// Admission lowered the output cap, or a wrap-up turn offered only
-		// the wrap-up's tools: the attempt records the
-		// parameters it sent, and the state's own, which a recovered first
-		// turn restores and later attempts are prepared from (ADR 0009,
-		// ADR 0010).
+		// the wrap-up's tools: the attempt records the parameters it sent,
+		// and the state's own, which a recovered first turn restores and
+		// later attempts are prepared from (ADR 0009, ADR 0010).
 		sent := r.params
 		sent.MaxTokens = req.MaxTokens
 		if r.wrapUp {

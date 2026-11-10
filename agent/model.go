@@ -60,10 +60,10 @@ const DefaultNudge = "You have not called a tool. This step is complete only whe
 // one of them. Tool choice is not forced, since some providers reject a
 // forced tool (with reasoning on, or on every request). A tool executing a
 // wrap-up turn's call sees Call.WrapUp, so it can relax what it accepts
-// from a model out of budget. A state that has not transitioned after Turns wrap-up turns
-// fails the run with ReasonWrapUpFailed. Once the state wraps up it does
-// not go back, and a state entered with a budget already within its
-// reserve wraps up from its first turn.
+// from a model out of budget. A state that has not transitioned after
+// Turns wrap-up turns fails the run with ReasonWrapUpFailed. Once the
+// state wraps up it does not go back, and a state entered with a budget
+// already within its reserve wraps up from its first turn.
 type WrapUp struct {
 	// Message is the user message that starts the wrap-up, sent again
 	// after a wrap-up turn that calls no tool; empty uses
@@ -76,9 +76,10 @@ type WrapUp struct {
 	// run sets. Zero is a tenth of each: of the active-time budget, and of
 	// the time from the run's creation to its deadline.
 	Reserve time.Duration
-	// Turns bounds the wrap-up turns, the first call and any
-	// resubmissions after a tool error, and is the reserve held back from
-	// the turn budget. Zero uses DefaultWrapUpTurns.
+	// Turns bounds the completed wrap-up turns (the first call, any
+	// resubmission after a tool error, and a turn that calls no tool),
+	// and is the reserve held back from the turn budget. Zero uses
+	// DefaultWrapUpTurns.
 	Turns int
 }
 
