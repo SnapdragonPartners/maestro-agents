@@ -48,7 +48,10 @@ amended.
    ignores the input's, as it does `Config` (ADR 0007, item 7). Defaults
    from the manifest come with manifests (MAN-1). A negative budget, or an
    estimated token budget with no limit, fails the run with `state_error`,
-   as an invalid configuration does.
+   as an invalid configuration does. The run's inputs (budgets and
+   configuration) are prepared before anything can refuse them, so a start
+   refused for its budgets records them with its ending (REC-1, ADR 0007
+   item 6).
 3. **Cost is a contract** (MVP.md, BUD-1): `Pricing` is the host's pricing
    function, `Price(model, usage) (cost, ok)`, where `ok` false is an
    unpriced model, an explicit unknown (BUD-4). Nothing calls it yet. A run
@@ -75,8 +78,13 @@ amended.
      `DefaultEstimator` input estimate and refuses the attempt
      (`budget_exhausted`, `tokens`) when that estimate leaves no output
      token; otherwise it lowers `MaxTokens` to what the budget leaves after
-     the input, keeping the prompt's own cap where that is lower. The
-     request sent carries the lowered cap.
+     the input, keeping the prompt's own cap where that is lower.
+
+   **An attempt records the parameters it sent** (ADR 0008, item 8): when
+   admission lowered the cap, its `Params` are the state's parameters with
+   the lowered cap, and `StateParams` the state's own, which a recovered
+   first turn restores, so later attempts are admitted from the prompt's
+   cap, not a lowered one.
 
    The reservation (`Reservation`: tokens, the output cap sent, and
    `Bound`, false until a bound exists) is recorded in the `model_attempt`
@@ -101,7 +109,10 @@ amended.
    covers (amends ADR 0007, item 8), recorded in every `outcome` entry, and
    returned as the typed `Outcome.Consumed` (amends ADR 0007, item 16).
    Recovery rebuilds it from the checkpoint and the tail: each
-   `model_attempt` counts its turn, each `turn` charges its usage, and each
+   `model_attempt` counts its turn (live, the turn is counted with the
+   attempt's commit, after the checkpoint the state's pending results may
+   complete in that commit, so that checkpoint never counts it), each `turn`
+   charges its usage, and each
    `model_failure`, and each attempt with neither, charges its reservation
    (ADR 0004, items 6 and 13), before any new attempt is admitted. An
    attempt recorded before budgets were built has no reservation; its
@@ -140,6 +151,11 @@ amended.
   retry middleware (MVP.md, BUD-1): retries inside the client are attempts
   the runtime neither admits nor sees, so the tokens of a retried failure
   would go uncharged.
+- An agent type should set `MaxTokens` in a budgeted state's prompt.
+  Without it, admission lowers the cap to everything an estimated budget
+  leaves, and an attempt whose usage turns out unknown (a provider that
+  reports none, a failure, a crash mid-call) is charged that whole
+  reservation (BUD-3, BUD-4), which exhausts the budget.
 - Hard turn, active-time and deadline budgets are enforced; a configured
   hard budget is never silently unenforced (BUD-1): a hard token budget
   and any cost budget fail closed with `budget_unenforceable`.

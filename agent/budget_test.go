@@ -2,7 +2,9 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -189,6 +191,7 @@ func TestBudgetsEstimatedTokens(t *testing.T) {
 		if len(res) != 1 || res[0].MaxTokens != 20 || res[0].Tokens != limit || res[0].Bound {
 			t.Fatalf("reservation = %+v, want the budget's %d", res, limit)
 		}
+		wantAttemptParams(t, s, entries(t, s, "r1"), true)
 	})
 }
 
@@ -489,5 +492,162 @@ func TestBudgetsCostNotBuilt(t *testing.T) {
 	wantBudgetFailure(t, out, agent.ReasonBudgetUnenforceable, agent.BudgetCost)
 	if es := entries(t, s, "r1"); len(client.Calls()) != 0 || !slices.Equal(kinds(es), []string{"activation_started", "run_started", "outcome"}) {
 		t.Fatalf("work was done: record %v", kinds(es))
+	}
+}
+
+// recordedCharges recomputes a run's turns and tokens from its record:
+// each attempt counts a turn and is charged its turn's usage, or its
+// reservation when the usage is unknown, it failed or it was interrupted.
+func recordedCharges(t *testing.T, es []store.Entry) (turns int, tokens int64) {
+	t.Helper()
+	var open *agent.Reservation
+	settle := func(u *agent.Usage) {
+		if open == nil {
+			return
+		}
+		n := int64(0)
+		if u != nil {
+			n = max(int64(u.TotalTokens), int64(u.InputTokens)+int64(max(u.BillableOutputTokens, u.OutputTokens+u.ReasoningTokens)))
+		}
+		if n == 0 {
+			n = open.Tokens
+		}
+		tokens += n
+		open = nil
+	}
+	for _, e := range es {
+		switch e.Kind {
+		case agent.EntryModelAttempt:
+			settle(nil)
+			at := payload[agent.ModelAttemptEntry](t, e)
+			open = at.Reservation
+			turns++
+		case agent.EntryTurn:
+			u := payload[agent.TurnEntry](t, e).Usage
+			settle(&u)
+		case agent.EntryModelFailure:
+			settle(nil)
+		}
+	}
+	settle(nil)
+	return turns, tokens
+}
+
+// paramsOf decodes a recorded parameters artifact.
+func paramsOf(t *testing.T, s store.Store, digest string) llms.ChatRequest {
+	t.Helper()
+	_, raw, err := s.Artifact(context.Background(), digest)
+	if err != nil {
+		t.Fatalf("Artifact %s: %v", digest, err)
+	}
+	var req llms.ChatRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+// wantAttemptParams checks that every attempt records the parameters it
+// sent, and, when a token budget lowered the output cap (the ledger's
+// prompt sets none), the state's own in StateParams.
+func wantAttemptParams(t *testing.T, s store.Store, es []store.Entry, lowered bool) {
+	t.Helper()
+	for _, e := range es {
+		if e.Kind != agent.EntryModelAttempt {
+			continue
+		}
+		at := payload[agent.ModelAttemptEntry](t, e)
+		if got := paramsOf(t, s, at.Params).MaxTokens; got != at.Reservation.MaxTokens || (got == 0) == lowered {
+			t.Fatalf("attempt %d records MaxTokens %d, sent %d", e.Seq, got, at.Reservation.MaxTokens)
+		}
+		if lowered != (at.StateParams != "") || (lowered && paramsOf(t, s, at.StateParams).MaxTokens != 0) {
+			t.Fatalf("attempt %d: state parameters %q, lowered %v", e.Seq, at.StateParams, lowered)
+		}
+	}
+}
+
+// TestBudgetsCrashAtEveryCommit: wherever an activation dies, the
+// consumption the run ends with is exactly what its record charges: each
+// recorded attempt counts one turn, never two (a checkpoint covers only the
+// entries before it), and its tokens are charged once. The prompt sets no
+// output cap, so admission lowers it to all the budget leaves, and an
+// attempt of unknown usage (an interrupted one, or the fixture's text
+// answer, which reports none) is charged that much (BUD-3, BUD-4): the run
+// may end with the token budget exhausted, which the record must also
+// account for.
+func TestBudgetsCrashAtEveryCommit(t *testing.T) {
+	budgets := agent.Budgets{Tokens: agent.TokenBudget{Limit: 1_000_000, Estimated: true}, Turns: 100}
+	total := func() int {
+		s := &countingStore{Store: newBackend(t, "memstore").open()}
+		createLedgerRun(t, s)
+		if _, err := activateBudgets(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), scripted(ledgerScript), 0, budgets); err != nil {
+			t.Fatal(err)
+		}
+		return s.n
+	}()
+	for at := 1; at <= total; at++ {
+		for _, landing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("commit-%d/landing-%v", at, landing), func(t *testing.T) {
+				t.Parallel()
+				s := newBackend(t, "memstore").open()
+				createLedgerRun(t, s)
+				reg := registry(t, ledgerType(&execLog{}))
+				cs := &crashStore{Store: s, at: at, landing: landing}
+				if _, err := activateBudgets(context.Background(), agent.NewController(cs, reg), claim(t, s), scripted(ledgerScript), 0, budgets); !errors.Is(err, agent.ErrStoreFailure) {
+					t.Fatalf("crashed activation = %v, want a store failure", err)
+				}
+				if runRecord(t, s, "r1").Status.Terminal() {
+					return
+				}
+				releaseIfOwned(t, s)
+				// The budgets count only if the crashed activation did not
+				// record the run's start.
+				out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(ledgerScript), 0, budgets)
+				if err != nil {
+					t.Fatal(err)
+				}
+				exhausted := out.Reason.Code == agent.ReasonBudgetExhausted && out.Reason.Budget == agent.BudgetTokens
+				if out.Status != store.StatusSucceeded && !exhausted {
+					t.Fatalf("outcome = %+v", out)
+				}
+				es := entries(t, s, "r1")
+				turns, tokens := recordedCharges(t, es)
+				if out.Consumed.Turns != turns || out.Consumed.Tokens != tokens {
+					t.Fatalf("consumed %d turns, %d tokens; the record charges %d, %d", out.Consumed.Turns, out.Consumed.Tokens, turns, tokens)
+				}
+				if exhausted && tokens < budgets.Tokens.Limit-1000 {
+					t.Fatalf("token budget exhausted with %d of %d charged", tokens, budgets.Tokens.Limit)
+				}
+				wantAttemptParams(t, s, es, true)
+			})
+		}
+	}
+}
+
+// TestBudgetsRefusedStartRecordsInputs: a start refused for its budgets
+// still records them, and the configuration, with its ending (REC-1).
+func TestBudgetsRefusedStartRecordsInputs(t *testing.T) {
+	for name, b := range map[string]agent.Budgets{
+		"cost":    {Cost: 100, Turns: 3},
+		"invalid": {Turns: -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			out, err := agent.NewController(s, registry(t, ledgerType(&execLog{}))).Activate(context.Background(), agent.ActivationInput{
+				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Client: scripted(ledgerScript),
+				Config: json.RawMessage(`{"k":1}`), Budgets: b,
+			})
+			if err != nil || out.Status != store.StatusFailed {
+				t.Fatalf("outcome = %+v, %v", out, err)
+			}
+			rs := payload[agent.RunStarted](t, entries(t, s, "r1")[1])
+			if rs.Budgets == nil || *rs.Budgets != b || rs.Config == "" {
+				t.Fatalf("run_started = %+v, want the budgets and configuration", rs)
+			}
+			if _, _, err := s.Artifact(context.Background(), rs.Config); err != nil {
+				t.Fatalf("configuration artifact: %v", err)
+			}
+		})
 	}
 }

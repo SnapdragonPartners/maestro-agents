@@ -441,8 +441,20 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 		AgentType: a.m.name, AgentVersion: a.m.version, TriggerID: a.run.TriggerID, Trigger: a.run.Trigger,
 	}}
 	a.start1 = start
+	// The run's inputs are prepared before anything can refuse them, so a
+	// start that fails records them (REC-1).
+	var budgets *Budgets
+	if a.budgets != (Budgets{}) {
+		budgets = &a.budgets
+		start.entry.Budgets = budgets
+	}
 	if err := store.ValidJSON(config); err != nil {
 		return a.fail(ctx, ReasonStateError, "configuration: "+err.Error())
+	}
+	if config != nil {
+		sum := sha256.Sum256(config)
+		start.entry.Config = hex.EncodeToString(sum[:])
+		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
 	}
 	if err := a.budgets.validate(); err != nil {
 		return a.fail(ctx, ReasonStateError, "budgets: "+err.Error())
@@ -450,16 +462,6 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	if a.budgets.Cost > 0 {
 		return a.refuseBudget(ctx, &budgetRefusal{ReasonBudgetUnenforceable, BudgetCost,
 			"cost budgets are not built yet (MVP.md, BUD-1)"})
-	}
-	var budgets *Budgets
-	if a.budgets != (Budgets{}) {
-		budgets = &a.budgets
-		start.entry.Budgets = budgets
-	}
-	if config != nil {
-		sum := sha256.Sum256(config)
-		start.entry.Config = hex.EncodeToString(sum[:])
-		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
 	}
 	a.config = config
 	if ctx.Err() != nil {

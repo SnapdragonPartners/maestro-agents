@@ -261,7 +261,11 @@ func (r *modelRun) load(ctx context.Context) *ending {
 	if t := a.tail.turn; t != nil {
 		// The state's first turn is recorded but not complete: its request
 		// is the recorded one, so Prompt does not run again.
-		if e := r.loadParams(ctx, t.attempt.Params); e != nil {
+		params := t.attempt.Params
+		if t.attempt.StateParams != "" {
+			params = t.attempt.StateParams
+		}
+		if e := r.loadParams(ctx, params); e != nil {
 			return e
 		}
 		return r.offerTools(ctx)
@@ -443,7 +447,6 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 		return llms.ChatResponse{}, errAbort
 	}
 	r.res = res
-	r.a.used.admitTurn(modelRef(r.client.Model()))
 	delta, ddelta, err := r.recordAttempt(ctx, b, completes, &req)
 	if err != nil {
 		return llms.ChatResponse{}, err
@@ -495,12 +498,24 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 		return nil, nil, errAbort
 	}
 	delta := req.Messages[len(base):]
+	// The turn counts from this commit on: after the checkpoint the
+	// pending results complete, which covers only the entries before it.
+	model := modelRef(r.client.Model())
+	a.used.admitTurn(model)
 	entry := ModelAttemptEntry{
-		Model: modelRef(r.client.Model()), State: r.st.name, Base: len(base), Params: r.paramsDigest,
+		Model: model, State: r.st.name, Base: len(base), Params: r.paramsDigest,
 		Reservation: &r.res, Active: a.consumed().ActiveTime,
 	}
 	if !r.paramsStored {
 		entry.Params = b.rawArtifact(r.paramsRaw)
+	}
+	if req.MaxTokens != r.params.MaxTokens {
+		// Admission lowered the output cap: the attempt records the
+		// parameters it sent, and the state's own, which a recovered
+		// first turn restores and later admissions lower from (ADR 0009).
+		sent := r.params
+		sent.MaxTokens = req.MaxTokens
+		entry.StateParams, entry.Params = entry.Params, b.artifact(&sent)
 	}
 	for i := range delta {
 		entry.Messages = append(entry.Messages, b.artifact(toWireMessage(&delta[i])))

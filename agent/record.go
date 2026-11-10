@@ -79,12 +79,15 @@ type ModelRef struct {
 // latest checkpoint holds, followed by the Messages artifacts added since.
 // Reservation is what the attempt was admitted on (BUD-3), and Active the
 // run's active time when it was committed (ADR 0009); an attempt recorded
-// before budgets were built has neither.
+// before budgets were built has neither. Params are the parameters sent;
+// when a token budget lowered the output cap, StateParams are the state's
+// own, from which later attempts are admitted.
 type ModelAttemptEntry struct {
 	Reservation *Reservation  `json:"reservation,omitempty"`
 	Model       ModelRef      `json:"model"`
 	State       string        `json:"state"`
 	Params      string        `json:"params"`
+	StateParams string        `json:"state_params,omitempty"`
 	Messages    []string      `json:"messages,omitempty"`
 	Base        int           `json:"base"`
 	Active      time.Duration `json:"active,omitempty"`
