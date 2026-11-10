@@ -25,7 +25,9 @@ decisions building model states raised:
 
 It amends ADR 0004 item 8 (the commit that carries synthesized results),
 ADR 0006 item 11 (TEST-5 joins the suite, item 20) and ADR 0007 items 2 (a
-state's third kind, item 1) and 9 (the tail's model-state kinds, item 11).
+state's third kind, item 1), 4 (the activation input's client, item 6), 8
+(the checkpoint's model progress, item 10) and 9 (the tail's model-state
+kinds, item 11). It applies ADR 0007 items 12 to 14 unchanged.
 
 ## Decision
 

@@ -59,7 +59,8 @@ records them and amends items 2 and 9.
    the run's scope, the resolved configuration and the host's step limit
    (STM-7). **The trigger is read from the run record**, where `CreateRun`
    stored it, rather than passed again: ADR 0003 item 12's rule that the
-   input never duplicates durable state applies to it too.
+   input never duplicates durable state applies to it too. (Amended by
+   ADR 0008, item 6: the input also carries the host's model client.)
 5. **An activation commits `activation_started` alone, first**, so its
    fence is verified and its starting point recorded before it runs any
    agent-type code (ADR 0004, item 2).
@@ -87,7 +88,10 @@ records them and amends items 2 and 9.
    from there and ignore the input's `Config`.
 8. **The checkpoint's contents** (format 1, opaque to the host, RUN-5) are
    the agent type's name and version, the current state, the state data,
-   the configuration's digest and the next step's number. A checkpoint
+   the configuration's digest and the next step's number. (Amended by ADR
+   0008, item 10: in a model state, also its progress, the request
+   parameters' and transcript's artifacts and the nudge state; the format
+   stays 1.) A checkpoint
    written by another version of the agent type is passed to the type's
    `Migrate`; a type with no `Migrate` refuses it, and the run fails with
    `state_error` (RUN-5). The migrated data is checkpointed by the next
