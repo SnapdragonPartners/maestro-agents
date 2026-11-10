@@ -526,7 +526,7 @@ func recordedCharges(t *testing.T, es []store.Entry) (turns int, tokens int64) {
 			u := payload[agent.TurnEntry](t, e).Usage
 			settle(&u)
 		case agent.EntryModelFailure:
-			settle(nil)
+			settle(payload[agent.ModelFailureEntry](t, e).Usage)
 		}
 	}
 	settle(nil)
@@ -649,5 +649,68 @@ func TestBudgetsRefusedStartRecordsInputs(t *testing.T) {
 				t.Fatalf("configuration artifact: %v", err)
 			}
 		})
+	}
+}
+
+// TestBudgetsActiveTimeSurvivesMidTurnCrash: each executed result records
+// the active time spent through its call, so a crash mid-turn loses at
+// most the interrupted call's time (ADR 0009, item 10).
+func TestBudgetsActiveTimeSurvivesMidTurnCrash(t *testing.T) {
+	const pause = 40 * time.Millisecond
+	slowLookup := agent.Tool[ledgerData]{
+		Definition: llms.ToolDefinition{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		Effect:     agent.EffectRead,
+		Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			time.Sleep(pause)
+			return agent.TextResult[ledgerData]("found"), nil
+		},
+	}
+	script := []llms.ChatResponse{
+		callsResp(tc("c1", "lookup", `{}`), tc("c2", "lookup", `{}`), tc("c3", "lookup", `{}`), tc("c4", "lookup", `{}`)),
+		textResp("done"),
+		textResp("done"),
+	}
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	reg := registry(t, ledgerType(&execLog{}, slowLookup))
+	// Commits: activation_started, the run's start, the attempt, the turn,
+	// then a permission, an attempt and a result per call: the fourth
+	// call's result is commit 16, which never lands.
+	cs := &crashStore{Store: s, at: 16}
+	if _, err := activateBudgets(context.Background(), agent.NewController(cs, reg), claim(t, s), scripted(script), 0, agent.Budgets{ActiveTime: time.Hour}); !errors.Is(err, agent.ErrStoreFailure) {
+		t.Fatalf("err = %v, want the injected crash", err)
+	}
+	releaseIfOwned(t, s)
+	out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(script), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three calls' time landed before the crash, and recovery runs the
+	// fourth again.
+	if out.Consumed.ActiveTime < 4*pause {
+		t.Fatalf("active time %s, want at least %s: completed calls' time was lost", out.Consumed.ActiveTime, 4*pause)
+	}
+}
+
+// TestBudgetsUnrecordableResponseCharged: a provider call that completed
+// with a response the runtime cannot record is a model failure with the
+// usage it reported, and is charged that usage.
+func TestBudgetsUnrecordableResponseCharged(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	bad := llms.ChatResponse{Message: llms.AssistantText("\xff"), Text: "\xff", Usage: llms.Usage{InputTokens: 10, OutputTokens: 5}}
+	out, err := activateWith(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), scripted([]llms.ChatResponse{bad}), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	es := entries(t, s, "r1")
+	if out.Reason.Code != agent.ReasonModelError || countKind(es, agent.EntryModelFailure) != 1 {
+		t.Fatalf("outcome = %+v, record %v", out, kinds(es))
+	}
+	if c := out.Consumed; c.Tokens != 15 || c.TokensEstimated || c.Turns != 1 {
+		t.Fatalf("consumed = %+v, want the reported 15 tokens", c)
+	}
+	if _, tokens := recordedCharges(t, es); tokens != 15 {
+		t.Fatalf("the record charges %d tokens, want 15", tokens)
 	}
 }

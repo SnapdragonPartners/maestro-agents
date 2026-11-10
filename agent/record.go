@@ -130,8 +130,11 @@ func usageOf(u *llms.Usage) Usage {
 
 // ModelFailureEntry is the payload of a model_failure entry: the attempt's
 // observed error (ADR 0004, item 2). Kind is the maestro-llms error kind of
-// a provider error, empty for any other error.
+// a provider error, empty for any other error. Usage is the usage reported,
+// nil when none was: a provider error carries none, a response the runtime
+// cannot record does (ADR 0009).
 type ModelFailureEntry struct {
+	Usage   *Usage `json:"usage,omitempty"`
 	Kind    string `json:"kind,omitempty"`
 	Message string `json:"message"`
 	Status  int    `json:"status,omitempty"`
@@ -188,14 +191,16 @@ const (
 
 // ResultEntry is the payload of a result entry. Result is the artifact of
 // what the model receives; Ops are an atomic local transaction's object
-// operations, committed with the entry.
+// operations, committed with the entry. An executed result records the
+// run's active time when it was committed (ADR 0009).
 type ResultEntry struct {
-	Tool    string       `json:"tool"`
-	Status  ResultStatus `json:"status"`
-	Result  string       `json:"result,omitempty"`
-	Ops     []store.Op   `json:"ops,omitempty"`
-	Call    int          `json:"call"`
-	IsError bool         `json:"is_error,omitempty"`
+	Tool    string        `json:"tool"`
+	Status  ResultStatus  `json:"status"`
+	Result  string        `json:"result,omitempty"`
+	Ops     []store.Op    `json:"ops,omitempty"`
+	Active  time.Duration `json:"active,omitempty"`
+	Call    int           `json:"call"`
+	IsError bool          `json:"is_error,omitempty"`
 }
 
 // checkpointFormat is the version of checkpointState.

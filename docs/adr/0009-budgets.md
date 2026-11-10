@@ -123,7 +123,11 @@ amended.
    that is larger, since Gemini's counts tool-use prompt tokens its input
    does not (maestro-llms ADR-0016, ADR-0034). A usage that reports nothing
    is unknown and charged the reservation (BUD-4). maestro-llms errors
-   carry no usage, so a failed attempt is always charged its reservation.
+   carry no usage, so a provider failure is charged its reservation. A
+   response the runtime cannot record (ADR 0008, item 8) completed a
+   provider call: it is committed as a `model_failure` carrying the usage
+   it reports (ADR 0004 item 2's "any usage reported"), charged that
+   usage, before the run fails with `model_error`.
 
 ### The clocks
 
@@ -137,10 +141,10 @@ amended.
    with its ending (ADR 0007, item 6).
 10. **Active time is measured from the clocks' start**, after the
     activation's reads and before its first commit, and recorded
-    cumulatively in each checkpoint, each `model_attempt` (`Active`) and
-    each `outcome`. Recovery takes the latest the checkpoint and tail
-    record, so a crash loses at most the time since the last of these
-    (one model or tool call). There are no in-process waits yet, so active
+    cumulatively in each checkpoint, each `model_attempt` and each executed
+    call's `result` (`Active`), and each `outcome`. Recovery takes the
+    latest the checkpoint and tail record, so a crash loses at most the
+    time since the last of these (one model or tool call). There are no in-process waits yet, so active
     time never pauses (MVP.md, BUD-2).
 
 ## Consequences

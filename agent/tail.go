@@ -80,7 +80,11 @@ func (f *tailFold) add(e *store.Entry) error {
 		if f.open == nil {
 			return errors.New("a model failure with no attempt")
 		}
-		f.used.charge(f.open.Model, nil, f.open.Reservation)
+		var mf ModelFailureEntry
+		if err := decode(e, &mf); err != nil {
+			return err
+		}
+		f.used.charge(f.open.Model, mf.Usage, f.open.Reservation)
 		f.open = nil
 		return nil
 	case EntryTurn:
@@ -89,7 +93,17 @@ func (f *tailFold) add(e *store.Entry) error {
 		if f.turn == nil {
 			return errors.New("a call entry with no turn")
 		}
-		return f.turn.add(e)
+		if err := f.turn.add(e); err != nil {
+			return err
+		}
+		if e.Kind == EntryResult {
+			// add decoded it: an executed result records the active time
+			// spent through its call (ADR 0009, item 10).
+			var r ResultEntry
+			_ = decode(e, &r)
+			f.active(r.Active)
+		}
+		return nil
 	}
 	return errors.New("a kind this version cannot recover")
 }

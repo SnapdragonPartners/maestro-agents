@@ -453,7 +453,7 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 	}
 	resp, err := c.client.Complete(ctx, req)
 	if err != nil {
-		return llms.ChatResponse{}, r.recordFailure(ctx, err)
+		return llms.ChatResponse{}, r.recordFailure(ctx, err, nil)
 	}
 	return r.recordTurn(ctx, &resp, delta, ddelta)
 }
@@ -530,15 +530,16 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 
 // recordFailure commits the attempt's model_failure entry and returns the
 // error for the loop to classify.
-func (r *modelRun) recordFailure(ctx context.Context, err error) error {
-	f := ModelFailureEntry{Message: err.Error()}
+func (r *modelRun) recordFailure(ctx context.Context, err error, usage *Usage) error {
+	f := ModelFailureEntry{Message: err.Error(), Usage: usage}
 	var pe *llms.ProviderError
 	if errors.As(err, &pe) {
 		f.Kind, f.Status = string(pe.Kind), pe.StatusCode
 	}
-	// Errors carry no usage: the attempt is charged its reservation
-	// (BUD-3, BUD-4).
-	r.a.used.charge(modelRef(r.client.Model()), nil, &r.res)
+	// maestro-llms errors carry no usage, so a provider failure is charged
+	// its reservation; a response the runtime cannot record is charged the
+	// usage it reports (BUD-3, BUD-4).
+	r.a.used.charge(modelRef(r.client.Model()), usage, &r.res)
 	b := r.a.entries()
 	b.add(r.a.step1(), EntryModelFailure, f)
 	if !r.land(ctx, b, nil) {
@@ -562,6 +563,12 @@ func modelRef(m llms.ModelRef) ModelRef { return ModelRef{Provider: string(m.Pro
 func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delta []llms.Message, ddelta []string) (llms.ChatResponse, error) {
 	a := r.a
 	if err := checkResponse(resp); err != nil {
+		// The provider call completed: its failure is recorded with the
+		// usage it reports, so the attempt is charged (ADR 0009).
+		usage := usageOf(&resp.Usage)
+		if r.recordFailure(ctx, fmt.Errorf("response cannot be recorded: %w", err), &usage) == errAbort { //nolint:errorlint // recordFailure returns errAbort itself
+			return llms.ChatResponse{}, errAbort
+		}
 		r.abort = a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: response cannot be recorded: %v", r.st.name, err))
 		return llms.ChatResponse{}, errAbort
 	}
@@ -1033,6 +1040,7 @@ func (r *modelRun) commitResult(ctx context.Context, i int, tool *erasedTool, re
 	b.ops = append(b.ops, res.ops...)
 	b.add(t.step, EntryResult, ResultEntry{
 		Call: i, Tool: tool.def.Name, Status: ResultExecuted, Result: b.artifact(rec), Ops: res.ops, IsError: rec.IsError,
+		Active: a.consumed().ActiveTime,
 	})
 	prev := t.results[i]
 	t.results[i] = rec
