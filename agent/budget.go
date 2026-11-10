@@ -225,9 +225,17 @@ func (a *activation) admit(req *llms.ChatRequest) (Reservation, *budgetRefusal) 
 	input := int64(est.InputTokens)
 	if b.Tokens.Limit > 0 {
 		left := b.Tokens.Limit - a.used.Tokens
-		if input >= left {
+		// A thinking budget must stay below the output cap (Anthropic's
+		// budget_tokens), so the cap left must exceed it: a request whose
+		// reasoning cannot fit is refused rather than sent to fail.
+		var thinking int64
+		if req.Reasoning != nil && req.Reasoning.BudgetTokens > 0 {
+			thinking = int64(req.Reasoning.BudgetTokens)
+		}
+		if input+thinking >= left {
 			return Reservation{}, &budgetRefusal{ReasonBudgetExhausted, BudgetTokens, fmt.Sprintf(
-				"token budget %d: %d consumed, and the next request's input is estimated at %d", b.Tokens.Limit, a.used.Tokens, input)}
+				"token budget %d: %d consumed, and the next request's input is estimated at %d with a thinking budget of %d",
+				b.Tokens.Limit, a.used.Tokens, input, thinking)}
 		}
 		if out := left - input; req.MaxTokens <= 0 || int64(req.MaxTokens) > out {
 			req.MaxTokens = int(min(out, math.MaxInt32))

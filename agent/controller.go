@@ -627,12 +627,16 @@ func (a *activation) commitTransition(ctx context.Context, st, next *erasedState
 }
 
 // finalOps are the operations that end an activation after its outcome
-// entry: the run record's change and the release (ADR 0003, item 10).
+// entry: the run record's change, with the consumption the outcome entry
+// records (ADR 0003 item 13, ADR 0005 item 3), and the release (ADR 0003,
+// item 10).
 func (a *activation) finalOps(out *OutcomeEntry) []store.Op {
-	return []store.Op{
-		store.UpdateRunOp(store.RunUpdate{Run: a.run.ID, ExpectVersion: a.run.Version, Status: out.Status, Reason: out.Reason}),
-		store.ReleaseOp(),
+	u := store.RunUpdate{Run: a.run.ID, ExpectVersion: a.run.Version, Status: out.Status, Reason: out.Reason}
+	if out.Consumed != nil {
+		// Consumption is plain data; it always encodes.
+		u.Consumed, _ = json.Marshal(out.Consumed) //nolint:errchkjson // see above
 	}
+	return []store.Op{store.UpdateRunOp(u), store.ReleaseOp()}
 }
 
 func (a *activation) outcome(out *OutcomeEntry) Outcome {

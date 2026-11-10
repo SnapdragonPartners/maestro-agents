@@ -37,9 +37,6 @@ type tailFold struct {
 	turn *tailTurn
 	// states are the states the tail's model attempts name.
 	states map[string]bool
-	// interrupted counts attempts with neither a turn nor a failure after
-	// them, each charged its reservation (ADR 0004, item 13).
-	interrupted int
 }
 
 // interrupt charges the open attempt, which has neither a turn nor a
@@ -48,7 +45,6 @@ func (f *tailFold) interrupt() {
 	if f.open == nil {
 		return
 	}
-	f.interrupted++
 	f.used.charge(f.open.Model, nil, f.open.Reservation)
 	f.open = nil
 }

@@ -762,3 +762,86 @@ func TestBudgetsActiveTimeAtEveryCommit(t *testing.T) {
 		})
 	}
 }
+
+// TestBudgetsThinkingBudgetFits: the output cap admission leaves must
+// exceed a request's thinking budget (Anthropic's budget_tokens must be
+// below max_tokens), so a request whose reasoning cannot fit is refused
+// before it is sent rather than failing at the provider.
+func TestBudgetsThinkingBudgetFits(t *testing.T) {
+	const thinking = 2048
+	typ := ledgerType(&execLog{})
+	prompt := typ.States[0].Model.Prompt
+	typ.States[0].Model.Prompt = func(ctx context.Context, env *agent.Env, d ledgerData) (llms.ChatRequest, error) {
+		req, err := prompt(ctx, env, d)
+		req.Reasoning = &llms.ReasoningConfig{BudgetTokens: thinking}
+		return req, err
+	}
+	// The first request's input estimate, from a run with no token budget.
+	ps := newBackend(t, "memstore").open()
+	createLedgerRun(t, ps)
+	probe := scripted(ledgerScript)
+	if _, err := activateWith(context.Background(), agent.NewController(ps, registry(t, typ)), claim(t, ps), probe, 1); err != nil {
+		t.Fatal(err)
+	}
+	input := int64(middleware.DefaultEstimator{}.EstimateChat(probe.Calls()[0]).InputTokens)
+
+	for name, tc := range map[string]struct {
+		limit int64
+		fits  bool
+	}{
+		"does not fit": {limit: input + 1000},
+		"fits":         {limit: input + 3000, fits: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			client := scripted(ledgerScript)
+			out, err := activateBudgets(context.Background(), agent.NewController(s, registry(t, typ)), claim(t, s),
+				client, 1, agent.Budgets{Tokens: agent.TokenBudget{Limit: tc.limit, Estimated: true}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.fits {
+				wantBudgetFailure(t, out, agent.ReasonBudgetExhausted, agent.BudgetTokens)
+				if len(client.Calls()) != 0 {
+					t.Fatalf("a request that cannot fit was sent")
+				}
+				return
+			}
+			if calls := client.Calls(); len(calls) != 1 || calls[0].MaxTokens <= thinking {
+				t.Fatalf("calls %d, MaxTokens %d; want one, above the thinking budget %d", len(calls), calls[0].MaxTokens, thinking)
+			}
+		})
+	}
+}
+
+// TestBudgetsConsumptionInRunRecord: every ending records the run's
+// consumption in its run record (ADR 0003 item 13, ADR 0005 item 3), so a
+// host reading the store sees it, mid-run and at the end.
+func TestBudgetsConsumptionInRunRecord(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, b backend) {
+		s := b.open()
+		defer s.Close()
+		createLedgerRun(t, s)
+		reg := registry(t, ledgerType(&execLog{}))
+		for {
+			out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(ledgerScript), 1, agent.Budgets{Turns: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got agent.Consumption
+			if err := json.Unmarshal(runRecord(t, s, "r1").Consumed, &got); err != nil {
+				t.Fatalf("run record consumption: %v", err)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(out.Consumed) {
+				t.Fatalf("run record has %+v, the outcome %+v", got, out.Consumed)
+			}
+			if out.Status != store.StatusRunnable {
+				if got.Turns != 4 {
+					t.Fatalf("final consumption %+v", got)
+				}
+				return
+			}
+		}
+	})
+}

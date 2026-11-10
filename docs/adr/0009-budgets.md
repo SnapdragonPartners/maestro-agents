@@ -77,7 +77,10 @@ amended.
    - **an estimated token budget** reserves maestro-llms'
      `DefaultEstimator` input estimate and refuses the attempt
      (`budget_exhausted`, `tokens`) when that estimate leaves no output
-     token; otherwise it lowers `MaxTokens` to what the budget leaves after
+     token, or, for a request with a thinking budget
+     (`Reasoning.BudgetTokens`), no output cap above it (Anthropic's
+     thinking budget must be below `MaxTokens`), so a request that cannot
+     fit is refused rather than sent to fail; otherwise it lowers `MaxTokens` to what the budget leaves after
      the input, keeping the prompt's own cap where that is lower.
 
    **An attempt records the parameters it sent** (ADR 0008, item 8): when
@@ -106,8 +109,10 @@ amended.
    (`TokensEstimated`), and the same per model route (BUD-4), with each
    route's observed input and output tokens and its count of attempts of
    unknown usage. It is checkpointed as of the entries each checkpoint
-   covers (amends ADR 0007, item 8), recorded in every `outcome` entry, and
-   returned as the typed `Outcome.Consumed` (amends ADR 0007, item 16).
+   covers (amends ADR 0007, item 8), recorded in every `outcome` entry and,
+   in the same commit, in the run record's consumed budgets (ADR 0003 item
+   13, ADR 0005 item 3), so a host reading the store sees it, and returned
+   as the typed `Outcome.Consumed` (amends ADR 0007, item 16).
    Recovery rebuilds it from the checkpoint and the tail: each
    `model_attempt` counts its turn (live, the turn is counted with the
    attempt's commit, after the checkpoint the state's pending results may
