@@ -24,9 +24,10 @@ decisions building model states raised:
 7. where TEST-5 runs.
 
 It amends ADR 0004 items 8 (the commit that carries synthesized results,
-item 13) and 10 (recovery's partition: a call whose permission does not
-cover the tool as now declared is refused, item 11, and an attempt with no
-result is partitioned by its recorded effect and contract, item 17),
+this ADR's item 13) and 10 (recovery's partition: a call whose permission
+covers the tool as now declared is refused, this ADR's item 11, and an
+attempt with no result is partitioned by its recorded effect and contract,
+this ADR's item 19),
 ADR 0006 item 11 (TEST-5 joins the suite, item 20) and ADR 0007 items 2 (a
 state's third kind, item 1), 4 (the activation input's client, item 6), 8
 (the checkpoint's model progress, item 10) and 9 (the tail's model-state
