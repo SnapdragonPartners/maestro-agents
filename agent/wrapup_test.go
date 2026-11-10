@@ -328,23 +328,32 @@ func TestWrapUpOverridesStateToolChoice(t *testing.T) {
 // point is cut off there and recorded as failed, and the wrap-up follows
 // within the reserve, its request carrying the wrap-up message once. The
 // point is the active-time one, the deadline one, or the earlier of the
-// two.
+// two. Each point leaves a second for the commits before the first call,
+// which a loaded machine's file store can take. A deadline is wall-clock
+// time set before the activation starts, so active time, which starts
+// after the activation's reads, may not reach its lead.
 func TestWrapUpCutsOffSlowCall(t *testing.T) {
-	cases := map[string]func() agent.Budgets{
-		"active time": func() agent.Budgets { return agent.Budgets{ActiveTime: 2*time.Second + 300*time.Millisecond} },
-		"deadline": func() agent.Budgets {
-			return agent.Budgets{Deadline: time.Now().Add(2*time.Second + 300*time.Millisecond)}
-		},
-		"deadline earlier": func() agent.Budgets {
-			return agent.Budgets{ActiveTime: time.Minute, Deadline: time.Now().Add(2*time.Second + 300*time.Millisecond)}
-		},
+	const reserve = 2 * time.Second
+	type point struct {
+		budgets func() agent.Budgets
+		lead    time.Duration // from now to the wrap-up point
+		active  bool          // the point is an active-time one
 	}
-	for name, budgets := range cases {
-		t.Run(name, func(t *testing.T) { testWrapUpCutsOffSlowCall(t, budgets) })
+	cases := map[string]point{
+		"active time": {func() agent.Budgets { return agent.Budgets{ActiveTime: reserve + time.Second} }, time.Second, true},
+		"deadline": {func() agent.Budgets {
+			return agent.Budgets{Deadline: time.Now().Add(reserve + time.Second)}
+		}, time.Second, false},
+		"deadline earlier": {func() agent.Budgets {
+			return agent.Budgets{ActiveTime: time.Minute, Deadline: time.Now().Add(reserve + time.Second)}
+		}, time.Second, false},
+	}
+	for name, p := range cases {
+		t.Run(name, func(t *testing.T) { testWrapUpCutsOffSlowCall(t, reserve, p.budgets, p.lead, p.active) })
 	}
 }
 
-func testWrapUpCutsOffSlowCall(t *testing.T, budgets func() agent.Budgets) {
+func testWrapUpCutsOffSlowCall(t *testing.T, reserve time.Duration, budgets func() agent.Budgets, lead time.Duration, active bool) {
 	forEachBackend(t, func(t *testing.T, b backend) {
 		s := b.open()
 		defer s.Close()
@@ -359,7 +368,7 @@ func testWrapUpCutsOffSlowCall(t *testing.T, budgets func() agent.Budgets) {
 				return callsResp(tc("s", "submit", `{}`)), nil
 			},
 		}
-		reg := registry(t, wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}, Reserve: 2 * time.Second}))
+		reg := registry(t, wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}, Reserve: reserve}))
 		out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0, budgets())
 		if err != nil {
 			t.Fatal(err)
@@ -384,8 +393,10 @@ func testWrapUpCutsOffSlowCall(t *testing.T, budgets func() agent.Budgets) {
 		if n := countWrapUpMessages(&calls[len(calls)-1]); n != 1 {
 			t.Fatalf("the wrap-up request carries the message %d times, want 1", n)
 		}
-		if a := out.Consumed.ActiveTime; a < 300*time.Millisecond || a > 2*time.Second {
-			t.Fatalf("active time %s, want the wrap-up to begin at 300ms and end well within the reserve", a)
+		// The wrap-up begins at the point (for a deadline, at most the lead
+		// in active time) and ends well within the reserve.
+		if a := out.Consumed.ActiveTime; active && a < lead || a > lead+reserve*3/4 {
+			t.Fatalf("active time %s, want the wrap-up to begin at %s and end well within the reserve", a, lead)
 		}
 	})
 }
