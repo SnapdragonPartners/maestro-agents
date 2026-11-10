@@ -245,7 +245,9 @@ func TestBudgetsInterruptedAttemptCharged(t *testing.T) {
 		s := b.open()
 		createLedgerRun(t, s)
 		reg := registry(t, ledgerType(&execLog{}))
-		budgets := agent.Budgets{Turns: 5}
+		// Five turns, and the wrap-up's reserve of three (ADR 0010), which
+		// this run never reaches.
+		budgets := agent.Budgets{Turns: 8}
 		// Commits: activation_started, the run's start, the first attempt.
 		cs := &crashStore{Store: s, at: 3, landing: true}
 		if _, err := activateBudgets(context.Background(), agent.NewController(cs, reg), claim(t, s), scripted(ledgerScript), 0, budgets); !errors.Is(err, agent.ErrStoreFailure) {
@@ -267,7 +269,7 @@ func TestBudgetsInterruptedAttemptCharged(t *testing.T) {
 			t.Fatalf("%d attempts, want 5", len(res))
 		}
 		// The interrupted attempt and the text answer are charged their
-		// reservations; the turn budget of five admits exactly this run.
+		// reservations, and the interrupted turn counts.
 		want := 3*15 + res[0].Tokens + res[3].Tokens
 		if c := out.Consumed; out.Status != store.StatusSucceeded || c.Turns != 5 || c.Tokens != want || c.Models[0].Unknown != 2 {
 			t.Fatalf("outcome = %+v, want succeeded with 5 turns and %d tokens", out, want)
@@ -386,7 +388,9 @@ func TestBudgetsDeadlineAcrossActivations(t *testing.T) {
 
 // TestBudgetsActiveTimeCutsOffACall: active time ends the activation's
 // context, so a model call in flight is cut off rather than overshooting,
-// and its attempt is recorded as failed.
+// and its attempt is recorded as failed. The first call is cut off at the
+// wrap-up point (ADR 0010), and the wrap-up's call, if the reserve leaves
+// time to make one, at the budget's end.
 func TestBudgetsActiveTimeCutsOffACall(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, b backend) {
 		s := b.open()
@@ -406,37 +410,55 @@ func TestBudgetsActiveTimeCutsOffACall(t *testing.T) {
 		}
 		wantBudgetFailure(t, out, agent.ReasonBudgetExhausted, agent.BudgetActiveTime)
 		es := entries(t, s, "r1")
-		if countKind(es, agent.EntryModelFailure) != 1 || out.Consumed.ActiveTime < 200*time.Millisecond {
+		if n := countKind(es, agent.EntryModelFailure); n == 0 || n != countKind(es, agent.EntryModelAttempt) || out.Consumed.ActiveTime < 200*time.Millisecond {
 			t.Fatalf("record %v, consumed %+v", kinds(es), out.Consumed)
 		}
 	})
 }
 
 // TestBudgetsActiveTimeAccumulates: active time spent by earlier
-// activations counts, so a later one starts with only what is left.
+// activations counts, so a later one starts with only what is left. The
+// first activation has ample budget; the second's client blocks until its
+// context ends, so the cutoff is timed by the clock alone, and must come
+// about the first activation's time sooner than the whole budget.
 func TestBudgetsActiveTimeAccumulates(t *testing.T) {
+	const budget, spent = 1500 * time.Millisecond, 500 * time.Millisecond
 	s := newBackend(t, "memstore").open()
 	createLedgerRun(t, s)
 	reg := registry(t, ledgerType(&execLog{}))
 	slow := &testllm.FakeChatClient{
 		ModelRef: llms.ModelRef{Provider: "fake", Name: "scripted"},
 		Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(spent)
 			return scripted(ledgerScript).Func(ctx, req)
 		},
 	}
-	out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), slow, 1, agent.Budgets{ActiveTime: 250 * time.Millisecond})
-	if err != nil || out.Status != store.StatusRunnable || out.Consumed.ActiveTime < 150*time.Millisecond {
+	out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), slow, 1, agent.Budgets{ActiveTime: budget})
+	if err != nil || out.Status != store.StatusRunnable || out.Consumed.ActiveTime < spent {
 		t.Fatalf("outcome = %+v, %v", out, err)
 	}
-	// About 100ms are left: the next slow call does not fit.
-	out, err = activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), slow, 0)
+	first := out.Consumed.ActiveTime
+	blocking := &testllm.FakeChatClient{
+		ModelRef: llms.ModelRef{Provider: "fake", Name: "scripted"},
+		Func: func(ctx context.Context, _ llms.ChatRequest) (llms.ChatResponse, error) {
+			<-ctx.Done()
+			return llms.ChatResponse{}, ctx.Err()
+		},
+	}
+	began := time.Now()
+	out, err = activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), blocking, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	took := time.Since(began)
 	wantBudgetFailure(t, out, agent.ReasonBudgetExhausted, agent.BudgetActiveTime)
-	if out.Consumed.ActiveTime < 250*time.Millisecond {
+	if out.Consumed.ActiveTime < budget {
 		t.Fatalf("consumed = %+v", out.Consumed)
+	}
+	// Without the first activation's time the cutoff would take the whole
+	// budget; the slack is well under the first activation's share.
+	if limit := budget - first + 200*time.Millisecond; took > limit {
+		t.Fatalf("second activation took %s, want under %s: earlier active time did not count", took, limit)
 	}
 }
 
@@ -672,7 +694,7 @@ func TestBudgetsActiveTimeSurvivesMidTurnCrash(t *testing.T) {
 	}
 	s := newBackend(t, "memstore").open()
 	createLedgerRun(t, s)
-	reg := registry(t, ledgerType(&execLog{}, slowLookup))
+	reg := registry(t, ledgerType(&execLog{}, slowLookup, ledgerTools(&execLog{})[2]))
 	// Commits: activation_started, the run's start, the attempt, the turn,
 	// then a permission, an attempt and a result per call: the fourth
 	// call's result is commit 16, which never lands.

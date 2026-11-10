@@ -16,7 +16,22 @@ type Env struct {
 	state  string
 	config json.RawMessage
 	run    store.Run
+	budget BudgetStatus
 	step   uint64
+}
+
+// Budget returns the run's budgets and consumption as of when the Env was
+// made, with the running model state's wrap-up point (ADR 0010). Its
+// String is the visible clock each of the state's tool results ends with,
+// so a Prompt can state the budget before the first result.
+func (e *Env) Budget() BudgetStatus {
+	s := e.budget
+	s.Consumed = s.Consumed.clone()
+	if s.WrapUp != nil {
+		w := *s.WrapUp
+		s.WrapUp = &w
+	}
+	return s
 }
 
 // RunID returns the run's ID.

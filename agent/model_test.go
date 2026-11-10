@@ -127,7 +127,8 @@ func ledgerType(execs *execLog, tools ...agent.Tool[ledgerData]) *agent.Type[led
 						Messages: []llms.Message{llms.UserText("items for " + env.RunID())},
 					}, nil
 				},
-				Tools: tools,
+				Tools:  tools,
+				WrapUp: agent.WrapUp{Tools: []string{"finish"}},
 			}},
 			{Name: "review", Next: []string{"done", "rejected"}, Code: func(ctx context.Context, env *agent.Env, d ledgerData) (agent.Transition[ledgerData], error) {
 				items, _, err := ledger(ctx, env)
@@ -940,7 +941,7 @@ func TestRegisterModelState(t *testing.T) {
 	with := func(f func(*agent.Tool[ledgerData])) *agent.ModelState[ledgerData] {
 		tool := read
 		f(&tool)
-		return &agent.ModelState[ledgerData]{Prompt: prompt, Tools: []agent.Tool[ledgerData]{tool}}
+		return &agent.ModelState[ledgerData]{Prompt: prompt, Tools: []agent.Tool[ledgerData]{tool}, WrapUp: agent.WrapUp{Tools: []string{"t"}}}
 	}
 	cases := map[string]*agent.Type[ledgerData]{
 		"code and model":      mk(&agent.ModelState[ledgerData]{Prompt: prompt}, true),

@@ -93,6 +93,7 @@ func recoveryAgent() *agent.Type[recoveryData] {
 						},
 					},
 				},
+				WrapUp: agent.WrapUp{Tools: []string{"finish"}},
 			}},
 			{Name: "done", End: agent.EndChanged},
 		},

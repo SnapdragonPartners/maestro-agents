@@ -207,8 +207,10 @@ type budgetRefusal struct {
 }
 
 // admit admits a model attempt against the run's budgets (BUD-1, BUD-3):
-// it counts the turn, and with a token budget lowers req.MaxTokens to what
-// the budget leaves. It returns the attempt's reservation, or the refusal.
+// it checks the turn budget and, with a token budget, lowers req.MaxTokens
+// to what the budget leaves. It returns the attempt's reservation, or the
+// refusal; it neither counts the turn nor charges the reservation, which
+// recordAttempt does with the attempt's commit (ADR 0009, items 4 and 7).
 // Until maestro-llms#149 lands each call is a single provider attempt
 // (MVP.md, BUD-1), so a turn and an attempt are admitted together.
 func (a *activation) admit(req *llms.ChatRequest) (Reservation, *budgetRefusal) {

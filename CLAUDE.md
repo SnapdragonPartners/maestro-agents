@@ -18,13 +18,13 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 
 Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
-so do agent types, the run controller for code and model states, and
-budgets (`agent/`); manifests and grants, then the intake agent, come
-next. The requirements are in
+so do agent types, the run controller for code and model states,
+budgets, and forced wrap-up with the visible clock (`agent/`); manifests
+and grants, then the intake agent, come next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0009; further design arrives with the code, each piece with its ADR.
+0010; further design arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -66,6 +66,13 @@ Load-bearing decisions so far:
   budgets are estimated; the clocks cancel the activation's context;
   consumption is checkpointed and rebuilt from the tail
   ([ADR 0009](docs/adr/0009-budgets.md))
+- Every model state declares `WrapUp.Tools`, its exits: when a time
+  budget's remaining is within the state's reserve, or the turns left
+  within its wrap-up turns, the next turns offer only those tools, forced,
+  with `Call.WrapUp` set, and a model call in flight at that point is cut
+  off; the bound spent fails the run with `wrap_up_failed`; each tool
+  result ends with the budget status, recorded as sent
+  ([ADR 0010](docs/adr/0010-wrap-up-and-the-visible-clock.md))
 
 ### Related repositories
 
@@ -132,7 +139,7 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, run controller, model states, budgets, record entries (ADR 0007-0009)
+agent/               # Agent types, registry, run controller, model states, budgets, wrap-up, record entries (ADR 0007-0010)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
