@@ -504,7 +504,7 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 	a.used.admitTurn(model)
 	entry := ModelAttemptEntry{
 		Model: model, State: r.st.name, Base: len(base), Params: r.paramsDigest,
-		Reservation: &r.res, Active: a.consumed().ActiveTime,
+		Reservation: &r.res,
 	}
 	if !r.paramsStored {
 		entry.Params = b.rawArtifact(r.paramsRaw)
@@ -520,7 +520,7 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 	for i := range delta {
 		entry.Messages = append(entry.Messages, b.artifact(toWireMessage(&delta[i])))
 	}
-	b.add(a.step1()+boolStep(cs != nil), EntryModelAttempt, entry)
+	b.add(a.step1()+boolStep(cs != nil), EntryModelAttempt, &entry)
 	if !r.land(ctx, b, cs) {
 		return nil, nil, errAbort
 	}
@@ -541,7 +541,7 @@ func (r *modelRun) recordFailure(ctx context.Context, err error, usage *Usage) e
 	// usage it reports (BUD-3, BUD-4).
 	r.a.used.charge(modelRef(r.client.Model()), usage, &r.res)
 	b := r.a.entries()
-	b.add(r.a.step1(), EntryModelFailure, f)
+	b.add(r.a.step1(), EntryModelFailure, &f)
 	if !r.land(ctx, b, nil) {
 		return errAbort
 	}
@@ -587,7 +587,7 @@ func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delt
 		results: make([]*resultRecord, len(resp.ToolCalls)),
 	}
 	t.msg = b.artifact(rec.Message)
-	b.add(t.step, EntryTurn, TurnEntry{
+	b.add(t.step, EntryTurn, &TurnEntry{
 		Model: modelRef(r.client.Model()), Response: b.artifact(&rec), Message: t.msg,
 		StopReason: string(resp.StopReason), Usage: usage, Calls: len(resp.ToolCalls),
 	})
@@ -764,7 +764,7 @@ func (r *modelRun) addPending(b *entries) bool {
 	}
 	for _, i := range r.pending {
 		res := r.turn.results[i]
-		b.add(r.turn.step, EntryResult, ResultEntry{
+		b.add(r.turn.step, EntryResult, &ResultEntry{
 			Call: i, Tool: r.turn.calls[i].Name, Status: ResultRefused, Result: b.artifact(res), IsError: res.IsError,
 		})
 	}
@@ -835,7 +835,7 @@ func (r *modelRun) resolve(ctx context.Context, i int) (*resultRecord, bool, err
 		}
 		b := a.entries()
 		completes := r.addPending(b)
-		b.add(t.step, EntryPermission, p)
+		b.add(t.step, EntryPermission, &p)
 		t.perm[i] = &p
 		if !p.Permission.Sendable() {
 			t.results[i] = &resultRecord{Content: deniedContent(&p), IsError: true}
@@ -869,7 +869,7 @@ func (r *modelRun) resolve(ctx context.Context, i int) (*resultRecord, bool, err
 	}
 	b := a.entries()
 	completes := r.addPending(b)
-	b.add(t.step, EntryAttempt, at)
+	b.add(t.step, EntryAttempt, &at)
 	if !r.commitTurnEntries(ctx, b, completes) {
 		return nil, false, errAbort
 	}
@@ -916,7 +916,7 @@ func (r *modelRun) unknown(ctx context.Context, i int, at *AttemptEntry) *ending
 	b := a.entries()
 	r.addPending(b)
 	res := &resultRecord{Content: "outcome unknown", IsError: true}
-	b.add(t.step, EntryResult, ResultEntry{Call: i, Tool: at.Tool, Status: ResultUnknown, Result: b.artifact(res), IsError: true})
+	b.add(t.step, EntryResult, &ResultEntry{Call: i, Tool: at.Tool, Status: ResultUnknown, Result: b.artifact(res), IsError: true})
 	out := OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: ReasonToolError}, Detail: fmt.Sprintf(
 		"call %d (%s): a %s write was attempted and its outcome is unknown (TOOL-12)", i, at.Tool, at.Contract)}
 	if ctx.Err() != nil {
@@ -1038,9 +1038,8 @@ func (r *modelRun) commitResult(ctx context.Context, i int, tool *erasedTool, re
 	b := a.entries()
 	r.addPending(b)
 	b.ops = append(b.ops, res.ops...)
-	b.add(t.step, EntryResult, ResultEntry{
+	b.add(t.step, EntryResult, &ResultEntry{
 		Call: i, Tool: tool.def.Name, Status: ResultExecuted, Result: b.artifact(rec), Ops: res.ops, IsError: rec.IsError,
-		Active: a.consumed().ActiveTime,
 	})
 	prev := t.results[i]
 	t.results[i] = rec
@@ -1105,11 +1104,11 @@ func (r *modelRun) addTransition(ctx context.Context, b *entries, i int, tool *e
 		if j < i {
 			status, content = ResultRefused, refusedContent(c.Name)
 		}
-		b.add(t.step, EntryResult, ResultEntry{
+		b.add(t.step, EntryResult, &ResultEntry{
 			Call: j, Tool: c.Name, Status: status, Result: b.artifact(&resultRecord{Content: content, IsError: true}), IsError: true,
 		})
 	}
-	b.add(t.step, EntryTransition, TransitionEntry{From: r.st.name, To: res.to, Data: res.data, Ops: res.ops})
+	b.add(t.step, EntryTransition, &TransitionEntry{From: r.st.name, To: res.to, Data: res.data, Ops: res.ops})
 	cs := a.cs
 	cs.State, cs.Data, cs.Step, cs.Model = res.to, res.data, t.step+1, nil
 	next := a.m.states[res.to]

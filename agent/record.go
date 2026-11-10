@@ -24,6 +24,16 @@ const (
 	EntryOutcome           = "outcome"
 )
 
+// Clock is the run's active time when an entry was committed (BUD-2, ADR
+// 0009 item 10). Every entry payload embeds it, and the runtime stamps it on
+// each entry as it adds it, so recovery restores active time as of the
+// latest entry and a crash loses at most the time since then.
+type Clock struct {
+	Active time.Duration `json:"active,omitempty"`
+}
+
+func (c *Clock) stamp(d time.Duration) { c.Active = d }
+
 // ActivationStarted is the payload of an activation_started entry: the
 // claim and the starting point, committed before anything else the
 // activation does. CheckpointSeq and RecordSeq are zero for a run's first
@@ -33,6 +43,7 @@ type ActivationStarted struct {
 	Epoch         uint64 `json:"epoch"`
 	CheckpointSeq uint64 `json:"checkpoint_seq"`
 	RecordSeq     uint64 `json:"record_seq"`
+	Clock
 }
 
 // RunStarted is the payload of a run_started entry (REC-1). Config is the
@@ -45,6 +56,7 @@ type RunStarted struct {
 	TriggerID    string          `json:"trigger_id"`
 	Config       string          `json:"config,omitempty"`
 	Trigger      json.RawMessage `json:"trigger,omitempty"`
+	Clock
 }
 
 // TransitionEntry is the payload of a transition entry: the state left and
@@ -54,6 +66,7 @@ type TransitionEntry struct {
 	To   string          `json:"to"`
 	Data json.RawMessage `json:"data"`
 	Ops  []store.Op      `json:"ops,omitempty"`
+	Clock
 }
 
 // OutcomeEntry is the payload of an outcome entry: the status and reason
@@ -64,6 +77,7 @@ type OutcomeEntry struct {
 	Status   store.Status `json:"status"`
 	Reason   store.Reason `json:"reason"`
 	Detail   string       `json:"detail,omitempty"`
+	Clock
 }
 
 // ModelRef is the model route a client reported (LLM-3).
@@ -77,20 +91,19 @@ type ModelRef struct {
 // parameters' artifact (system instructions, tools, tool choice and the
 // rest, without messages) and the transcript: the Base messages the state's
 // latest checkpoint holds, followed by the Messages artifacts added since.
-// Reservation is what the attempt was admitted on (BUD-3), and Active the
-// run's active time when it was committed (ADR 0009); an attempt recorded
-// before budgets were built has neither. Params are the parameters sent;
+// Reservation is what the attempt was admitted on (BUD-3); an attempt
+// recorded before budgets were built has none. Params are the parameters sent;
 // when a token budget lowered the output cap, StateParams are the state's
 // own, from which later attempts are admitted.
 type ModelAttemptEntry struct {
-	Reservation *Reservation  `json:"reservation,omitempty"`
-	Model       ModelRef      `json:"model"`
-	State       string        `json:"state"`
-	Params      string        `json:"params"`
-	StateParams string        `json:"state_params,omitempty"`
-	Messages    []string      `json:"messages,omitempty"`
-	Base        int           `json:"base"`
-	Active      time.Duration `json:"active,omitempty"`
+	Reservation *Reservation `json:"reservation,omitempty"`
+	Model       ModelRef     `json:"model"`
+	State       string       `json:"state"`
+	Params      string       `json:"params"`
+	StateParams string       `json:"state_params,omitempty"`
+	Messages    []string     `json:"messages,omitempty"`
+	Base        int          `json:"base"`
+	Clock
 }
 
 // TurnEntry is the payload of a turn entry: the attempt's response,
@@ -105,6 +118,7 @@ type TurnEntry struct {
 	StopReason string   `json:"stop_reason,omitempty"`
 	Usage      Usage    `json:"usage"`
 	Calls      int      `json:"calls"`
+	Clock
 }
 
 // Usage is a response's observed token usage (maestro-llms' llms.Usage,
@@ -138,6 +152,7 @@ type ModelFailureEntry struct {
 	Kind    string `json:"kind,omitempty"`
 	Message string `json:"message"`
 	Status  int    `json:"status,omitempty"`
+	Clock
 }
 
 // PermissionEntry is the payload of a permission entry: a call's
@@ -150,6 +165,7 @@ type PermissionEntry struct {
 	Permission Permission `json:"permission"`
 	Reason     string     `json:"reason,omitempty"`
 	Call       int        `json:"call"`
+	Clock
 }
 
 // AttemptEntry is the payload of an attempt entry, committed immediately
@@ -166,6 +182,7 @@ type AttemptEntry struct {
 	Key      string        `json:"key,omitempty"`
 	Action   ActionID      `json:"action"`
 	Call     int           `json:"call"`
+	Clock
 }
 
 // reissuable reports whether the attempt, with no recorded result, is
@@ -191,16 +208,15 @@ const (
 
 // ResultEntry is the payload of a result entry. Result is the artifact of
 // what the model receives; Ops are an atomic local transaction's object
-// operations, committed with the entry. An executed result records the
-// run's active time when it was committed (ADR 0009).
+// operations, committed with the entry.
 type ResultEntry struct {
-	Tool    string        `json:"tool"`
-	Status  ResultStatus  `json:"status"`
-	Result  string        `json:"result,omitempty"`
-	Ops     []store.Op    `json:"ops,omitempty"`
-	Active  time.Duration `json:"active,omitempty"`
-	Call    int           `json:"call"`
-	IsError bool          `json:"is_error,omitempty"`
+	Tool    string       `json:"tool"`
+	Status  ResultStatus `json:"status"`
+	Result  string       `json:"result,omitempty"`
+	Ops     []store.Op   `json:"ops,omitempty"`
+	Call    int          `json:"call"`
+	IsError bool         `json:"is_error,omitempty"`
+	Clock
 }
 
 // checkpointFormat is the version of checkpointState.

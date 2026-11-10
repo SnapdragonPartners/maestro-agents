@@ -714,3 +714,51 @@ func TestBudgetsUnrecordableResponseCharged(t *testing.T) {
 		t.Fatalf("the record charges %d tokens, want 15", tokens)
 	}
 }
+
+// TestBudgetsActiveTimeAtEveryCommit is the class behind round 2's and 3's
+// findings: every entry is stamped with the run's active time, so wherever
+// an activation dies, the time of every model call whose turn was recorded
+// survives it. Each call takes pause; the run records four turns, whatever
+// the crash point, so it consumes at least four pauses.
+func TestBudgetsActiveTimeAtEveryCommit(t *testing.T) {
+	const pause = 30 * time.Millisecond
+	slow := func() *testllm.FakeChatClient {
+		inner := scripted(ledgerScript)
+		return &testllm.FakeChatClient{
+			ModelRef: inner.ModelRef,
+			Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+				time.Sleep(pause)
+				return inner.Func(ctx, req)
+			},
+		}
+	}
+	budgets := agent.Budgets{ActiveTime: time.Hour}
+	total := func() int {
+		s := &countingStore{Store: newBackend(t, "memstore").open()}
+		createLedgerRun(t, s)
+		if _, err := activateBudgets(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), slow(), 0, budgets); err != nil {
+			t.Fatal(err)
+		}
+		return s.n
+	}()
+	for at := 1; at <= total; at++ {
+		t.Run(fmt.Sprintf("commit-%d", at), func(t *testing.T) {
+			t.Parallel()
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			reg := registry(t, ledgerType(&execLog{}))
+			cs := &crashStore{Store: s, at: at}
+			if _, err := activateBudgets(context.Background(), agent.NewController(cs, reg), claim(t, s), slow(), 0, budgets); !errors.Is(err, agent.ErrStoreFailure) {
+				t.Fatalf("crashed activation = %v, want a store failure", err)
+			}
+			releaseIfOwned(t, s)
+			out, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), slow(), 0, budgets)
+			if err != nil || out.Status != store.StatusSucceeded {
+				t.Fatalf("outcome = %+v, %v", out, err)
+			}
+			if n := countKind(entries(t, s, "r1"), agent.EntryTurn); out.Consumed.ActiveTime < time.Duration(n)*pause {
+				t.Fatalf("active time %s for %d recorded turns of %s each: a recorded call's time was lost", out.Consumed.ActiveTime, n, pause)
+			}
+		})
+	}
+}

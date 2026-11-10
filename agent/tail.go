@@ -59,6 +59,13 @@ func (f *tailFold) active(d time.Duration) {
 }
 
 func (f *tailFold) add(e *store.Entry) error {
+	// Every entry carries the run's active time when it was committed
+	// (ADR 0009, item 10); entries written before budgets carry none.
+	var c Clock
+	if err := decode(e, &c); err != nil {
+		return err
+	}
+	f.active(c.Active)
 	switch e.Kind {
 	case EntryActivationStarted:
 		return nil
@@ -69,9 +76,6 @@ func (f *tailFold) add(e *store.Entry) error {
 		}
 		if o.Status.Terminal() {
 			return errors.New("a terminal outcome")
-		}
-		if o.Consumed != nil {
-			f.active(o.Consumed.ActiveTime)
 		}
 		return nil
 	case EntryModelAttempt:
@@ -96,13 +100,6 @@ func (f *tailFold) add(e *store.Entry) error {
 		if err := f.turn.add(e); err != nil {
 			return err
 		}
-		if e.Kind == EntryResult {
-			// add decoded it: an executed result records the active time
-			// spent through its call (ADR 0009, item 10).
-			var r ResultEntry
-			_ = decode(e, &r)
-			f.active(r.Active)
-		}
 		return nil
 	}
 	return errors.New("a kind this version cannot recover")
@@ -126,7 +123,6 @@ func (f *tailFold) addAttempt(e *store.Entry) error {
 	}
 	f.open = &m
 	f.used.admitTurn(m.Model)
-	f.active(m.Active)
 	if f.states == nil {
 		f.states = map[string]bool{}
 	}

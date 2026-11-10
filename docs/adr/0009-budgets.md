@@ -141,10 +141,11 @@ amended.
    with its ending (ADR 0007, item 6).
 10. **Active time is measured from the clocks' start**, after the
     activation's reads and before its first commit, and recorded
-    cumulatively in each checkpoint, each `model_attempt` and each executed
-    call's `result` (`Active`), and each `outcome`. Recovery takes the
-    latest the checkpoint and tail record, so a crash loses at most the
-    time since the last of these (one model or tool call). There are no in-process waits yet, so active
+    cumulatively in each checkpoint and on **every execution-record
+    entry**: each payload embeds `Clock` (`active`), stamped where the
+    runtime adds entries, so no kind of entry can omit it. Recovery takes
+    the latest the checkpoint and tail record, so a crash loses at most the
+    time since the last commit (one model or tool call). There are no in-process waits yet, so active
     time never pauses (MVP.md, BUD-2).
 
 ## Consequences

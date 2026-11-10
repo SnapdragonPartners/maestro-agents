@@ -267,8 +267,14 @@ func (a *activation) clocks(ctx context.Context) (context.Context, context.Cance
 // activation's so far.
 func (a *activation) consumed() Consumption {
 	c := a.used.clone()
-	if !a.clockStart.IsZero() {
-		c.ActiveTime = a.activeBase + time.Since(a.clockStart)
-	}
+	c.ActiveTime = a.activeTime()
 	return c
+}
+
+// activeTime is the run's active time now.
+func (a *activation) activeTime() time.Duration {
+	if a.clockStart.IsZero() {
+		return a.used.ActiveTime
+	}
+	return a.activeBase + time.Since(a.clockStart)
 }

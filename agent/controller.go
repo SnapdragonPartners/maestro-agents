@@ -352,11 +352,17 @@ type entries struct {
 
 func (a *activation) entries() *entries { return &entries{a: a, next: a.nextEntry} }
 
-func (b *entries) add(step uint64, kind string, payload any) {
+// payload is an entry payload: every one embeds Clock.
+type payload interface{ stamp(time.Duration) }
+
+// add adds an entry, stamped with the run's active time (ADR 0009, item
+// 10).
+func (b *entries) add(step uint64, kind string, p payload) {
 	if b.err != nil {
 		return
 	}
-	raw, err := json.Marshal(payload)
+	p.stamp(b.a.activeTime())
+	raw, err := json.Marshal(p)
 	if err != nil {
 		b.err = storeFailure(fmt.Errorf("agent: encode %s entry: %w", kind, err))
 		return
@@ -388,7 +394,7 @@ func (b *entries) checkpoint(cs *checkpointState) {
 func (b *entries) outcome(step uint64, out *OutcomeEntry) {
 	used := b.a.consumed()
 	out.Consumed = &used
-	b.add(step, EntryOutcome, *out)
+	b.add(step, EntryOutcome, out)
 }
 
 // start commits activation_started, then either starts the run (Init, the
@@ -396,7 +402,7 @@ func (b *entries) outcome(step uint64, out *OutcomeEntry) {
 // from another version of the agent type.
 func (a *activation) start(ctx context.Context, config json.RawMessage) *ending {
 	b := a.entries()
-	b.add(a.step1(), EntryActivationStarted, ActivationStarted{
+	b.add(a.step1(), EntryActivationStarted, &ActivationStarted{
 		Owner: a.fence.Owner, Epoch: a.fence.Epoch, CheckpointSeq: a.ckSeq, RecordSeq: a.nextEntry - 1,
 	})
 	if b.err != nil {
@@ -505,7 +511,7 @@ func (r *runStart) add(b *entries) {
 	if r.config != nil {
 		b.ops = append(b.ops, store.PutArtifactOp(*r.config))
 	}
-	b.add(1, EntryRunStarted, r.entry)
+	b.add(1, EntryRunStarted, &r.entry)
 }
 
 // checkpointed records that a commit published cs at a.nextCk.
@@ -582,7 +588,7 @@ func (a *activation) commitTransition(ctx context.Context, st, next *erasedState
 	step := a.step1()
 	b := a.entries()
 	b.ops = append(b.ops, tr.ops...)
-	b.add(step, EntryTransition, TransitionEntry{From: st.name, To: next.name, Data: tr.data, Ops: tr.ops})
+	b.add(step, EntryTransition, &TransitionEntry{From: st.name, To: next.name, Data: tr.data, Ops: tr.ops})
 	cs := a.cs
 	cs.State, cs.Data, cs.Step = next.name, tr.data, step+1
 	terminal := next.end != ""
@@ -639,7 +645,7 @@ func (a *activation) outcome(out *OutcomeEntry) Outcome {
 
 // end commits the activation's ending outside a transition: its outcome
 // entry, the run record's change and the release, in one commit.
-func (a *activation) end(ctx context.Context, out OutcomeEntry) *ending {
+func (a *activation) end(ctx context.Context, out OutcomeEntry) *ending { //nolint:gocritic // hugeParam: callers pass literals; end stamps its own copy
 	b := a.entries()
 	// A terminal ending before the run's start landed records the start,
 	// so the run's inputs are on the record (REC-1). A non-terminal one
