@@ -244,9 +244,8 @@ state's third kind, item 1) and 9 (the tail's model-state kinds, item 11).
 - A tool call costs three commits and an attempt two, as ADR 0004 expected;
   a refused call's result rides on the next commit.
 - maestro-llms is a dependency of `agent`, and of `storetest` with
-  `testllm`. Until maestro-llms v1.2.0 is tagged the module requires a
-  pseudo-version of its main branch, which has image and document content
-  (maestro-llms #147, #148).
+  `testllm`. The module requires maestro-llms v1.2.0, the first release
+  with image and document content (maestro-llms #147, #148).
 - Not yet built, and decided with their own work: budgets (each attempt's
   reservation in `model_attempt`, interrupted attempts charged on recovery,
   the turn budget, forced wrap-up), manifests and tool grants (MAN-1,
