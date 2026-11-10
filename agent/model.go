@@ -59,8 +59,8 @@ const DefaultNudge = "You have not called a tool. This step is complete only whe
 // with tool choice auto, and the wrap-up message tells the model to call
 // one of them. Tool choice is not forced, since some providers reject a
 // forced tool (with reasoning on, or on every request). A tool executing a
-// wrap-up turn's call sees Call.WrapUp, so it can relax what it accepts from a model out
-// of budget. A state that has not transitioned after Turns wrap-up turns
+// wrap-up turn's call sees Call.WrapUp, so it can relax what it accepts
+// from a model out of budget. A state that has not transitioned after Turns wrap-up turns
 // fails the run with ReasonWrapUpFailed. Once the state wraps up it does
 // not go back, and a state entered with a budget already within its
 // reserve wraps up from its first turn.

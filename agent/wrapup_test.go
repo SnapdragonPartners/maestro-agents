@@ -704,3 +704,30 @@ func TestWrapUpRecoveryRefusesUnofferedCall(t *testing.T) {
 		t.Fatalf("escalate's result = %+v, want refused", first)
 	}
 }
+
+// TestWrapUpClockOnMediaResult: a result with parts (TOOL-11) ends with the
+// budget status as a final text part, recorded as sent, so the next
+// request, built from the durable transcript, carries it after the media.
+func TestWrapUpClockOnMediaResult(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, b backend) {
+		tools := ledgerTools(&execLog{})
+		tools[0].Execute = func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			return agent.Result[ledgerData]{Parts: []llms.ContentPart{llms.Text("page 1"), llms.Document("application/pdf", []byte("%PDF-1.7"))}}, nil
+		}
+		s := b.open()
+		defer s.Close()
+		createLedgerRun(t, s)
+		client := scripted(ledgerScript)
+		reg := registry(t, ledgerType(&execLog{}, tools...))
+		if _, err := activateBudgets(context.Background(), agent.NewController(s, reg), claim(t, s), client, 0,
+			agent.Budgets{ActiveTime: time.Hour}); err != nil {
+			t.Fatal(err)
+		}
+		second := client.Calls()[1].Messages
+		r := second[len(second)-1].Content[0].ToolResult
+		if len(r.Parts) != 3 || r.Parts[1].Media == nil || string(r.Parts[1].Media.Data) != "%PDF-1.7" ||
+			r.Parts[2].Type != llms.ContentText || !strings.HasPrefix(r.Parts[2].Text, "[budget: active time ") {
+			t.Fatalf("result parts = %+v, want the media then the clock", r.Parts)
+		}
+	})
+}

@@ -8,9 +8,10 @@ through [maestro-llms](https://github.com/SnapdragonPartners/maestro-llms).
 ## Status
 
 **Building the MVP** ([docs/MVP.md](docs/MVP.md)). The store interface and
-its reference stores (memory and files) exist, in `store/`, and agent types
-with the run controller for code and model states, in `agent/`; the rest of the API
-arrives in later PRs, each with an [ADR](docs/adr/README.md).
+its reference stores (memory and files) exist, in `store/`, and so do agent
+types, the run controller for code and model states, budgets, and forced
+wrap-up with the visible clock, in `agent/`; the rest of the API arrives in
+later PRs, each with an [ADR](docs/adr/README.md).
 
 ## Layout
 

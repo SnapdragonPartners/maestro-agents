@@ -92,10 +92,11 @@ type ModelRef struct {
 // rest, without messages) and the transcript: the Base messages the state's
 // latest checkpoint holds, followed by the Messages artifacts added since.
 // Reservation is what the attempt was admitted on (BUD-3); an attempt
-// recorded before budgets were built has none. Params are the parameters sent;
-// when they differ from the state's own (a token budget lowered the output
-// cap, or a wrap-up turn offered only the wrap-up's tools, ADR 0010), StateParams are the state's own, from which later attempts
-// are prepared.
+// recorded before budgets were built has none. Params are the parameters
+// sent; when they differ from the state's own (a token budget lowered the
+// output cap, or a wrap-up turn offered only the wrap-up's tools, ADR
+// 0010), StateParams are the state's own, from which later attempts are
+// prepared.
 type ModelAttemptEntry struct {
 	Reservation *Reservation `json:"reservation,omitempty"`
 	Model       ModelRef     `json:"model"`

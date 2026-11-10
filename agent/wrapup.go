@@ -158,7 +158,9 @@ func (a *activation) budgetStatus(p *WrapUpPoint) BudgetStatus {
 // addClock ends a tool result with the budget status, the visible clock
 // (BUD-2, TOOL-7): appended to its text, or as a final text part of a
 // result with parts. The result is recorded with it, as the model receives
-// it.
+// it. It is added after checkResult, which needs no rerun: the line is
+// non-empty valid UTF-8, and a text part is valid anywhere among a
+// result's parts (checkParts).
 func (r *modelRun) addClock(res *erasedResult) {
 	st := r.a.budgetStatus(&r.point)
 	line := st.String()
