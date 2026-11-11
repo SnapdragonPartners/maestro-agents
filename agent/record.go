@@ -48,12 +48,16 @@ type ActivationStarted struct {
 
 // RunStarted is the payload of a run_started entry (REC-1). Config is the
 // digest of the resolved configuration's artifact, empty if the run has
-// none; Budgets are the run's budgets, nil if it has none (ADR 0009).
+// none; Budgets are the run's budgets, nil if it has none (ADR 0009), with
+// the agent type's defaults filled in (ADR 0011, item 7). Manifest is the
+// digest of the agent type's manifest's artifact (MAN-4, ADR 0011 item 11).
 type RunStarted struct {
 	Budgets      *Budgets        `json:"budgets,omitempty"`
 	AgentType    string          `json:"agent_type"`
 	AgentVersion string          `json:"agent_version"`
+	Manifest     string          `json:"manifest,omitempty"`
 	TriggerID    string          `json:"trigger_id"`
+	TriggerKind  string          `json:"trigger_kind,omitempty"`
 	Config       string          `json:"config,omitempty"`
 	Trigger      json.RawMessage `json:"trigger,omitempty"`
 	Clock
@@ -164,6 +168,11 @@ type ModelFailureEntry struct {
 // permission and the policy decision behind it (STM-6, TOOL-3).
 type PermissionEntry struct {
 	Tool string `json:"tool"`
+	// Identity is the content identity of the tool the policy decided on
+	// (ADR 0011, item 3): recovery refuses the call if the tool now has
+	// another. Empty in a permission recorded before manifests, which is
+	// held to its effect alone.
+	Identity string `json:"identity,omitempty"`
 	// Effect is the tool's effect the policy decided on (TOOL-2): recovery
 	// refuses a call whose tool a later version declares with another.
 	Effect     Effect     `json:"effect"`

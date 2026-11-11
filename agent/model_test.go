@@ -116,9 +116,10 @@ func ledgerType(execs *execLog, tools ...agent.Tool[ledgerData]) *agent.Type[led
 		tools = ledgerTools(execs)
 	}
 	return &agent.Type[ledgerData]{
-		Name:    "ledger",
-		Version: "1",
-		Initial: "work",
+		Name:     "ledger",
+		Version:  "1",
+		Triggers: []string{agent.TriggerOneShot},
+		Initial:  "work",
 		States: []agent.State[ledgerData]{
 			{Name: "work", Next: []string{"review", "work"}, Model: &agent.ModelState[ledgerData]{
 				Prompt: func(_ context.Context, env *agent.Env, _ ledgerData) (llms.ChatRequest, error) {
@@ -203,7 +204,7 @@ func createLedgerRun(t testing.TB, s store.Store) {
 	const id = "r1"
 	t.Helper()
 	_, _, err := s.CreateRun(context.Background(), store.Run{
-		ID: id, Instance: inst, AgentType: "ledger", TriggerID: "trig-" + id, Trigger: json.RawMessage(`{}`),
+		ID: id, Instance: inst, AgentType: "ledger", TriggerID: "trig-" + id, TriggerKind: agent.TriggerOneShot, Trigger: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -539,8 +540,14 @@ func TestModelStatePolicyPendingAndError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonToolError {
-				t.Fatalf("outcome = %+v", out)
+			// Nothing can follow a pending verdict while approval is not
+			// built: a configuration error (ADR 0011, item 10).
+			want := agent.ReasonToolError
+			if name == "pending" {
+				want = agent.ReasonConfigError
+			}
+			if out.Status != store.StatusFailed || out.Reason.Code != want {
+				t.Fatalf("outcome = %+v, want %s", out, want)
 			}
 		})
 	}
@@ -936,7 +943,7 @@ func TestRegisterModelState(t *testing.T) {
 				return agent.Transition[ledgerData]{}, nil
 			}
 		}
-		return &agent.Type[ledgerData]{Name: "x", Initial: "m", States: []agent.State[ledgerData]{st, {Name: "end", End: agent.EndChanged}}}
+		return &agent.Type[ledgerData]{Name: "x", Initial: "m", Triggers: []string{agent.TriggerOneShot}, States: []agent.State[ledgerData]{st, {Name: "end", End: agent.EndChanged}}}
 	}
 	with := func(f func(*agent.Tool[ledgerData])) *agent.ModelState[ledgerData] {
 		tool := read
@@ -1347,6 +1354,49 @@ func TestModelStateChangedToolsDuringRecoveredTurn(t *testing.T) {
 	out, err := activateWith(context.Background(), agent.NewController(s, reg), claim(t, s), scripted(ledgerScript), 0)
 	if err != nil || out.Status != store.StatusSucceeded {
 		t.Fatalf("next activation = %+v, %v", out, err)
+	}
+}
+
+// A recorded call whose tool a later version declares with another
+// identity (here a new Tool.Version, effect unchanged) is refused, not
+// executed under the permission granted for the old tool (ADR 0011 item 3;
+// Codex round 2). An unchanged tool is reissued as before.
+func TestModelStateRecoveredCallChangedIdentity(t *testing.T) {
+	for _, changed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("changed=%v", changed), func(t *testing.T) {
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			// Commit 7 is the lookup's result: the read was attempted, its
+			// result did not land.
+			if _, err := activateWith(context.Background(), agent.NewController(&crashStore{Store: s, at: 7}, registry(t, ledgerType(&execLog{}))), claim(t, s), scripted(ledgerScript), 0); !errors.Is(err, agent.ErrStoreFailure) {
+				t.Fatalf("crashed activation = %v", err)
+			}
+			releaseIfOwned(t, s)
+			execs := &execLog{}
+			tools := ledgerTools(execs)
+			if changed {
+				tools[0].Version = "2"
+			}
+			if _, err := activateWith(context.Background(), agent.NewController(s, registry(t, ledgerType(execs, tools...))), claim(t, s), scripted(ledgerScript), 0); err != nil {
+				t.Fatal(err)
+			}
+			ran := slices.ContainsFunc(execs.calls, func(c string) bool { return strings.HasPrefix(c, "lookup#1.") })
+			if ran == changed {
+				t.Fatalf("executions = %v; lookup reissued %v, want %v", execs.calls, ran, !changed)
+			}
+			for _, e := range entries(t, s, "r1") {
+				if e.Kind != agent.EntryResult {
+					continue
+				}
+				if r := payload[agent.ResultEntry](t, e); r.Call == 0 && r.Tool == "lookup" {
+					if refused := r.Status == agent.ResultRefused && r.IsError; refused != changed {
+						t.Fatalf("lookup's result = %+v, refused %v, want %v", r, refused, changed)
+					}
+					return
+				}
+			}
+			t.Fatal("no result recorded for the lookup call")
+		})
 	}
 }
 

@@ -441,7 +441,7 @@ func TestNotActivatable(t *testing.T) {
 	ctx := context.Background()
 	createRun(t, s, "r1", `{"target":1}`)
 	createRunOn := func(id, instance, typ string) {
-		if _, _, err := s.CreateRun(ctx, store.Run{ID: id, Instance: instance, AgentType: typ, TriggerID: id}); err != nil {
+		if _, _, err := s.CreateRun(ctx, store.Run{ID: id, Instance: instance, AgentType: typ, TriggerID: id, TriggerKind: agent.TriggerOneShot}); err != nil {
 			t.Fatal(err)
 		}
 	}

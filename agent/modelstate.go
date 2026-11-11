@@ -977,12 +977,12 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 	var d Decision
 	err := guard(func() (err error) {
 		d, err = a.c.policy(ctx, &PolicyRequest{
-			Instance: a.run.Instance, AgentType: a.m.name, State: r.st.name, Tool: call.Name,
+			Instance: a.run.Instance, AgentType: a.m.name, State: r.st.name, Tool: call.Name, Identity: tool.identity,
 			Effect: tool.effect, Call: cloneCalls([]llms.ToolCall{*call})[0], Action: action,
 		})
 		return err
 	})
-	p := PermissionEntry{Call: i, Tool: call.Name, Effect: tool.effect, Reason: d.Reason}
+	p := PermissionEntry{Call: i, Tool: call.Name, Identity: tool.identity, Effect: tool.effect, Reason: d.Reason}
 	switch {
 	case err != nil:
 		return p, a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): policy: %v", i, call.Name, err))
@@ -995,8 +995,8 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 	case d.Verdict == VerdictDeny:
 		p.Permission = PermissionDenied
 	case d.Verdict == VerdictPending:
-		return p, a.fail(ctx, ReasonToolError, fmt.Sprintf(
-			"call %d (%s): policy answered pending; approval is not built yet (TOOL-4)", i, call.Name))
+		return p, a.fail(ctx, ReasonConfigError, fmt.Sprintf(
+			"call %d (%s): policy answered pending, and no approval mode is declared to follow it (TOOL-4, ADR 0011 item 10)", i, call.Name))
 	default:
 		return p, a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): policy answered %q", i, call.Name, d.Verdict))
 	}
@@ -1293,6 +1293,12 @@ func (r *modelRun) unavailable(i int) (string, bool) {
 	case tool == nil, !r.ms.offered(name, t.wrapUp), t.sent != nil && !t.sent[name]:
 		return refusedContent(name), true
 	case t.perm[i] != nil && t.perm[i].Effect != tool.effect:
+		return changedContent(name), true
+	case t.perm[i] != nil && t.perm[i].Identity != "" && t.perm[i].Identity != tool.identity:
+		// A decision is bound to the identity of the tool it decided on
+		// (ADR 0011, item 3): a changed tool is not executed under it. A
+		// permission recorded before manifests has no identity, and is
+		// held to its effect alone.
 		return changedContent(name), true
 	}
 	return "", false

@@ -91,8 +91,12 @@ type Run struct {
 	// TriggerID is the trigger's identity. A run is created conditionally
 	// on it, per instance, so a retried creation finds the existing run.
 	TriggerID string `json:"trigger_id"`
-	Status    Status `json:"status"`
-	Reason    Reason `json:"reason"`
+	// TriggerKind is the trigger's kind (MODE-4), which the run's agent
+	// type must declare (MAN-2, ADR 0011 item 5). The store keeps it as
+	// given.
+	TriggerKind string `json:"trigger_kind,omitempty"`
+	Status      Status `json:"status"`
+	Reason      Reason `json:"reason"`
 	// Trigger is the trigger's payload.
 	Trigger json.RawMessage `json:"trigger,omitempty"`
 	// Consumed holds the run's consumed budgets, in the runtime's format.
@@ -179,7 +183,11 @@ type Trigger struct {
 	EnqueuedAt time.Time `json:"enqueued_at"`
 	Instance   string    `json:"instance"`
 	// ID is the trigger's identity; enqueueing is idempotent on it.
-	ID      string          `json:"id"`
+	ID string `json:"id"`
+	// Kind is the trigger's kind (MODE-4), set by the host and kept as
+	// given (ADR 0011 item 5). The store does not copy it to a run: the
+	// host sets Run.TriggerKind when it creates the run from the trigger.
+	Kind    string          `json:"kind,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 	// Seq orders an instance's queued triggers by arrival.
 	Seq uint64 `json:"seq"`

@@ -63,9 +63,10 @@ func recoveryAgent() *agent.Type[recoveryData] {
 		}, nil
 	}
 	return &agent.Type[recoveryData]{
-		Name:    recoveryType,
-		Version: "1",
-		Initial: "work",
+		Name:     recoveryType,
+		Version:  "1",
+		Triggers: []string{agent.TriggerOneShot},
+		Initial:  "work",
 		States: []agent.State[recoveryData]{
 			{Name: "work", Next: []string{"done"}, Model: &agent.ModelState[recoveryData]{
 				Prompt: func(context.Context, *agent.Env, recoveryData) (llms.ChatRequest, error) {
@@ -197,7 +198,7 @@ func recoveryActivate(t testing.TB, s agent.Store, ctrl store.ControlPlane, clk 
 func recoveryRun(t testing.TB, s store.Store) {
 	t.Helper()
 	_, _, err := s.CreateRun(context.Background(), store.Run{
-		ID: runID, Instance: instance, AgentType: recoveryType, TriggerID: "trigger-1", Trigger: json.RawMessage(`{}`),
+		ID: runID, Instance: instance, AgentType: recoveryType, TriggerID: "trigger-1", TriggerKind: agent.TriggerOneShot, Trigger: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)

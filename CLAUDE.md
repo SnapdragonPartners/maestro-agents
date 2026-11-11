@@ -19,12 +19,12 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
-budgets, and forced wrap-up with the visible clock (`agent/`); manifests
-and grants, then the intake agent, come next. The requirements are in
+budgets, forced wrap-up with the visible clock, and manifests (`agent/`);
+namespace confinement, skills, then the intake agent, come next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0010; further design arrives with the code, each piece with its ADR.
+0011; further design arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -75,6 +75,16 @@ Load-bearing decisions so far:
   not transition ends with the budget status, recorded as sent (refusals
   and denials carry none)
   ([ADR 0010](docs/adr/0010-wrap-up-and-the-visible-clock.md))
+- An agent type is its manifest: it declares its trigger kinds, its
+  configuration's JSON Schema (a subset, validated by
+  `internal/jsonschema`; other keywords are refused at registration) and
+  default budgets; `Registry.Manifest` returns it with each tool's content
+  identity (definition, effect, contract and `Tool.Version`, defaulting to
+  the type's), which the permission records and recovery enforces; a run refused for its trigger kind, configuration or
+  budgets, or a `pending` verdict, fails with `config_error`; `run_started`
+  records the manifest's digest and the trigger kind
+  (`store.Run.TriggerKind`)
+  ([ADR 0011](docs/adr/0011-manifests.md))
 
 ### Related repositories
 
@@ -141,12 +151,13 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, run controller, model states, budgets, wrap-up, record entries (ADR 0007-0010)
+agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, record entries (ADR 0007-0011)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5 and TEST-6 included
 internal/storecore/  # The engine both reference stores share
+internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
 cmd/<agent>/         # (planned) Standalone agent executables
 docs/requirements.md # Library requirements (input to the design ADRs)
 docs/MVP.md          # MVP scope: what the MVP builds, what is deferred

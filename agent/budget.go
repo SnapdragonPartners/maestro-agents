@@ -25,7 +25,9 @@ const (
 // Budgets are a run's totals (BUD-1, ADR 0009). The host passes them with
 // the run's first activation; they are recorded with the run's start and
 // fixed for the run, so a later activation ignores ActivationInput.Budgets.
-// Zero means no limit.
+// In the host's ActivationInput.Budgets, a zero token, turn or active-time
+// budget takes the agent type's default (ADR 0011, item 7); a field zero
+// after that, and a zero deadline or cost, sets no limit.
 type Budgets struct {
 	// Deadline bounds elapsed calendar time across activations and waits
 	// (BUD-2). It is enforced by the activation's context deadline, and an
@@ -64,6 +66,22 @@ type Pricing interface {
 type TokenBudget struct {
 	Limit     int64 `json:"limit,omitempty"`
 	Estimated bool  `json:"estimated,omitempty"`
+}
+
+// withDefaults returns b with each token, turn and active-time budget it
+// leaves zero taken from d (ADR 0011, item 7). A token budget is taken
+// whole, with its kind.
+func (b Budgets) withDefaults(d *Budgets) Budgets { //nolint:gocritic // hugeParam: a value in, a value out
+	if b.Tokens.Limit == 0 && !b.Tokens.Estimated {
+		b.Tokens = d.Tokens
+	}
+	if b.Turns == 0 {
+		b.Turns = d.Turns
+	}
+	if b.ActiveTime == 0 {
+		b.ActiveTime = d.ActiveTime
+	}
+	return b
 }
 
 func (b *Budgets) validate() error {

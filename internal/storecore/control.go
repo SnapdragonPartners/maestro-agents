@@ -166,6 +166,9 @@ func (e *Engine) EnqueueTrigger(ctx context.Context, t store.Trigger) (store.Tri
 	if _, err = component("trigger", t.ID); err != nil {
 		return store.Trigger{}, err
 	}
+	if err = text("trigger kind", t.Kind); err != nil {
+		return store.Trigger{}, err
+	}
 	if err = rawJSON("trigger payload", t.Payload); err != nil {
 		return store.Trigger{}, err
 	}
@@ -323,6 +326,9 @@ func validNewRun(r store.Run) (string, error) {
 		return "", err
 	}
 	if err = text("agent version", r.AgentVersion); err != nil {
+		return "", err
+	}
+	if err = text("trigger kind", r.TriggerKind); err != nil {
 		return "", err
 	}
 	if err = rawJSON("trigger payload", r.Trigger); err != nil {

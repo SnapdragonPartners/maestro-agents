@@ -233,7 +233,7 @@ func testTriggers(t testing.TB, h Harness) {
 	ctx := context.Background()
 	enqueue := func(id string) store.Trigger {
 		t.Helper()
-		tr, err := s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: id, Payload: json.RawMessage(`{"id":"` + id + `"}`)})
+		tr, err := s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: id, Kind: "folder", Payload: json.RawMessage(`{"id":"` + id + `"}`)})
 		if err != nil {
 			t.Fatalf("EnqueueTrigger(%s): %v", id, err)
 		}
@@ -257,8 +257,8 @@ func testTriggers(t testing.TB, h Harness) {
 	if err != nil || len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" || got[1].Seq != c.Seq {
 		t.Fatalf("Triggers = %+v, %v; want a then c", got, err)
 	}
-	if !bytes.Equal(got[0].Payload, []byte(`{"id":"a"}`)) {
-		t.Fatalf("payload = %s", got[0].Payload)
+	if !bytes.Equal(got[0].Payload, []byte(`{"id":"a"}`)) || got[0].Kind != "folder" {
+		t.Fatalf("payload = %s, kind %q", got[0].Payload, got[0].Kind)
 	}
 	// A queued trigger's run is created on its identity; then the trigger
 	// is removed.
@@ -754,6 +754,10 @@ func testInvalidUTF8(t testing.TB, h Harness) {
 	_, err = e.s.Claim(ctx, "inst-2", bad, lease)
 	wantErr(t, err, store.ErrInvalid)
 	_, err = e.s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: bad})
+	wantErr(t, err, store.ErrInvalid)
+	_, err = e.s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: "t-kind", Kind: bad})
+	wantErr(t, err, store.ErrInvalid)
+	_, _, err = e.s.CreateRun(ctx, store.Run{ID: "r", Instance: "inst-2", AgentType: "a", TriggerID: "t", TriggerKind: bad})
 	wantErr(t, err, store.ErrInvalid)
 	// Raw JSON values too: encoding/json keeps invalid UTF-8 in a raw value
 	// byte for byte, which a reader decoding it would not get back.

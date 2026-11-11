@@ -62,9 +62,10 @@ type counterData struct {
 // duplicated step would be visible.
 func counterType() *agent.Type[counterData] {
 	return &agent.Type[counterData]{
-		Name:    "counter",
-		Version: "1",
-		Initial: "count",
+		Name:     "counter",
+		Version:  "1",
+		Triggers: []string{agent.TriggerOneShot},
+		Initial:  "count",
 		Init: func(_ context.Context, env *agent.Env) (counterData, error) {
 			var d counterData
 			err := json.Unmarshal(env.Trigger(), &d)
@@ -113,7 +114,7 @@ func registry(t testing.TB, types ...agent.Definition) *agent.Registry {
 func createRun(t testing.TB, s store.Store, id, trigger string) {
 	t.Helper()
 	_, _, err := s.CreateRun(context.Background(), store.Run{
-		ID: id, Instance: inst, AgentType: "counter", TriggerID: "trig-" + id, Trigger: json.RawMessage(trigger),
+		ID: id, Instance: inst, AgentType: "counter", TriggerID: "trig-" + id, TriggerKind: agent.TriggerOneShot, Trigger: json.RawMessage(trigger),
 	})
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)

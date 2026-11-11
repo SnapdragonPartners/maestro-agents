@@ -267,7 +267,7 @@ Known consumers:
   | Not terminal | `runnable` | more work is ready now; the activation stopped at a boundary (the host's step limit, or a shutdown while working) | none: an incarnation ending without a result |
   | Not terminal | `waiting` | the input the run needs to continue (STM-8): approval of pending actions in *suspend and resume* mode (TOOL-4), or other external input mid-run; never "the next trigger", which starts a new run | blocked |
   | Terminal | `succeeded` | `changed` or `no_change`; a *propose and finish* run (TOOL-4) succeeds with its pending actions in its output | completed, with disposition changed or already_satisfied |
-  | Terminal | `failed` | `budget_exhausted` (naming the budget), `budget_unenforceable` (a budget that cannot be enforced or computed: a hard budget with no known-safe input bound, BUD-3, or any budget, estimated included, for which no amount can be computed, BUD-4; a configuration error, so retrying as-is cannot help), `model_error`, `tool_error`, `invalid_output`, `wrap_up_failed` (LOOP-3), `object_conflict` (a code state's object-store operations still conflicted with other instances' commits after the retry bound, [ADR 0006](adr/0006-store-interface.md); retrying can help) or `state_error` (a code state, or the agent type's initialization or checkpoint migration, failed or broke its contract, [ADR 0007](adr/0007-agent-types-and-the-run-controller.md); a defect, so retrying as-is cannot help); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
+  | Terminal | `failed` | `budget_exhausted` (naming the budget), `budget_unenforceable` (a budget that cannot be enforced or computed: a hard budget with no known-safe input bound, BUD-3, or any budget, estimated included, for which no amount can be computed, BUD-4; a configuration error, so retrying as-is cannot help), `model_error`, `tool_error`, `invalid_output`, `wrap_up_failed` (LOOP-3), `object_conflict` (a code state's object-store operations still conflicted with other instances' commits after the retry bound, [ADR 0006](adr/0006-store-interface.md); retrying can help), `state_error` (a code state, or the agent type's initialization or checkpoint migration, failed or broke its contract, [ADR 0007](adr/0007-agent-types-and-the-run-controller.md); a defect, so retrying as-is cannot help) or `config_error` (the run was refused for its configuration: a trigger kind its agent type does not declare, a configuration its schema rejects, an invalid budget, or a policy asking for approval no state or tool declares, [ADR 0011](adr/0011-manifests.md); retrying as-is cannot help); each reason states whether retrying as-is can help | failed, with failure class; `timed_out` is `failed` with the active-time budget or the deadline (BUD-2) |
   | Terminal | `cancelled` | the cause the host supplied: superseded or operator | cancelled, with cancel reason |
 
   A shutdown preserves the disposition: a worker shutting down while the
@@ -501,7 +501,10 @@ Known consumers:
   time, an elapsed-time deadline and, when the host supplies prices, cost.
   Defaults come from the manifest; the host can override them per run.
   Consumption is part of the run's state and carries across activations
-  (RUN-1). Zero means no limit. Rate limits are not budgets (LLM-4).
+  (RUN-1). Zero means no limit; in the host's per-run budgets, a zero
+  token, turn or active-time budget takes the manifest's default, so a
+  host lifts a default by setting a larger limit, not zero ([ADR
+  0011](adr/0011-manifests.md), item 7). Rate limits are not budgets (LLM-4).
   Budgets come in two kinds, and only two:
   - *Hard* (the default): enforced so consumption never exceeds the
     budget. Token and cost budgets are enforced by admission before each
