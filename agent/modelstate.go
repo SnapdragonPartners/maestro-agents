@@ -30,6 +30,8 @@ var errStepLimit = errors.New("agent: step limit reached")
 // before the loop sees it, and tool wrappers that record each call's
 // permission, attempt and result.
 type modelRun struct {
+	// point is the state's wrap-up point (ADR 0010).
+	point WrapUpPoint
 	// params is the state's request without messages.
 	params llms.ChatRequest
 	client llms.ChatClient
@@ -61,7 +63,12 @@ type modelRun struct {
 	pending  []int
 	progress modelProgress
 	// res is the reservation of the attempt in flight (BUD-3).
-	res          Reservation
+	res Reservation
+	// wrapUp reports that the state is wrapping up (ADR 0010), which it
+	// never stops doing, and restart that the loop stopped to begin the
+	// wrap-up.
+	wrapUp       bool
+	restart      bool
 	paramsStored bool
 	transitioned bool
 	stoppedLimit bool
@@ -69,6 +76,9 @@ type modelRun struct {
 
 // turnState is a recorded turn and how far its calls are resolved.
 type turnState struct {
+	// sent holds the tools a recovered wrap-up turn's attempt recorded it
+	// offered; recovery refuses a call naming any other (ADR 0010, item 5).
+	sent    map[string]bool
 	resp    llms.ChatResponse
 	msg     string // the assistant message's artifact
 	delta   []llms.Message
@@ -81,6 +91,8 @@ type turnState struct {
 	results []*resultRecord
 	step    uint64
 	cursor  int
+	// wrapUp marks a wrap-up turn (ADR 0010).
+	wrapUp bool
 }
 
 func (t *turnState) complete() bool {
@@ -217,11 +229,17 @@ func (a *activation) modelStep(ctx context.Context, st *erasedState) *ending {
 		return a.fail(ctx, ReasonModelError, fmt.Sprintf("model state %q has no model client: ActivationInput.Client is nil", st.name))
 	}
 	r := &modelRun{a: a, st: st, ms: st.model, client: a.client}
+	r.point = a.wrapUpPoint(r.ms)
 	a.model = r
 	defer func() { a.model = nil }()
 	if e := r.load(ctx); e != nil {
 		return e
 	}
+	// A wrap-up never ends (ADR 0010, item 3): it began if the checkpoint
+	// counts a wrap-up turn or the tail holds a wrap-up attempt, landed,
+	// failed or interrupted, whatever this version's reserve.
+	r.wrapUp = r.progress.WrapUp > 0 || a.tail.wrapUp
+	a.tail.wrapUp = false
 	if a.tail.turn != nil {
 		if e := r.recoverTurn(ctx); e != nil || r.transitioned || r.stoppedLimit || ctx.Err() != nil {
 			return e
@@ -343,27 +361,61 @@ func (r *modelRun) loadParams(ctx context.Context, digest string) *ending {
 	return nil
 }
 
-// loop runs toolloop once from the durable transcript and decides what
-// follows. stop reports that modelStep returns e.
-func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
+// prepare builds the next toolloop run's request and tools from the
+// durable transcript, applying the completion policy (LOOP-3, ADR 0010).
+// stop reports that modelStep returns e instead.
+func (r *modelRun) prepare(ctx context.Context) (req llms.ChatRequest, tools []toolloop.Tool, e *ending, stop bool) {
 	a := r.a
+	// The activation's step limit comes first: a completion-policy ending
+	// (the nudge's, the wrap-up's bound) is decided at the next attempt,
+	// whichever way the last step completed (live, recovered, a text
+	// answer), as stopBeforeAttempt orders it (STM-7, ADR 0010).
+	if a.maxSteps > 0 && a.steps >= a.maxSteps {
+		return req, nil, nil, true
+	}
+	if !r.wrapUp && a.wrapUpDue(&r.point) {
+		r.wrapUp = true
+	}
 	send := slices.Concat(r.transcript, r.unsent)
-	if r.progress.Answered {
+	offered := r.ms.tools
+	req = r.params
+	switch {
+	case r.wrapUp:
+		// A wrap-up turn offers only the wrap-up's tools, with tool choice
+		// auto; its message starts the wrap-up and follows a wrap-up turn
+		// that called no tool (ADR 0010).
+		if r.wrapUpSpent(false) {
+			return req, nil, r.wrapUpFailed(ctx), true
+		}
+		if r.progress.WrapUp == 0 || r.progress.Answered {
+			send = append(send[:len(send):len(send)], llms.UserText(r.ms.wrapMsg))
+		}
+		offered, req.ToolChoice = r.ms.wrapUpTools()
+	case r.progress.Answered:
 		if r.progress.Nudged {
-			return a.fail(ctx, ReasonWrapUpFailed, fmt.Sprintf(
+			return req, nil, a.fail(ctx, ReasonWrapUpFailed, fmt.Sprintf(
 				"state %q: the model answered without calling a tool after it was nudged (LOOP-3)", r.st.name)), true
 		}
 		send = append(send[:len(send):len(send)], llms.UserText(r.ms.nudge))
 	}
 	if ctx.Err() != nil {
-		return nil, true
+		return req, nil, nil, true
 	}
-	req := r.params
 	req.Messages = send
 	req.Tools = nil
-	tools := make([]toolloop.Tool, len(r.ms.tools))
-	for i, t := range r.ms.tools {
+	tools = make([]toolloop.Tool, len(offered))
+	for i, t := range offered {
 		tools[i] = toolloop.Tool{Definition: t.def, Execute: r.execute}
+	}
+	return req, tools, nil, false
+}
+
+// loop runs toolloop once from the durable transcript and decides what
+// follows. stop reports that modelStep returns e.
+func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
+	req, tools, e, stop := r.prepare(ctx)
+	if stop {
+		return e, true
 	}
 	out := toolloop.Run(ctx, toolloop.Config{
 		Request:       req,
@@ -382,6 +434,12 @@ func (r *modelRun) loop(ctx context.Context) (e *ending, stop bool) {
 	}
 	if e := r.flush(ctx); e != nil {
 		return e, true
+	}
+	if r.restart {
+		// The loop stopped to begin the wrap-up: it runs again offering
+		// only the wrap-up's tools.
+		r.restart = false
+		return nil, false
 	}
 	return r.decide(ctx, &out)
 }
@@ -451,16 +509,34 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 	if err != nil {
 		return llms.ChatResponse{}, err
 	}
-	resp, err := c.client.Complete(ctx, req)
+	// Before the wrap-up, a call still in flight at the wrap-up point is
+	// cut off there (ADR 0010): its turn never lands, so the transcript is
+	// unchanged, and the failure is charged its reservation.
+	callCtx := ctx
+	if at, ok := r.a.wrapUpAt(&r.point); ok && !r.wrapUp {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithDeadlineCause(ctx, at, errWrapUpDue)
+		defer cancel()
+	}
+	resp, err := c.client.Complete(callCtx, req)
 	if err != nil {
+		if ctx.Err() == nil && errors.Is(context.Cause(callCtx), errWrapUpDue) {
+			if ferr := r.recordFailure(ctx, fmt.Errorf("cut off at the wrap-up point: %w", err), nil); ferr == errAbort { //nolint:errorlint // recordFailure returns errAbort itself
+				return llms.ChatResponse{}, errAbort
+			}
+			r.wrapUp, r.restart = true, true
+			return llms.ChatResponse{}, errWrapUp
+		}
 		return llms.ChatResponse{}, r.recordFailure(ctx, err, nil)
 	}
 	return r.recordTurn(ctx, &resp, delta, ddelta)
 }
 
 // stopBeforeAttempt stops the loop before a new attempt when the context
-// has ended or the activation has completed the host's step limit,
-// committing b (pending results) first. A nil error admits the attempt.
+// has ended, the activation has completed the host's step limit or the
+// state's wrap-up begins, committing b (pending results) first, and ends
+// the run when a wrap-up has used its turns (ADR 0010). A nil error admits
+// the attempt.
 func (r *modelRun) stopBeforeAttempt(ctx context.Context, b *entries, completes bool) error {
 	a := r.a
 	steps := a.steps
@@ -468,17 +544,27 @@ func (r *modelRun) stopBeforeAttempt(ctx context.Context, b *entries, completes 
 		steps++
 	}
 	limit := a.maxSteps > 0 && steps >= a.maxSteps
-	if ctx.Err() == nil && !limit {
+	wrap := !r.wrapUp && a.wrapUpDue(&r.point)
+	if ctx.Err() == nil && !limit && !wrap {
+		if r.wrapUp && r.wrapUpSpent(completes) {
+			// The ending's commit carries the pending results.
+			r.abort = r.wrapUpFailed(ctx)
+			return errAbort
+		}
 		return nil
 	}
 	if len(b.ops) > 0 && !r.commitTurnEntries(ctx, b, completes) {
 		return errAbort
 	}
-	if ctx.Err() != nil {
+	switch {
+	case ctx.Err() != nil:
 		return ctx.Err() //nolint:wrapcheck // toolloop classifies the context's error
+	case limit:
+		r.stoppedLimit = true
+		return errStepLimit
 	}
-	r.stoppedLimit = true
-	return errStepLimit
+	r.wrapUp, r.restart = true, true
+	return errWrapUp
 }
 
 // recordAttempt commits the model_attempt entry, with b's pending results
@@ -509,14 +595,19 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 	if !r.paramsStored {
 		entry.Params = b.rawArtifact(r.paramsRaw)
 	}
-	if req.MaxTokens != r.params.MaxTokens {
-		// Admission lowered the output cap: the attempt records the
-		// parameters it sent, and the state's own, which a recovered
-		// first turn restores and later admissions lower from (ADR 0009).
+	if req.MaxTokens != r.params.MaxTokens || r.wrapUp {
+		// Admission lowered the output cap, or a wrap-up turn offered only
+		// the wrap-up's tools: the attempt records the parameters it sent,
+		// and the state's own, which a recovered first turn restores and
+		// later attempts are prepared from (ADR 0009, ADR 0010).
 		sent := r.params
 		sent.MaxTokens = req.MaxTokens
+		if r.wrapUp {
+			sent.Tools, sent.ToolChoice = req.Tools, req.ToolChoice
+		}
 		entry.StateParams, entry.Params = entry.Params, b.artifact(&sent)
 	}
+	entry.WrapUp = r.wrapUp
 	for i := range delta {
 		entry.Messages = append(entry.Messages, b.artifact(toWireMessage(&delta[i])))
 	}
@@ -580,7 +671,7 @@ func (r *modelRun) recordTurn(ctx context.Context, resp *llms.ChatResponse, delt
 	a.used.charge(modelRef(r.client.Model()), &usage, &r.res)
 	b := a.entries()
 	t := &turnState{
-		resp: rec.response(), delta: delta, ddelta: ddelta, step: a.step1(),
+		resp: rec.response(), delta: delta, ddelta: ddelta, step: a.step1(), wrapUp: r.wrapUp,
 		calls:   cloneCalls(resp.ToolCalls),
 		perm:    make([]*PermissionEntry, len(resp.ToolCalls)),
 		attempt: make([]*AttemptEntry, len(resp.ToolCalls)),
@@ -643,6 +734,9 @@ func (r *modelRun) turnCheckpoint(b *entries) *checkpointState {
 	p.Transcript = append(append([]string(nil), r.digests...), t.ddelta...)
 	if !isEmpty(&t.resp) {
 		p.Transcript = append(p.Transcript, t.msg)
+	}
+	if t.wrapUp {
+		p.WrapUp++
 	}
 	if len(t.calls) > 0 {
 		msg := r.resultsMessage()
@@ -729,7 +823,7 @@ func (r *modelRun) completed(cs *checkpointState) {
 // onToolCall captures the results toolloop synthesizes for calls naming no
 // offered tool (ADR 0004, item 8): they never reach a wrapper.
 func (r *modelRun) onToolCall(ev *toolloop.ToolCallEvent) {
-	if r.abort != nil || r.turn == nil || ev.Err != nil || r.ms.byName[ev.Call.Name] != nil {
+	if r.abort != nil || r.turn == nil || ev.Err != nil || r.ms.offered(ev.Call.Name, r.turn.wrapUp) {
 		return
 	}
 	i := r.turn.find(&ev.Call)
@@ -940,7 +1034,7 @@ func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *Attempt
 	for attempt := 0; ; attempt++ {
 		var res erasedResult
 		err := guard(func() (err error) {
-			res, err = tool.exec(ctx, a.env(), a.cs.Data, cloneCalls([]llms.ToolCall{call})[0], at.Action, at.Key)
+			res, err = tool.exec(ctx, a.env(), a.cs.Data, cloneCalls([]llms.ToolCall{call})[0], at.Action, at.Key, t.wrapUp)
 			return err
 		})
 		// A read's or an atomic local transaction's result after the
@@ -956,6 +1050,9 @@ func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *Attempt
 		if err := r.checkResult(tool, &res); err != nil {
 			r.abort = a.fail(ctx, ReasonToolError, fmt.Sprintf("call %d (%s): %v", i, call.Name, err))
 			return nil, false, errAbort
+		}
+		if res.to == "" {
+			r.addClock(&res)
 		}
 		rec := &resultRecord{Content: res.content, Parts: res.parts, IsError: res.isError}
 		landed, conflict := r.commitResult(ctx, i, tool, &res, rec)
@@ -974,6 +1071,7 @@ func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *Attempt
 			// The persistent conflict is the call's result, a tool error
 			// the model receives (ADR 0005, item 10); nothing was written.
 			res = erasedResult{content: fmt.Sprintf("the write conflicted with another commit after %d re-runs: %v", attempt, conflict), isError: true}
+			r.addClock(&res)
 			rec = &resultRecord{Content: res.content, IsError: true}
 			if landed, _ := r.commitResult(ctx, i, tool, &res, rec); !landed {
 				return nil, false, errAbort
@@ -1128,7 +1226,7 @@ func (r *modelRun) addTransition(ctx context.Context, b *entries, i int, tool *e
 // its response, and each call's permission, attempt and result.
 func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, error) {
 	t := &turnState{
-		step: tt.step, msg: tt.entry.Message, ddelta: tt.attempt.Messages,
+		step: tt.step, msg: tt.entry.Message, ddelta: tt.attempt.Messages, wrapUp: tt.attempt.WrapUp,
 		perm:    make([]*PermissionEntry, tt.entry.Calls),
 		attempt: make([]*AttemptEntry, tt.entry.Calls),
 		results: make([]*resultRecord, tt.entry.Calls),
@@ -1142,6 +1240,16 @@ func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, er
 	}
 	t.resp = rec.response()
 	t.calls = cloneCalls(t.resp.ToolCalls)
+	if t.wrapUp {
+		var sent llms.ChatRequest
+		if err := a.readArtifact(ctx, tt.attempt.Params, &sent); err != nil {
+			return nil, err
+		}
+		t.sent = make(map[string]bool, len(sent.Tools))
+		for i := range sent.Tools {
+			t.sent[sent.Tools[i].Name] = true
+		}
+	}
 	t.delta = make([]llms.Message, len(tt.attempt.Messages))
 	for i, d := range tt.attempt.Messages {
 		var w wireMessage
@@ -1172,15 +1280,17 @@ func (a *activation) loadTurn(ctx context.Context, tt *tailTurn) (*turnState, er
 }
 
 // unavailable reports whether recovery refuses a recorded call, and with
-// what content: its tool is one this version does not declare, or declares
-// with an effect other than the one its recorded permission was granted
-// for, so the permission does not cover it (ADR 0008, item 11).
+// what content: its tool is one this version does not declare or does not
+// offer in the turn, one a wrap-up turn's attempt did not offer (ADR 0010,
+// item 5), or one declared with an effect other than the one its recorded
+// permission was granted for, so the permission does not cover it (ADR
+// 0008, item 11).
 func (r *modelRun) unavailable(i int) (string, bool) {
 	t := r.turn
 	name := t.calls[i].Name
 	tool := r.ms.byName[name]
 	switch {
-	case tool == nil:
+	case tool == nil, !r.ms.offered(name, t.wrapUp), t.sent != nil && !t.sent[name]:
 		return refusedContent(name), true
 	case t.perm[i] != nil && t.perm[i].Effect != tool.effect:
 		return changedContent(name), true
@@ -1199,6 +1309,9 @@ func (r *modelRun) recoverTurn(ctx context.Context) *ending {
 		return &ending{err: err}
 	}
 	r.turn = t
+	if t.wrapUp {
+		r.wrapUp = true
+	}
 	for i := range t.calls {
 		if t.results[i] != nil {
 			continue

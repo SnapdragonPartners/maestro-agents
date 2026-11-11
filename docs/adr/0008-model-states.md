@@ -1,6 +1,6 @@
 # 0008. Model states
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0010
 - **Date:** 2026-11-09
 
 ## Context

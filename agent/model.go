@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"time"
 	"unicode/utf8"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -41,11 +42,52 @@ type ModelState[D any] struct {
 	// call naming any other tool is refused, and the model receives the
 	// refusal as a tool error (MAN-2).
 	Tools []Tool[D]
+
+	// WrapUp is the state's forced wrap-up near a budget's end (LOOP-3,
+	// BUD-2, ADR 0010). It must name the tools that leave the state.
+	WrapUp WrapUp
 }
 
 // DefaultNudge is the message a model state sends after a turn that calls
 // no tool, when the state declares none.
 const DefaultNudge = "You have not called a tool. This step is complete only when you call one of the tools that finish it; call the appropriate tool now."
+
+// WrapUp declares a model state's forced wrap-up (LOOP-3, ADR 0010). When a
+// run's budget nears its end while the state runs (the active time or the
+// time to the deadline left is within Reserve, or the turns left within
+// Turns), the state's next turns are wrap-up turns: only Tools are offered,
+// with tool choice auto, and the wrap-up message tells the model to call
+// one of them. Tool choice is not forced, since some providers reject a
+// forced tool (with reasoning on, or on every request). A tool executing a
+// wrap-up turn's call sees Call.WrapUp, so it can relax what it accepts
+// from a model out of budget. A state that has not transitioned after
+// Turns wrap-up turns fails the run with ReasonWrapUpFailed. Once the
+// state wraps up it does not go back, and a state entered with a budget
+// already within its reserve wraps up from its first turn.
+type WrapUp struct {
+	// Message is the user message that starts the wrap-up, sent again
+	// after a wrap-up turn that calls no tool; empty uses
+	// DefaultWrapUpMessage.
+	Message string
+	// Tools names the tools that leave the state: at least one, each
+	// declared in the state's Tools. A wrap-up turn offers only these.
+	Tools []string
+	// Reserve is the time held back for wrap-up from each time budget the
+	// run sets. Zero is a tenth of each: of the active-time budget, and of
+	// the time from the run's creation to its deadline.
+	Reserve time.Duration
+	// Turns bounds the completed wrap-up turns (the first call, any
+	// resubmission after a tool error, and a turn that calls no tool),
+	// and is the reserve held back from the turn budget. Zero uses
+	// DefaultWrapUpTurns.
+	Turns int
+}
+
+// DefaultWrapUpMessage starts a wrap-up when the state declares no message.
+const DefaultWrapUpMessage = "Your budget for this step is nearly spent. Finish now: call one of the tools that complete this step with what you have."
+
+// DefaultWrapUpTurns bounds a wrap-up when the state declares no bound.
+const DefaultWrapUpTurns = 3
 
 // Tool is a tool offered to a model state (TOOL-1, TOOL-2, TOOL-12).
 type Tool[D any] struct {
@@ -120,6 +162,9 @@ type Call[D any] struct {
 	ToolCall llms.ToolCall
 	// Action is the call's action identity (ADR 0003, item 4).
 	Action ActionID
+	// WrapUp reports that the call is in a wrap-up turn (ADR 0010): the
+	// model is out of budget, and the tool may accept what it has.
+	WrapUp bool
 }
 
 // Result is a tool's result: what the model receives and, optionally, a
@@ -255,8 +300,34 @@ func (p Permission) valid() bool {
 type erasedModel struct {
 	prompt func(ctx context.Context, env *Env, data json.RawMessage) (llms.ChatRequest, error)
 	byName map[string]*erasedTool
-	nudge  string
-	tools  []*erasedTool
+	// exits are the wrap-up's tools, by name (ADR 0010).
+	exits   map[string]bool
+	nudge   string
+	wrapMsg string
+	tools   []*erasedTool
+	reserve time.Duration
+	// wrapTurns bounds the wrap-up turns.
+	wrapTurns int
+}
+
+// offered reports whether a turn offered the named tool: every declared
+// tool, or in a wrap-up turn the wrap-up's tools only.
+func (m *erasedModel) offered(name string, wrapUp bool) bool {
+	return m.byName[name] != nil && (!wrapUp || m.exits[name])
+}
+
+// wrapUpTools returns the tools a wrap-up turn offers, in declaration
+// order, and its tool choice: auto, whatever the state's own, which could
+// name a tool not offered or forbid tools; a forced choice is not used
+// because some providers reject one (ADR 0010, item 5).
+func (m *erasedModel) wrapUpTools() ([]*erasedTool, llms.ToolChoice) {
+	var out []*erasedTool
+	for _, t := range m.tools {
+		if m.exits[t.def.Name] {
+			out = append(out, t)
+		}
+	}
+	return out, llms.ToolChoice{Type: llms.ToolChoiceAuto}
 }
 
 // definitions returns the tool definitions the state offers, in order.
@@ -269,7 +340,7 @@ func (m *erasedModel) definitions() []llms.ToolDefinition {
 }
 
 type erasedTool struct {
-	exec     func(ctx context.Context, env *Env, data json.RawMessage, call llms.ToolCall, action ActionID, key string) (erasedResult, error)
+	exec     func(ctx context.Context, env *Env, data json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error)
 	effect   Effect
 	contract WriteContract
 	def      llms.ToolDefinition
@@ -309,9 +380,21 @@ type erasedResult struct {
 
 func eraseModel[D any](ms *ModelState[D]) *erasedModel {
 	prompt := ms.Prompt
-	em := &erasedModel{nudge: ms.Nudge, byName: make(map[string]*erasedTool, len(ms.Tools))}
+	em := &erasedModel{
+		nudge: ms.Nudge, wrapMsg: ms.WrapUp.Message, reserve: ms.WrapUp.Reserve, wrapTurns: ms.WrapUp.Turns,
+		byName: make(map[string]*erasedTool, len(ms.Tools)), exits: make(map[string]bool, len(ms.WrapUp.Tools)),
+	}
 	if em.nudge == "" {
 		em.nudge = DefaultNudge
+	}
+	if em.wrapMsg == "" {
+		em.wrapMsg = DefaultWrapUpMessage
+	}
+	if em.wrapTurns == 0 {
+		em.wrapTurns = DefaultWrapUpTurns
+	}
+	for _, name := range ms.WrapUp.Tools {
+		em.exits[name] = true
 	}
 	em.prompt = func(ctx context.Context, env *Env, raw json.RawMessage) (llms.ChatRequest, error) {
 		d, err := decodeData[D](raw)
@@ -328,12 +411,12 @@ func eraseModel[D any](ms *ModelState[D]) *erasedModel {
 		// a copy, compacted as the recorded parameters hold it, so what is
 		// sent is what is recorded (ADR 0008, item 8).
 		et.def.InputSchema = compactJSON(t.Definition.InputSchema)
-		et.exec = func(ctx context.Context, env *Env, raw json.RawMessage, call llms.ToolCall, action ActionID, key string) (erasedResult, error) {
+		et.exec = func(ctx context.Context, env *Env, raw json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error) {
 			d, err := decodeData[D](raw)
 			if err != nil {
 				return erasedResult{}, err
 			}
-			res, err := exec(ctx, &Call[D]{Env: env, Data: d, ToolCall: call, Action: action, IdempotencyKey: key})
+			res, err := exec(ctx, &Call[D]{Env: env, Data: d, ToolCall: call, Action: action, IdempotencyKey: key, WrapUp: wrapUp})
 			if err != nil {
 				return erasedResult{}, err
 			}
@@ -398,6 +481,39 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 		if err := t.checkEffect(tool); err != nil {
 			return err
 		}
+	}
+	// The wrap-up names declared tools, so it is checked after them: a
+	// defect in a tool's declaration is reported as itself.
+	return t.checkWrapUp(s)
+}
+
+// checkWrapUp checks a model state's wrap-up (ADR 0010): it names at least
+// one of the state's tools, each once.
+func (t *Type[D]) checkWrapUp(s *State[D]) error {
+	w := &s.Model.WrapUp
+	switch {
+	case len(w.Tools) == 0:
+		return t.invalid("model state %q wrap-up names no tool (LOOP-3)", s.Name)
+	case !utf8.ValidString(w.Message):
+		return t.invalid("model state %q wrap-up message is not valid UTF-8", s.Name)
+	case w.Reserve < 0:
+		return t.invalid("model state %q wrap-up reserve %s is negative", s.Name, w.Reserve)
+	case w.Turns < 0:
+		return t.invalid("model state %q wrap-up turns %d is negative", s.Name, w.Turns)
+	}
+	declared := map[string]bool{}
+	for i := range s.Model.Tools {
+		declared[s.Model.Tools[i].Definition.Name] = true
+	}
+	seen := map[string]bool{}
+	for _, name := range w.Tools {
+		switch {
+		case !declared[name]:
+			return t.invalid("model state %q wrap-up names tool %q, which the state does not declare", s.Name, name)
+		case seen[name]:
+			return t.invalid("model state %q wrap-up names tool %q twice", s.Name, name)
+		}
+		seen[name] = true
 	}
 	return nil
 }
