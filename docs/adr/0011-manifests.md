@@ -54,6 +54,10 @@ It amends, item by item:
   items 6, 8 and 11, an undeclared trigger kind and a configuration the
   schema rejects end it too, with `config_error`, and the ending records
   the manifest.
+- ADR 0007 item 12 (`state_error`, a defect in the agent type or its
+  input): by item 8, a run refused for its input (its trigger kind,
+  configuration or budgets) fails with `config_error`; `state_error`
+  keeps the agent type's own defects.
 - ADR 0008 item 3 (what a `Tool` declares and `Register` refuses): by
   items 3 and 9, a tool declares a version and an approval mode, and
   `Register` refuses two tools of one name with different identities and
@@ -70,9 +74,12 @@ It amends, item by item:
   `tool_error`, a `pending` verdict too): by item 10, a `pending` verdict
   fails it with `config_error`; an error, a panic or an unknown verdict
   still fails it with `tool_error`.
-- ADR 0009 item 2 (where budgets come from, and how invalid ones fail): by
-  items 7 and 8, an agent type's default budgets fill the fields the host
-  leaves unset, and an invalid budget fails the run with `config_error`.
+- ADR 0009 items 1 and 2 (what a zero budget means, where budgets come
+  from, and how invalid ones fail): by items 7 and 8, an agent type's
+  default budgets fill the fields the host leaves unset, so a zero token,
+  turn or active-time budget in the host's input means no limit only if
+  the type sets no default, and an invalid budget fails the run with
+  `config_error`.
 
 ## Decision
 
