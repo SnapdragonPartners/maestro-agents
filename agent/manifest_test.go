@@ -251,7 +251,7 @@ func TestRunStartRefusedForConfiguration(t *testing.T) {
 					cfg = json.RawMessage(tc.config)
 				}
 				out, err := agent.NewController(s, r).Activate(context.Background(), agent.ActivationInput{
-					Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Config: cfg,
+					Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Config: cfg,
 				})
 				if err != nil || out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonConfigError {
 					t.Fatalf("outcome = %+v, %v; want failed with config_error", out, err)
@@ -315,7 +315,7 @@ func TestRunStartValidConfiguration(t *testing.T) {
 			}
 			r := registry(t, typ)
 			out, err := agent.NewController(s, r).Activate(context.Background(), agent.ActivationInput{
-				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Config: cfg,
+				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Config: cfg,
 			})
 			if err != nil || out.Status != store.StatusSucceeded {
 				t.Fatalf("outcome = %+v, %v", out, err)

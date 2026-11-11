@@ -235,12 +235,21 @@ func TestCancelledBeforeActivation(t *testing.T) {
 	})
 }
 
-// failingReader fails object reads, as a broken store would.
+// failingReader fails agent code's object reads, as a broken store would.
+// The run start's namespace probe passes, so the failure reaches the
+// state.
 type failingReader struct{ store.Store }
 
 var errDisk = errors.New("disk gone")
 
-func (f failingReader) Object(context.Context, string, string) (store.Object, bool, error) {
+// probeKey is the key the controller reads at a run's start to check the
+// run's namespace (ADR 0012).
+const probeKey = "namespace-probe"
+
+func (f failingReader) Object(ctx context.Context, ns, key string) (store.Object, bool, error) {
+	if key == probeKey {
+		return f.Store.Object(ctx, ns, key)
+	}
 	return store.Object{}, false, errDisk
 }
 
@@ -266,12 +275,12 @@ func TestCodeStateFailures(t *testing.T) {
 		{bad(func(_ context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
 			return agent.Goto("done", d, store.AppendEntryOp(store.Entry{Run: env.RunID(), Seq: 99, Kind: "forged"})), nil
 		}), "object operations only"},
-		{bad(func(_ context.Context, _ *agent.Env, d counterData) (agent.Transition[counterData], error) {
-			return agent.Goto("done", d, store.PutObjectJSON(ns, "k", 0, json.RawMessage(`{`))), nil
+		{bad(func(_ context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
+			return agent.Goto("done", d, env.PutJSON("k", 0, json.RawMessage(`{`))), nil
 		}), "not valid JSON"},
-		{bad(func(_ context.Context, _ *agent.Env, d counterData) (agent.Transition[counterData], error) {
+		{bad(func(_ context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
 			// Valid as an operation, but longer than any store key.
-			return agent.Goto("done", d, store.PutObjectJSON(ns, strings.Repeat("k", 300), 0, json.RawMessage(`1`))), nil
+			return agent.Goto("done", d, env.PutJSON(strings.Repeat("k", 300), 0, json.RawMessage(`1`))), nil
 		}), "invalid request"},
 		{func() *agent.Type[counterData] {
 			typ := counterType()
@@ -539,7 +548,7 @@ func TestConfigurationRecorded(t *testing.T) {
 		c := agent.NewController(s, registry(t, typ))
 		for _, cfg := range []string{`{"model":"a"}`, `{"model":"b"}`} {
 			_, err := c.Activate(ctx, agent.ActivationInput{
-				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Config: json.RawMessage(cfg), MaxSteps: 1,
+				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Config: json.RawMessage(cfg), MaxSteps: 1,
 			})
 			if err != nil {
 				t.Fatalf("Activate: %v", err)
@@ -738,7 +747,7 @@ func TestStartRecordedOnTerminalStartFailure(t *testing.T) {
 					cancel(tc.cancel)
 				}
 				out, err := agent.NewController(s, registry(t, tc.typ)).Activate(ctx, agent.ActivationInput{
-					Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Config: json.RawMessage(tc.config),
+					Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Config: json.RawMessage(tc.config),
 				})
 				if err != nil || out.Status != tc.status {
 					t.Fatalf("outcome = %+v, %v; want %s", out, err, tc.status)

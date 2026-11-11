@@ -116,10 +116,10 @@ type State[D any] struct {
 type Transition[D any] struct {
 	Data D
 	To   string
-	// Ops are object operations only (store.PutObjectJSON,
-	// store.PutObjectBytes, store.DeleteObjectOp), conditional on the
-	// versions the state read. Any other kind fails the run with
-	// ReasonStateError.
+	// Ops are object operations only, in the run's namespace (Env.PutJSON,
+	// Env.PutBytes, Env.Delete; ADR 0012), conditional on the versions the
+	// state read. Any other kind, or a namespace other than the run's,
+	// fails the run with ReasonStateError.
 	Ops []store.Op
 }
 

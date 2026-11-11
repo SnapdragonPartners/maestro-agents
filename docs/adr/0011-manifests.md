@@ -1,6 +1,6 @@
 # 0011. Manifests
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0012
 - **Date:** 2026-11-10
 
 ## Context

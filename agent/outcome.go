@@ -56,10 +56,12 @@ const (
 	// type or its input: retrying as-is cannot help.
 	ReasonStateError = "state_error"
 	// ReasonConfigError: failed; the run was refused for its
-	// configuration (ADR 0011, item 8): a trigger kind its agent type does
-	// not declare, a configuration that is not valid JSON or that the
-	// type's schema rejects, an invalid budget, or a policy that asked for
-	// approval no state or tool declares. Retrying as-is cannot help.
+	// configuration (ADR 0011 item 8, ADR 0012 item 5): a trigger kind its
+	// agent type does not declare, a configuration that is not valid JSON
+	// or that the type's schema rejects, an invalid budget, a policy that
+	// asked for approval no state or tool declares, or an object-store
+	// namespace that is missing, is not valid UTF-8 or that the store
+	// refuses. Retrying as-is cannot help.
 	ReasonConfigError = "config_error"
 
 	// ReasonSuperseded: cancelled; the host superseded the run.

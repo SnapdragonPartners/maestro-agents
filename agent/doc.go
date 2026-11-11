@@ -13,6 +13,11 @@
 // trigger kind or configuration the type refuses fails at its start with
 // ReasonConfigError, and every run's start records the manifest's digest.
 //
+// A run reads and writes one object-store namespace, which the host
+// assigns with its first activation and which is fixed for the run (STORE-2,
+// ADR 0012). Agent code never names it: [Env] reads it and builds
+// operations in it, and an operation outside it fails the run.
+//
 // Every durable write an activation makes is one fenced, atomic commit
 // (ADR 0005): the execution record's entries (ADR 0004), the checkpoint at
 // every step boundary, a code state's object operations with its

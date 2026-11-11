@@ -18,7 +18,8 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
-const ledgerNS = "ledger"
+// ledgerNS is the namespace the ledger type's runs are given.
+const ledgerNS = ns
 
 // ledgerData is the ledger agent's state data.
 type ledgerData struct {
@@ -73,13 +74,13 @@ func recordItem(execs *execLog) func(context.Context, *agent.Call[ledgerData]) (
 		raw, _ := json.Marshal(items)
 		return agent.Result[ledgerData]{
 			Content: "recorded " + args.Item,
-			Ops:     []store.Op{store.PutObjectJSON(ledgerNS, c.Env.RunID(), version, raw)},
+			Ops:     []store.Op{c.Env.PutJSON(c.Env.RunID(), version, raw)},
 		}, nil
 	}
 }
 
 func ledger(ctx context.Context, env *agent.Env) ([]string, uint64, error) {
-	obj, ok, err := env.Object(ctx, ledgerNS, env.RunID())
+	obj, ok, err := env.Object(ctx, env.RunID())
 	if err != nil {
 		return nil, 0, err
 	}
@@ -213,7 +214,7 @@ func createLedgerRun(t testing.TB, s store.Store) {
 
 func activateWith(ctx context.Context, c *agent.Controller, f store.Fence, client llms.ChatClient, maxSteps int) (agent.Outcome, error) {
 	return c.Activate(ctx, agent.ActivationInput{
-		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Client: client, MaxSteps: maxSteps,
+		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: client, MaxSteps: maxSteps,
 	})
 }
 
@@ -772,8 +773,8 @@ func TestModelStateToolDefects(t *testing.T) {
 		"panic": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
 			panic("kaboom")
 		}},
-		"ops from a read": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
-			return agent.Result[ledgerData]{Ops: []store.Op{store.DeleteObjectOp(ledgerNS, "k", 0)}}, nil
+		"ops from a read": {Effect: agent.EffectRead, Execute: func(_ context.Context, c *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
+			return agent.Result[ledgerData]{Ops: []store.Op{c.Env.Delete("k", 0)}}, nil
 		}},
 		"undeclared transition": {Effect: agent.EffectRead, Execute: func(context.Context, *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
 			return agent.Result[ledgerData]{To: "done"}, nil
@@ -835,10 +836,14 @@ func TestModelStateToolReadFailure(t *testing.T) {
 	}
 }
 
-// failingObjects fails object reads, as a broken store would.
+// failingObjects fails a tool's object reads, as a broken store would; the
+// run start's namespace probe passes.
 type failingObjects struct{ store.Store }
 
-func (failingObjects) Object(context.Context, string, string) (store.Object, bool, error) {
+func (f failingObjects) Object(ctx context.Context, ns, key string) (store.Object, bool, error) {
+	if key == probeKey {
+		return f.Store.Object(ctx, ns, key)
+	}
 	return store.Object{}, false, errDisk
 }
 

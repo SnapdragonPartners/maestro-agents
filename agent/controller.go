@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 
@@ -87,6 +88,14 @@ type ActivationInput struct {
 	// and used by every later activation in its place (RUN-1). A later
 	// activation ignores this field.
 	Config json.RawMessage
+	// Namespace is the object-store namespace the run reads and writes
+	// (STORE-2, ADR 0012), assigned by the host: instances given the same
+	// namespace share its objects, and a run reaches no other. It is
+	// required, recorded when the run starts and fixed for the run: a later
+	// activation ignores this field. A run started with none, with one that
+	// is not valid UTF-8, or with one the store refuses, fails with
+	// ReasonConfigError.
+	Namespace string
 	// Budgets are the run's budgets (BUD-1, ADR 0009), recorded when the
 	// run starts and fixed for the run: a later activation ignores this
 	// field. A zero token, turn or active-time budget takes the agent
@@ -151,8 +160,11 @@ type activation struct {
 	fence  store.Fence
 	// config is the run's resolved configuration; cs.Config its digest.
 	config json.RawMessage
-	run    store.Run
-	cs     checkpointState
+	// namespace is the run's object-store namespace (ADR 0012): the
+	// host's until the run's start lands, then the recorded one.
+	namespace string
+	run       store.Run
+	cs        checkpointState
 	// budgets are the run's budgets; used is what it has consumed of them
 	// as of the entries committed, its active time as of the activation's
 	// start (activeBase; consumed adds the time since clockStart).
@@ -216,6 +228,7 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 	}
 	a := &activation{
 		c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1, client: in.Client, maxSteps: max(in.MaxSteps, 0),
+		namespace: in.Namespace,
 		// A run not yet started takes the agent type's defaults for the
 		// budgets the host leaves unset (ADR 0011, item 7), here, before
 		// the activation's clocks are installed from them; a started run
@@ -312,6 +325,12 @@ func (a *activation) restore(ctx context.Context, c *store.Checkpoint) error {
 	if a.cs.AgentType != a.m.name {
 		return refuse("run %q checkpoint %d is of agent type %q, not %q", a.run.ID, c.Seq, a.cs.AgentType, a.m.name)
 	}
+	// The run's namespace is the one recorded with its start, whatever the
+	// host passes now (ADR 0012).
+	if a.cs.Namespace == "" {
+		return refuse("run %q checkpoint %d records no namespace (ADR 0012)", a.run.ID, c.Seq)
+	}
+	a.namespace = a.cs.Namespace
 	if a.cs.Config != "" {
 		_, cfg, err := a.c.store.Artifact(durable(ctx), a.cs.Config)
 		if err != nil {
@@ -332,7 +351,7 @@ func (a *activation) env() *Env {
 	if a.model != nil {
 		point = &a.model.point
 	}
-	return &Env{reader: a.c.store, config: a.config, run: a.run, state: state, step: a.step1(), budget: a.budgetStatus(point)}
+	return &Env{reader: a.c.store, namespace: a.namespace, config: a.config, run: a.run, state: state, step: a.step1(), budget: a.budgetStatus(point)}
 }
 
 // step1 is the current step: the checkpoint's next step, or 1 before the
@@ -461,6 +480,7 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 		manifest: &store.Artifact{Digest: a.m.manifest.digest, MediaType: "application/json", Content: a.m.manifest.json},
 	}
 	a.start1 = start
+	start.entry.Namespace = recordable(a.namespace)
 	// The run's inputs are prepared before anything can refuse them, so a
 	// start that fails records them (REC-1). a.budgets already holds the
 	// agent type's defaults (begin).
@@ -476,6 +496,9 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 		sum := sha256.Sum256(config)
 		start.entry.Config = hex.EncodeToString(sum[:])
 		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
+	}
+	if e := a.checkNamespace(ctx); e != nil {
+		return e
 	}
 	if !a.m.triggers[a.run.TriggerKind] {
 		return a.fail(ctx, ReasonConfigError, fmt.Sprintf(
@@ -512,7 +535,7 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	}
 	cs := checkpointState{
 		AgentType: a.m.name, AgentVersion: a.m.version, State: a.m.initial, Data: data, Step: 1, Config: start.entry.Config,
-		Budgets: budgets,
+		Budgets: budgets, Namespace: a.namespace,
 	}
 	b := a.entries()
 	start.add(b)
@@ -525,6 +548,31 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	}
 	a.start1 = nil
 	a.checkpointed(&cs)
+	return nil
+}
+
+// checkNamespace checks the run's namespace before its start (ADR 0012,
+// item 5): a namespace that is missing or that the store refuses fails the
+// run with config_error, the host's configuration to fix; a store failure
+// ends the activation with an error. It returns nil if the namespace is
+// usable.
+func (a *activation) checkNamespace(ctx context.Context) *ending {
+	switch {
+	case a.namespace == "":
+		return a.fail(ctx, ReasonConfigError, "the host assigned no object-store namespace (STORE-2, ADR 0012)")
+	case !utf8.ValidString(a.namespace):
+		return a.fail(ctx, ReasonConfigError, "namespace is not valid UTF-8")
+	}
+	// Each store has its own limits on a namespace (the file store's on its
+	// encoded length, say). A read that names it finds out before agent
+	// code does, so a namespace the store refuses is the host's
+	// configuration error, not the state's defect.
+	if _, _, err := a.c.store.Object(durable(ctx), a.namespace, namespaceProbe); err != nil {
+		if errors.Is(err, store.ErrInvalid) {
+			return a.fail(ctx, ReasonConfigError, "namespace: "+err.Error())
+		}
+		return &ending{err: storeFailure(err)}
+	}
 	return nil
 }
 
@@ -605,8 +653,43 @@ func (a *activation) checkTransition(st *erasedState, tr *erasedTransition) (*er
 		if err := op.Validate(); err != nil {
 			return nil, fmt.Errorf("state %q operation %d: %w", st.name, i, err)
 		}
+		if err := a.inNamespace(op); err != nil {
+			return nil, fmt.Errorf("state %q operation %d: %w", st.name, i, err)
+		}
 	}
 	return a.m.states[tr.to], nil
+}
+
+// recordable returns s if the record can hold it as passed, and empty
+// otherwise. A namespace that is not valid UTF-8 is refused at the run's
+// start, and is not recorded: encoding/json would record U+FFFD in place
+// of its invalid bytes, a value the host never passed.
+func recordable(s string) string {
+	if !utf8.ValidString(s) {
+		return ""
+	}
+	return s
+}
+
+// namespaceProbe is the key a run's start reads to check that the store
+// accepts the run's namespace.
+const namespaceProbe = "namespace-probe"
+
+// inNamespace refuses an object operation outside the run's namespace
+// (STORE-2, ADR 0012). Every object operation agent code returns, a code
+// state's or a tool's, passes here before it reaches a commit.
+func (a *activation) inNamespace(op store.Op) error {
+	ns := ""
+	switch {
+	case op.PutObject != nil:
+		ns = op.PutObject.Namespace
+	case op.DeleteObject != nil:
+		ns = op.DeleteObject.Namespace
+	}
+	if ns != a.namespace {
+		return fmt.Errorf("operation is in namespace %q, not the run's (ADR 0012)", ns)
+	}
+	return nil
 }
 
 // commitTransition commits a transition: the state's object operations,

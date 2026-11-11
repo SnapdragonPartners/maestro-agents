@@ -9,15 +9,20 @@ import (
 )
 
 // Env is what a state, Init and Migrate see of the run (RUN-1): its
-// identity, trigger and configuration, and read access to the object store.
-// A code state writes only through the operations its transition carries.
+// identity, trigger and configuration, and read access to the run's
+// namespace of the object store (STORE-2, ADR 0012). A code state writes
+// only through the operations its transition carries, and an atomic local
+// transaction only through its result's; PutJSON, PutBytes and Delete build
+// them in the run's namespace. Agent code never names a namespace: the host
+// assigns one per run, and the runtime refuses an operation outside it.
 type Env struct {
-	reader store.Reader
-	state  string
-	config json.RawMessage
-	run    store.Run
-	budget BudgetStatus
-	step   uint64
+	reader    store.Reader
+	namespace string
+	state     string
+	config    json.RawMessage
+	run       store.Run
+	budget    BudgetStatus
+	step      uint64
 }
 
 // Budget returns the run's budgets and consumption as of when the Env was
@@ -60,19 +65,38 @@ func (e *Env) State() string { return e.state }
 // item 3).
 func (e *Env) Step() uint64 { return e.step }
 
-// Object reads an object. Reads may be stale: a write conditional on the
-// returned version is what makes a transition safe (ADR 0005, item 5). A
-// store failure is returned as a *ReadError.
-func (e *Env) Object(ctx context.Context, namespace, key string) (store.Object, bool, error) {
-	obj, ok, err := e.reader.Object(ctx, namespace, key)
+// Object reads an object in the run's namespace. Reads may be stale: a
+// write conditional on the returned version is what makes a transition safe
+// (ADR 0005, item 5). A store failure is returned as a *ReadError.
+func (e *Env) Object(ctx context.Context, key string) (store.Object, bool, error) {
+	obj, ok, err := e.reader.Object(ctx, e.namespace, key)
 	return obj, ok, readErr(err)
 }
 
-// ListObjects lists a namespace's keys that start with prefix, with their
-// versions. A store failure is returned as a *ReadError.
-func (e *Env) ListObjects(ctx context.Context, namespace, prefix string) ([]store.ObjectInfo, error) {
-	infos, err := e.reader.ListObjects(ctx, namespace, prefix)
+// ListObjects lists the keys in the run's namespace that start with prefix,
+// with their versions. A store failure is returned as a *ReadError.
+func (e *Env) ListObjects(ctx context.Context, prefix string) ([]store.ObjectInfo, error) {
+	infos, err := e.reader.ListObjects(ctx, e.namespace, prefix)
 	return infos, readErr(err)
+}
+
+// PutJSON returns an operation that puts a JSON value at key in the run's
+// namespace, conditional on the object's version (zero: the key must not
+// exist; ADR 0005 item 3).
+func (e *Env) PutJSON(key string, expectVersion uint64, value json.RawMessage) store.Op {
+	return store.PutObjectJSON(e.namespace, key, expectVersion, value)
+}
+
+// PutBytes returns an operation that puts bytes at key in the run's
+// namespace, conditional on the object's version.
+func (e *Env) PutBytes(key string, expectVersion uint64, value []byte) store.Op {
+	return store.PutObjectBytes(e.namespace, key, expectVersion, value)
+}
+
+// Delete returns an operation that deletes key in the run's namespace,
+// conditional on the object's version.
+func (e *Env) Delete(key string, expectVersion uint64) store.Op {
+	return store.DeleteObjectOp(e.namespace, key, expectVersion)
 }
 
 // readErr wraps a store failure as a *ReadError. An invalid request (a

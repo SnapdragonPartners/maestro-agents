@@ -169,8 +169,8 @@ type Call[D any] struct {
 	// Data is the state's data, decoded afresh for every execution, so a
 	// tool never sees a value an earlier execution modified.
 	Data D
-	// Env exposes the run and object reads. An atomic local transaction
-	// reads through it and writes only through Result.Ops.
+	// Env exposes the run and reads of its namespace. An atomic local
+	// transaction reads through it and writes only through Result.Ops.
 	Env *Env
 	// IdempotencyKey is a write call's idempotency key (TOOL-5), stable
 	// across every issue of the call; a read's is empty.
@@ -200,8 +200,11 @@ type Result[D any] struct {
 	To    string
 	Parts []llms.ContentPart
 	// Ops are object operations, for a tool whose contract is
-	// ContractAtomicLocal only, conditional on the versions it read. They
-	// commit with the call's result, and with its transition if it has one.
+	// ContractAtomicLocal only, in the run's namespace (Env.PutJSON,
+	// Env.PutBytes, Env.Delete; ADR 0012) and conditional on the versions
+	// it read. An operation outside the run's namespace fails the run with
+	// ReasonToolError. They commit with the call's result, and with its
+	// transition if it has one.
 	Ops []store.Op
 	// IsError marks a result the model should correct.
 	IsError bool

@@ -52,14 +52,18 @@ type ActivationStarted struct {
 // the agent type's defaults filled in (ADR 0011, item 7). Manifest is the
 // digest of the agent type's manifest's artifact (MAN-4, ADR 0011 item 11).
 type RunStarted struct {
-	Budgets      *Budgets        `json:"budgets,omitempty"`
-	AgentType    string          `json:"agent_type"`
-	AgentVersion string          `json:"agent_version"`
-	Manifest     string          `json:"manifest,omitempty"`
-	TriggerID    string          `json:"trigger_id"`
-	TriggerKind  string          `json:"trigger_kind,omitempty"`
-	Config       string          `json:"config,omitempty"`
-	Trigger      json.RawMessage `json:"trigger,omitempty"`
+	Budgets      *Budgets `json:"budgets,omitempty"`
+	AgentType    string   `json:"agent_type"`
+	AgentVersion string   `json:"agent_version"`
+	Manifest     string   `json:"manifest,omitempty"`
+	TriggerID    string   `json:"trigger_id"`
+	TriggerKind  string   `json:"trigger_kind,omitempty"`
+	Config       string   `json:"config,omitempty"`
+	// Namespace is the run's object-store namespace (STORE-2, ADR 0012);
+	// empty in the start of a run refused for a namespace that is not
+	// valid UTF-8, which the record cannot hold as passed.
+	Namespace string          `json:"namespace"`
+	Trigger   json.RawMessage `json:"trigger,omitempty"`
 	Clock
 }
 
@@ -244,15 +248,17 @@ const checkpointFormat = 1
 // consumed.
 type checkpointState struct {
 	// Model is a model state's progress, nil before its first turn lands.
-	Model        *modelProgress  `json:"model,omitempty"`
-	Budgets      *Budgets        `json:"budgets,omitempty"`
-	Consumed     *Consumption    `json:"consumed,omitempty"`
-	AgentType    string          `json:"agent_type"`
-	AgentVersion string          `json:"agent_version"`
-	State        string          `json:"state"`
-	Config       string          `json:"config,omitempty"`
-	Data         json.RawMessage `json:"data"`
-	Step         uint64          `json:"step"`
+	Model        *modelProgress `json:"model,omitempty"`
+	Budgets      *Budgets       `json:"budgets,omitempty"`
+	Consumed     *Consumption   `json:"consumed,omitempty"`
+	AgentType    string         `json:"agent_type"`
+	AgentVersion string         `json:"agent_version"`
+	State        string         `json:"state"`
+	Config       string         `json:"config,omitempty"`
+	// Namespace is the run's object-store namespace (ADR 0012).
+	Namespace string          `json:"namespace"`
+	Data      json.RawMessage `json:"data"`
+	Step      uint64          `json:"step"`
 }
 
 // modelProgress is a model state's transcript at a step boundary (STM-6):
