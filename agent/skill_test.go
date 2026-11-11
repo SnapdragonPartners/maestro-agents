@@ -42,6 +42,14 @@ func skilledLedger(fsys fstest.MapFS, grant ...string) *agent.Type[ledgerData] {
 
 func TestRegisterRefusesSkills(t *testing.T) {
 	big := strings.Repeat("x", agent.MaxSkillFileBytes)
+	// Each file is small, but listing them all (after SKILL.md, or in the
+	// no-such-file error) would exceed the cap a result must fit.
+	manyFiles := fstest.MapFS{"a/SKILL.md": {Data: []byte("---\nname: a\ndescription: d\n---\nbody")}}
+	for i := range agent.MaxSkillFileBytes / 80 {
+		manyFiles[fmt.Sprintf("a/%s-%04d.md", strings.Repeat("r", 90), i)] = &fstest.MapFile{Data: []byte("x")}
+	}
+	header := "---\nname: a\ndescription: d\n---\n"
+	atCap := header + strings.Repeat("b", agent.MaxSkillFileBytes-len(header))
 	cases := map[string]struct {
 		fsys  fstest.MapFS
 		grant []string
@@ -66,6 +74,8 @@ func TestRegisterRefusesSkills(t *testing.T) {
 		"empty body":            {fstest.MapFS{"a/SKILL.md": {Data: []byte("---\nname: a\ndescription: d\n---\n  \n")}}, nil, "empty body"},
 		"not UTF-8":             {fstest.MapFS{"a/SKILL.md": {Data: []byte("---\nname: a\ndescription: d\n---\nbody")}, "a/x.bin": {Data: []byte{0xff}}}, nil, "not valid UTF-8"},
 		"over cap":              {fstest.MapFS{"a/SKILL.md": {Data: []byte("---\nname: a\ndescription: d\n---\nbody")}, "a/big.md": {Data: []byte(big + "x")}}, nil, "over the"},
+		"file list over cap":    {manyFiles, nil, "files are"},
+		"body at cap with file": {fstest.MapFS{"a/SKILL.md": {Data: []byte(atCap)}, "a/" + strings.Repeat("r", 60) + ".md": {Data: []byte("x")}}, nil, "files are"},
 		"unknown grant":         {skillFS(), []string{"nope"}, "do not hold"},
 		"grant twice":           {skillFS(), []string{"style", "style"}, "twice"},
 		"grant without fs":      {nil, []string{"style"}, "do not hold"},
@@ -384,5 +394,15 @@ func TestReadSkillChangedBeforeRecovery(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the request after recovery carries no result for s1")
+	}
+}
+
+// TestSkillAtCapRegisters: a SKILL.md exactly at the cap, with no other
+// files to list, is a result that fits, so it registers.
+func TestSkillAtCapRegisters(t *testing.T) {
+	header := "---\nname: a\ndescription: d\n---\n"
+	typ := skilledLedger(fstest.MapFS{"a/SKILL.md": {Data: []byte(header + strings.Repeat("b", agent.MaxSkillFileBytes-len(header)))}}, "a")
+	if err := agent.NewRegistry().Register(typ); err != nil {
+		t.Fatalf("Register = %v", err)
 	}
 }

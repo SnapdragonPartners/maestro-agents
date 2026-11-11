@@ -116,9 +116,13 @@ It amends, item by item:
      read (STM-6). It never transitions, so it is never a wrap-up tool
      (ADR 0010), and a wrap-up turn does not offer it.
    - No agent type may declare a tool named `read_skill`.
-   - A skill file never exceeds `MaxSkillFileBytes`, so when TOOL-10's
-     output cap is built it must be at least that, plus the visible clock's
-     footer, and a skill is never truncated.
+   - No result `read_skill` returns for a skill exceeds
+     `MaxSkillFileBytes`: not a file, not the instructions with the list
+     of the skill's other files, and not the no-such-file error listing
+     its files. Registration refuses a skill whose instructions and list,
+     or error, would. So when TOOL-10's output cap is built it must be at
+     least that, plus the visible clock's footer, and a skill is never
+     truncated.
 
 ### Identity
 

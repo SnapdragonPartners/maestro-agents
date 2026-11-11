@@ -27,8 +27,11 @@ const ReadSkillTool = "read_skill"
 // instructions.
 const SkillFile = "SKILL.md"
 
-// MaxSkillFileBytes caps each file of a skill, so the read-skill tool never
-// returns more than a tool result may carry (ADR 0013, item 3).
+// MaxSkillFileBytes caps every result the read-skill tool returns for a
+// skill: each file, SKILL.md's instructions with the list of the skill's
+// other files, and the no-such-file error listing its files. Registration
+// refuses a skill any of them would exceed, so a result is never more than
+// a tool result may carry (ADR 0013, item 3).
 const MaxSkillFileBytes = 32 * 1024
 
 // Limits on a skill's header, the Agent Skills format's own.
@@ -47,9 +50,13 @@ type skill struct {
 	name        string
 	description string
 	// body is SKILL.md after its header, trimmed.
-	body     string
-	identity string
-	paths    []string
+	body string
+	// instructions is the result of reading SKILL.md (body, then the
+	// other files' list), and missing the error for an unknown file.
+	instructions string
+	missing      string
+	identity     string
+	paths        []string
 }
 
 // references returns the skill's files other than SKILL.md, sorted.
@@ -65,7 +72,8 @@ const skillIdentityFormat = "maestro-agents/skill-identity/1"
 // holding SKILL.md and any reference files. Loading is strict: a file at
 // the root, a directory without SKILL.md, a malformed or unknown header
 // field, a name that does not match its directory, a file that is not
-// valid UTF-8 or is over MaxSkillFileBytes, or anything but regular files
+// valid UTF-8 or is over MaxSkillFileBytes, a SKILL.md whose result with
+// the file list would be, or anything but regular files
 // and directories, is an error. The result is ordered by name.
 func loadSkills(fsys fs.FS) ([]*skill, error) {
 	root, err := fs.ReadDir(fsys, ".")
@@ -129,8 +137,25 @@ func loadSkill(fsys fs.FS, dir string) (*skill, error) {
 		return nil, fmt.Errorf("%s names the skill %q, not its directory's name", SkillFile, s.name)
 	}
 	slices.Sort(s.paths)
+	if err := s.results(); err != nil {
+		return nil, err
+	}
 	s.identity = s.digest()
 	return s, nil
+}
+
+// results builds the read-skill results that list the skill's files, and
+// refuses a skill either would make larger than MaxSkillFileBytes.
+func (s *skill) results() error {
+	s.instructions = s.body
+	if refs := s.references(); len(refs) > 0 {
+		s.instructions += "\n\nFiles in this skill: " + strings.Join(refs, ", ") + "."
+	}
+	s.missing = fmt.Sprintf("Skill %s has no such file. Its files: %s.", s.name, strings.Join(s.paths, ", "))
+	if n := max(len(s.instructions), len(s.missing)); n > MaxSkillFileBytes {
+		return fmt.Errorf("%s's instructions with the list of its %d files are %d bytes, over the %d cap", SkillFile, len(s.paths), n, MaxSkillFileBytes)
+	}
+	return nil
 }
 
 // parse reads SKILL.md: a header of key: value lines between --- markers,
@@ -280,16 +305,12 @@ func readSkillResult(byName map[string]*skill, names []string, params json.RawMe
 		return erasedResult{content: "No such skill. Choose one of: " + strings.Join(names, ", ") + ".", isError: true}
 	}
 	if !in.hasFile || in.file == SkillFile {
-		content := s.body
-		if refs := s.references(); len(refs) > 0 {
-			content += "\n\nFiles in this skill: " + strings.Join(refs, ", ") + "."
-		}
-		return erasedResult{content: content}
+		return erasedResult{content: s.instructions}
 	}
 	if f, ok := s.files[in.file]; ok {
 		return erasedResult{content: f}
 	}
-	return erasedResult{content: fmt.Sprintf("Skill %s has no such file. Its files: %s.", s.name, strings.Join(s.paths, ", ")), isError: true}
+	return erasedResult{content: s.missing, isError: true}
 }
 
 type readSkillInput struct {

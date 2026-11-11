@@ -12,6 +12,11 @@ import (
 func TestReadSkillInputBoundary(t *testing.T) {
 	a := &skill{name: "a", body: "Body A.", files: map[string]string{"SKILL.md": "raw", "ref/note.md": "Note."}, paths: []string{"SKILL.md", "ref/note.md"}}
 	b := &skill{name: "b", body: "Body B.", files: map[string]string{"SKILL.md": "raw", "only-b.txt": "B only."}, paths: []string{"SKILL.md", "only-b.txt"}}
+	for _, s := range []*skill{a, b} {
+		if err := s.results(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	byName := map[string]*skill{"a": a, "b": b}
 	names := []string{"a", "b"}
 	const (
