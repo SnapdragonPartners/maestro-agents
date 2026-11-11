@@ -501,7 +501,10 @@ Known consumers:
   time, an elapsed-time deadline and, when the host supplies prices, cost.
   Defaults come from the manifest; the host can override them per run.
   Consumption is part of the run's state and carries across activations
-  (RUN-1). Zero means no limit. Rate limits are not budgets (LLM-4).
+  (RUN-1). Zero means no limit; in the host's per-run budgets, a zero
+  token, turn or active-time budget takes the manifest's default, so a
+  host lifts a default by setting a larger limit, not zero ([ADR
+  0011](adr/0011-manifests.md), item 7). Rate limits are not budgets (LLM-4).
   Budgets come in two kinds, and only two:
   - *Hard* (the default): enforced so consumption never exceeds the
     budget. Token and cost budgets are enforced by admission before each

@@ -55,9 +55,10 @@ It amends, item by item:
   schema rejects end it too, with `config_error`, and the ending records
   the manifest.
 - ADR 0007 item 12 (`state_error`, a defect in the agent type or its
-  input): by item 8, a run refused for its input (its trigger kind,
-  configuration or budgets) fails with `config_error`; `state_error`
-  keeps the agent type's own defects.
+  input): by item 8, a run refused for an undeclared trigger kind, an
+  invalid or rejected configuration or an invalid budget fails with
+  `config_error`; `state_error` keeps the agent type's own defects, and a
+  budget that cannot be enforced keeps `budget_unenforceable` (ADR 0009).
 - ADR 0008 item 3 (what a `Tool` declares and `Register` refuses): by
   items 3 and 9, a tool declares a version and an approval mode, and
   `Register` refuses two tools of one name with different identities and
