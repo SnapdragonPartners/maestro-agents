@@ -32,10 +32,12 @@ The host chooses the model, and the runtime cannot know which providers
 accept a forced choice.
 
 It amends ADR 0007 item 13 (`Env` gains the budget status, item 9), ADR
-0008 items 8 and 11 (a wrap-up turn's parameters and the tools it offers,
-items 4 and 6), 10 (the checkpoint counts wrap-up turns, item 6) and 14
-(the completion policy gains forced wrap-up, items 1 to 5), and ADR 0009
-item 5 (an attempt's `StateParams`, item 6). As the ADR index requires, the
+0008 items 1 (`ModelState` gains the required `WrapUp`, item 1), 3 (a
+`Call` carries `WrapUp`, item 5), 8 and 11 (a wrap-up turn's parameters
+and the tools it offers, items 4 and 6), 10 (the checkpoint counts
+wrap-up turns, item 6) and 14 (the completion policy gains forced
+wrap-up, items 1 to 5), and ADR 0009 item 5 (an attempt's `StateParams`,
+item 6). As the ADR index requires, the
 amended ADRs record the amendment in their status lines and in the index,
 and nowhere else; this paragraph is the list of what is amended.
 
@@ -189,7 +191,7 @@ and nowhere else; this paragraph is the list of what is amended.
 - [ADR 0004](0004-execution-record-and-recovery.md): the write-ahead record
   and recovery
 - [ADR 0007](0007-agent-types-and-the-run-controller.md): item 13 amended
-- [ADR 0008](0008-model-states.md): items 8, 10, 11 and 14 amended
+- [ADR 0008](0008-model-states.md): items 1, 3, 8, 10, 11 and 14 amended
 - [ADR 0009](0009-budgets.md): item 5 amended; the clocks (item 9) and
   charging (item 8) applied
 - buggrit `internal/review/stage.go` (investigate, nudge, forced wrap-up,

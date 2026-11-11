@@ -472,8 +472,10 @@ Known consumers:
   every consumer, and each use declares what completes it. A model state's
   policy requires a transition: after a text-only or empty answer the loop
   nudges the model once, and when the state's budget nears its end the
-  loop forces the tools that leave the state, letting the agent type relax
-  validation for that wrap-up turn (buggrit `stage.go`; Maestro issue
+  loop forces a wrap-up: it offers only the tools that leave the state
+  (with tool choice auto, since some providers reject a forced one: ADR
+  0010, item 5) and tells the model to call one, letting the agent type
+  relax validation for that wrap-up turn (buggrit `stage.go`; Maestro issue
   #317, where an architect deadlocked because the model never called its
   exit tool). Forced wrap-up has a bounded number of attempts; if the
   provider or model cannot comply, the run fails with `wrap_up_failed`
@@ -952,8 +954,9 @@ to agents stays here.
 are met without changes to `maestro-llms`: ending a turn at a
 transition-causing call uses the existing `ToolResult.Stop`
 (`maestro-llms` ADR 0017), whose return-statement semantics STM-3 adopts
-(later siblings are not executed); forced wrap-up (LOOP-3) is built here, as buggrit does, by running
-the loop again with the exit tools forced; and recording a model turn
+(later siblings are not executed); forced wrap-up (LOOP-3) is built here,
+as buggrit does, by running the loop again offering only the exit tools
+(unforced: ADR 0010, item 5); and recording a model turn
 before its tool calls execute (STM-6, REC-2) needs no pre-request hook,
 because a fallible decorator around the injected client records each
 response before the loop sees it. `toolloop` already executes sibling
