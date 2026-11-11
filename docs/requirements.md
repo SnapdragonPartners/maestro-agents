@@ -450,7 +450,8 @@ Known consumers:
   item 5)
 - **SKL-2 Must: progressive disclosure.** Skill descriptions go into the
   system prompt; bodies and references load on demand through a built-in
-  read-skill tool.
+  read-skill tool. (ADR 0013: the descriptions go into the read-skill
+  tool's description, which the model receives with every request.)
 - **SKL-3 Must: skills sit behind a source interface.** Compiled-in only
   for now; **plan for** admin-written skills from another source.
 - **SKL-4 Should: prompts are embedded templates with content identity**

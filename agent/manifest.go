@@ -51,11 +51,16 @@ type Manifest struct {
 	Initial string   `json:"initial"`
 	// Config is the instance configuration's JSON Schema, nil if the
 	// type takes any configuration.
-	Config   json.RawMessage `json:"config,omitempty"`
-	States   []StateManifest `json:"states"`
-	Tools    []ToolManifest  `json:"tools,omitempty"`
-	Triggers []string        `json:"triggers"`
-	Format   int             `json:"format"`
+	Config json.RawMessage `json:"config,omitempty"`
+	States []StateManifest `json:"states"`
+	Tools  []ToolManifest  `json:"tools,omitempty"`
+	// Skills are the type's skills, by name (ADR 0013, item 4).
+	Skills []SkillManifest `json:"skills,omitempty"`
+	// Templates are the type's prompt templates, by path (ADR 0013,
+	// item 5).
+	Templates []TemplateManifest `json:"templates,omitempty"`
+	Triggers  []string           `json:"triggers"`
+	Format    int                `json:"format"`
 }
 
 // The kinds of state a manifest lists.
@@ -75,8 +80,13 @@ type StateManifest struct {
 	// Approval is a model state's approval mode.
 	Approval Approval `json:"approval,omitempty"`
 	Next     []string `json:"next,omitempty"`
-	// Tools names the tools a model state is granted, in order.
+	// Tools names the tools a model state declares, in order.
 	Tools []string `json:"tools,omitempty"`
+	// Skills names the skills a model state grants, in order. A state
+	// granting any is also offered ReadSkillTool, which Tools does not
+	// list: its definition is derived from these skills (ADR 0013, item
+	// 4).
+	Skills []string `json:"skills,omitempty"`
 	// WrapUp names a model state's wrap-up tools (ADR 0010).
 	WrapUp []string `json:"wrap_up,omitempty"`
 }
@@ -125,10 +135,16 @@ func toolIdentity(def *llms.ToolDefinition, effect Effect, contract WriteContrac
 }
 
 // manifest returns the type's manifest. The type has passed check.
-func (t *Type[D]) manifest() *Manifest {
+func (t *Type[D]) manifest(l *loaded) *Manifest {
 	m := &Manifest{
 		Format: ManifestFormat, Name: t.Name, Version: t.Version, Initial: t.Initial,
 		Triggers: append([]string(nil), t.Triggers...), Config: compactJSON(t.Config),
+	}
+	for _, s := range l.ordered {
+		m.Skills = append(m.Skills, s.manifest())
+	}
+	if l.templates != nil {
+		m.Templates = append([]TemplateManifest(nil), l.templates.manifest...)
 	}
 	if t.Budgets != (Budgets{}) {
 		b := t.Budgets
@@ -145,6 +161,7 @@ func (t *Type[D]) manifest() *Manifest {
 			sm.Kind = StateKindModel
 			sm.Approval = s.Model.Approval
 			sm.WrapUp = append([]string(nil), s.Model.WrapUp.Tools...)
+			sm.Skills = append([]string(nil), s.Model.Skills...)
 			for j := range s.Model.Tools {
 				tool := &s.Model.Tools[j]
 				name := tool.Definition.Name

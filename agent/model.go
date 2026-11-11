@@ -45,8 +45,18 @@ type ModelState[D any] struct {
 
 	// Tools are the tools offered to the model in this state (TOOL-1). A
 	// call naming any other tool is refused, and the model receives the
-	// refusal as a tool error (MAN-2).
+	// refusal as a tool error (MAN-2). No tool may be named
+	// ReadSkillTool.
 	Tools []Tool[D]
+
+	// Skills names the skills granted in this state (SKL-1, SKL-2, ADR
+	// 0013), each held by the type's Skills, in the order the index lists
+	// them. A state granting any is also offered the ReadSkillTool tool,
+	// after its own: its description lists each skill's name and
+	// description, and a call returns a skill's SKILL.md or one of its
+	// files. It is a read; it does not transition, so it is never a
+	// wrap-up tool, and a wrap-up turn does not offer it.
+	Skills []string
 
 	// WrapUp is the state's forced wrap-up near a budget's end (LOOP-3,
 	// BUD-2, ADR 0010). It must name the tools that leave the state.
@@ -404,7 +414,7 @@ type erasedResult struct {
 	isError bool
 }
 
-func eraseModel[D any](ms *ModelState[D], typeVersion string) *erasedModel {
+func eraseModel[D any](ms *ModelState[D], typeVersion string, skills []*skill) *erasedModel {
 	prompt := ms.Prompt
 	em := &erasedModel{
 		nudge: ms.Nudge, wrapMsg: ms.WrapUp.Message, reserve: ms.WrapUp.Reserve, wrapTurns: ms.WrapUp.Turns,
@@ -461,6 +471,11 @@ func eraseModel[D any](ms *ModelState[D], typeVersion string) *erasedModel {
 		}
 		em.tools = append(em.tools, et)
 		em.byName[t.Definition.Name] = et
+	}
+	if len(skills) > 0 {
+		et := readSkill(skills)
+		em.tools = append(em.tools, et)
+		em.byName[et.def.Name] = et
 	}
 	return em
 }

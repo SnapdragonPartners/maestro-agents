@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"text/template"
 
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
@@ -21,6 +22,7 @@ type Env struct {
 	state     string
 	config    json.RawMessage
 	run       store.Run
+	templates *template.Template
 	budget    BudgetStatus
 	step      uint64
 }

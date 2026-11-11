@@ -48,4 +48,11 @@
 // turns fails the run with ReasonWrapUpFailed. Each tool result that does
 // not transition ends with the run's [BudgetStatus], the visible clock: a
 // run with no budget shows none, and refusals and denials carry none.
+//
+// An agent type can embed skills and prompt templates (SKL-1 to SKL-4,
+// ADR 0013), each read and hashed at registration and listed in its
+// manifest with its identity. A model state granted skills
+// ([ModelState.Skills]) is offered the [ReadSkillTool] tool, whose
+// description indexes them and which loads a skill's instructions or
+// files on demand; [Env.Render] renders a template.
 package agent

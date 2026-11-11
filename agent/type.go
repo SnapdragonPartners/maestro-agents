@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"slices"
+	"text/template"
 	"unicode/utf8"
 
 	"github.com/SnapdragonPartners/maestro-agents/internal/jsonschema"
@@ -37,6 +39,24 @@ type Type[D any] struct {
 	// ReasonStateError. An error or panic fails the run the same way, with
 	// the exceptions Init's has.
 	Migrate func(ctx context.Context, fromVersion string, data json.RawMessage) (D, error)
+
+	// Skills holds the type's skills (SKL-1, SKL-3, ADR 0013), normally an
+	// embed.FS: one directory per skill at its root, named for the skill,
+	// holding SKILL.md and any reference files. SKILL.md opens with a
+	// header of key: value lines between --- markers, naming the skill
+	// (name, which must match the directory) and describing it
+	// (description); its instructions follow. Every file is valid UTF-8
+	// and at most MaxSkillFileBytes. Skills are read and checked once,
+	// at registration, and a malformed one is refused. A model state
+	// grants skills by name (ModelState.Skills); nil declares none.
+	Skills fs.FS
+
+	// Templates holds the type's prompt templates (SKL-4, ADR 0013 item
+	// 5): every file is a text/template, named by its path. They are
+	// parsed once, at registration (one that does not parse, or that
+	// defines templates of its own, is refused), and a state renders one
+	// with Env.Render. Nil declares none.
+	Templates fs.FS
 
 	// Name is the agent type's registered name, matched against a run
 	// record's AgentType.
@@ -180,11 +200,13 @@ type machine struct {
 	states   map[string]*erasedState
 	triggers map[string]bool
 	config   *jsonschema.Schema
-	manifest encodedManifest
-	name     string
-	version  string
-	initial  string
-	defaults Budgets
+	// templates are the type's parsed prompt templates, nil if none.
+	templates *template.Template
+	manifest  encodedManifest
+	name      string
+	version   string
+	initial   string
+	defaults  Budgets
 }
 
 type erasedState struct {
@@ -205,7 +227,8 @@ func (t *Type[D]) compile() (*machine, error) {
 	if t == nil {
 		return nil, fmt.Errorf("%w: nil agent type", ErrInvalidType)
 	}
-	if err := t.check(); err != nil {
+	l, err := t.checkAndLoad()
+	if err != nil {
 		return nil, err
 	}
 	// Every function is captured now, so changing t after registration
@@ -219,7 +242,7 @@ func (t *Type[D]) compile() (*machine, error) {
 		initial:  t.Initial,
 		defaults: t.Budgets,
 	}
-	if err := t.compileManifest(m); err != nil {
+	if err := t.compileManifest(m, l); err != nil {
 		return nil, err
 	}
 	m.init = func(ctx context.Context, env *Env) (json.RawMessage, error) {
@@ -245,7 +268,7 @@ func (t *Type[D]) compile() (*machine, error) {
 		s := &t.States[i]
 		es := &erasedState{name: s.Name, end: s.End, next: map[string]bool{}}
 		if s.Model != nil {
-			es.model = eraseModel(s.Model, t.Version)
+			es.model = eraseModel(s.Model, t.Version, l.granted(s.Model.Skills))
 		}
 		for _, n := range s.Next {
 			es.next[n] = true
@@ -274,8 +297,11 @@ func (t *Type[D]) compile() (*machine, error) {
 
 // compileManifest sets what the machine enforces of the type's manifest
 // (ADR 0011): its trigger kinds, its compiled configuration schema and the
-// manifest's encoding.
-func (t *Type[D]) compileManifest(m *machine) error {
+// manifest's encoding; and its parsed templates (ADR 0013).
+func (t *Type[D]) compileManifest(m *machine, l *loaded) error {
+	if l.templates != nil {
+		m.templates = l.templates.set
+	}
 	for _, k := range t.Triggers {
 		m.triggers[k] = true
 	}
@@ -286,7 +312,7 @@ func (t *Type[D]) compileManifest(m *machine) error {
 			return t.invalid("configuration schema: %v", err)
 		}
 	}
-	m.manifest, err = encodeManifest(t.manifest())
+	m.manifest, err = encodeManifest(t.manifest(l))
 	return err
 }
 
@@ -373,7 +399,8 @@ func (t *Type[D]) checkManifest() error {
 }
 
 // checkTools checks that a tool name names one tool across the type's
-// states: tools of one name have one identity (ADR 0011, item 3).
+// states: tools of one name have one identity (ADR 0011, item 3), and none
+// takes the read-skill tool's name (ADR 0013).
 func (t *Type[D]) checkTools() error {
 	identities := map[string]string{}
 	for i := range t.States {
@@ -384,6 +411,9 @@ func (t *Type[D]) checkTools() error {
 		for j := range ms.Tools {
 			tool := &ms.Tools[j]
 			name := tool.Definition.Name
+			if name == ReadSkillTool {
+				return t.invalid("model state %q declares tool %q, the built-in read-skill tool's name (ADR 0013)", t.States[i].Name, name)
+			}
 			id := toolIdentity(&tool.Definition, tool.Effect, tool.Contract, t.toolVersion(tool))
 			if prev, ok := identities[name]; ok && prev != id {
 				return t.invalid("tool %q is declared with different definitions, effects, contracts or versions in two states (ADR 0011, item 3)", name)
@@ -441,4 +471,68 @@ func duplicate(names []string) string {
 		}
 	}
 	return ""
+}
+
+// loaded is what an agent type declares in files: its skills and prompt
+// templates, read and checked at registration (ADR 0013).
+type loaded struct {
+	skills    map[string]*skill
+	templates *templates
+	// ordered are the skills by name.
+	ordered []*skill
+}
+
+// granted returns the named skills, in order; check has validated the
+// names.
+func (l *loaded) granted(names []string) []*skill {
+	out := make([]*skill, len(names))
+	for i, n := range names {
+		out[i] = l.skills[n]
+	}
+	return out
+}
+
+// checkAndLoad checks the declaration, then loads what it declares in
+// files.
+func (t *Type[D]) checkAndLoad() (*loaded, error) {
+	if err := t.check(); err != nil {
+		return nil, err
+	}
+	return t.load()
+}
+
+// load reads the type's skills and templates, and checks each model
+// state's grant against the skills (ADR 0013, items 1 to 3 and 5).
+func (t *Type[D]) load() (*loaded, error) {
+	l := &loaded{skills: map[string]*skill{}}
+	if t.Skills != nil {
+		var err error
+		if l.ordered, err = loadSkills(t.Skills); err != nil {
+			return nil, t.invalid("%v", err)
+		}
+		for _, s := range l.ordered {
+			l.skills[s.name] = s
+		}
+	}
+	if t.Templates != nil {
+		var err error
+		if l.templates, err = loadTemplates(t.Templates); err != nil {
+			return nil, t.invalid("%v", err)
+		}
+	}
+	for i := range t.States {
+		s := &t.States[i]
+		if s.Model == nil {
+			continue
+		}
+		for _, name := range s.Model.Skills {
+			if l.skills[name] == nil {
+				return nil, t.invalid("model state %q grants skill %q, which the type's Skills do not hold", s.Name, name)
+			}
+		}
+		if dup := duplicate(s.Model.Skills); dup != "" {
+			return nil, t.invalid("model state %q grants skill %q twice", s.Name, dup)
+		}
+	}
+	return l, nil
 }
