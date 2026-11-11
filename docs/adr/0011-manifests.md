@@ -66,6 +66,10 @@ It amends, item by item:
 - ADR 0008 item 11 (a recorded call whose tool the recovering version
   declares with another effect is refused): by item 3, so is one whose
   tool the recovering version declares with another identity.
+- ADR 0008 item 16 (the policy hook's failure fails the run with
+  `tool_error`, a `pending` verdict too): by item 10, a `pending` verdict
+  fails it with `config_error`; an error, a panic or an unknown verdict
+  still fails it with `tool_error`.
 - ADR 0009 item 2 (where budgets come from, and how invalid ones fail): by
   items 7 and 8, an agent type's default budgets fill the fields the host
   leaves unset, and an invalid budget fails the run with `config_error`.

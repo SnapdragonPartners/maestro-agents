@@ -184,8 +184,9 @@ type Trigger struct {
 	Instance   string    `json:"instance"`
 	// ID is the trigger's identity; enqueueing is idempotent on it.
 	ID string `json:"id"`
-	// Kind is the trigger's kind (MODE-4), carried to the run created
-	// from it (ADR 0011 item 5).
+	// Kind is the trigger's kind (MODE-4), set by the host and kept as
+	// given (ADR 0011 item 5). The store does not copy it to a run: the
+	// host sets Run.TriggerKind when it creates the run from the trigger.
 	Kind    string          `json:"kind,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 	// Seq orders an instance's queued triggers by arrival.
