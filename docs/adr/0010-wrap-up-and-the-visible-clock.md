@@ -33,15 +33,16 @@ accept a forced choice.
 
 It amends ADR 0007 item 13 (`Env` gains the budget status, item 8), ADR
 0008 items 1 (`ModelState` gains the required `WrapUp`, item 1), 3 (a
-`Call` carries `WrapUp`, item 5), 8 and 11 (a wrap-up turn's parameters
-and the tools it offers, items 5 and 6), 10 (the checkpoint counts
-wrap-up turns, item 6), 14 (the completion policy gains forced wrap-up,
-items 1 to 5) and 19 (a model call cut off at the wrap-up point is a
-model failure that restarts the loop rather than failing the run, item
-4), and ADR 0009 item 5 (an attempt's `StateParams`, item 6). As the ADR
-index requires, the amended ADRs record the amendment in their status
-lines and in the index, and nowhere else; this paragraph is the list of
-what is amended.
+`Call` carries `WrapUp`, item 5), 8 (a wrap-up attempt records the
+parameters it sent, item 6), 10 (the checkpoint counts wrap-up turns,
+item 6), 11 (recovery refuses a call the wrap-up turn did not offer,
+item 5), 14 (the completion policy gains forced wrap-up, items 1 to 5)
+and 19 (a model call cut off at the wrap-up point is a model failure
+that restarts the loop rather than failing the run, item 4), and ADR
+0009 item 5 (an attempt's `StateParams`, item 6). As the ADR index
+requires, the amended ADRs record the amendment in their status lines
+and in the index, and nowhere else; this paragraph is the list of what
+is amended.
 
 ## Decision
 
