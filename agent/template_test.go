@@ -49,6 +49,12 @@ func TestRegisterRefusesTemplates(t *testing.T) {
 		"defines":        {fstest.MapFS{"a.tmpl": {Data: []byte(`{{define "b"}}b{{end}}a`)}}, "defines templates"},
 		"block":          {fstest.MapFS{"a.tmpl": {Data: []byte(`{{block "b" .}}b{{end}}`)}}, "defines templates"},
 		"not UTF-8":      {fstest.MapFS{"a.tmpl": {Data: []byte{0xff}}}, "not valid UTF-8"},
+		// A definition reusing a loaded file's name would replace it
+		// while its manifest identity still hashed the original.
+		"redefines earlier file": {fstest.MapFS{"a.tmpl": {Data: []byte(`a`)}, "z.tmpl": {Data: []byte(`{{define "a.tmpl"}}replacement{{end}}z`)}}, "defines templates"},
+		"redefines later file":   {fstest.MapFS{"a.tmpl": {Data: []byte(`{{define "z.tmpl"}}replacement{{end}}a`)}, "z.tmpl": {Data: []byte(`z`)}}, "defines templates"},
+		"block reuses a name":    {fstest.MapFS{"a.tmpl": {Data: []byte(`a`)}, "z.tmpl": {Data: []byte(`{{block "a.tmpl" .}}replacement{{end}}`)}}, "defines templates"},
+		"defines itself":         {fstest.MapFS{"a.tmpl": {Data: []byte(`{{define "a.tmpl"}}replacement{{end}}`)}}, "defines templates"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

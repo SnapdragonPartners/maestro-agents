@@ -20,6 +20,12 @@ type TemplateManifest struct {
 	Identity string `json:"identity"`
 }
 
+// standaloneName names a template file while it is parsed alone. A
+// definition under any other name shows as a second template. One under
+// this name can only fill an empty file's own body (a non-empty body is a
+// multiple-definition parse error), and its tree is still the file's own.
+const standaloneName = "\x00maestro-agents/template-file"
+
 // templates is an agent type's parsed prompt templates.
 type templates struct {
 	set      *template.Template
@@ -53,12 +59,19 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		if !utf8.Valid(b) {
 			return fmt.Errorf("%q is not valid UTF-8", p)
 		}
-		before := len(out.set.Templates())
-		if _, err := out.set.New(p).Parse(string(b)); err != nil {
-			return err //nolint:wrapcheck // wrapped below; text/template names the file
+		// Each file is parsed alone, so a definition of any name, another
+		// file's or its own, shows as a second template; only then does
+		// its tree join the set, under its path, where it can replace no
+		// other file's.
+		alone, err := template.New(standaloneName).Parse(string(b))
+		if err != nil {
+			return fmt.Errorf("%q: %w", p, err)
 		}
-		if len(out.set.Templates()) != before+1 {
+		if ts := alone.Templates(); len(ts) != 1 || ts[0] != alone {
 			return fmt.Errorf("%q defines templates of its own; a template is a file", p)
+		}
+		if _, err := out.set.AddParseTree(p, alone.Tree); err != nil {
+			return fmt.Errorf("%q: %w", p, err)
 		}
 		sum := sha256.Sum256(b)
 		out.manifest = append(out.manifest, TemplateManifest{Name: p, Identity: hex.EncodeToString(sum[:])})
