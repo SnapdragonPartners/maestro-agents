@@ -20,6 +20,8 @@ func TestCompileRefuses(t *testing.T) {
 	cases := map[string]string{
 		"not JSON":                  `{`,
 		"trailing data":             `{} {}`,
+		"trailing garbage":          `{}x`,
+		"trailing bracket":          `{}]`,
 		"not a schema":              `3`,
 		"unsupported keyword":       `{"oneOf": []}`,
 		"ref":                       `{"$ref": "#/defs/x"}`,
@@ -174,7 +176,7 @@ func TestValidateBoundsExponents(t *testing.T) {
 
 func TestValidateRefusesInvalidJSON(t *testing.T) {
 	s := mustCompile(t, `{}`)
-	for _, v := range []string{``, `{`, `1 2`, "\"\xff\""} {
+	for _, v := range []string{``, `{`, `1 2`, `1x`, `{}]`, `"a"}`, "\"\xff\""} {
 		err := s.Validate([]byte(v))
 		var ve *ValidationError
 		if err == nil || errors.As(err, &ve) {

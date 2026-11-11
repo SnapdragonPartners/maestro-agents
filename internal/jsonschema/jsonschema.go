@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"regexp"
 	"slices"
@@ -96,7 +97,7 @@ func decode(raw []byte) (any, error) {
 	if err := dec.Decode(&v); err != nil {
 		return nil, fmt.Errorf("value is not valid JSON: %w", err)
 	}
-	if _, err := dec.Token(); err == nil {
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("value is not valid JSON: data after the value")
 	}
 	return v, nil

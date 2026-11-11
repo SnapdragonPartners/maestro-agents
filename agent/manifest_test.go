@@ -367,6 +367,32 @@ func TestDefaultBudgets(t *testing.T) {
 	}
 }
 
+// A default active-time budget is enforced from the run's first
+// activation: the clocks are installed from the budgets with the defaults
+// filled in (Codex round 1).
+func TestDefaultActiveTimeEnforcedOnFirstActivation(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createRun(t, s, "r1", `{"target":1}`)
+	typ := counterType()
+	typ.Budgets = agent.Budgets{ActiveTime: 20 * time.Millisecond}
+	typ.States[0].Code = func(ctx context.Context, _ *agent.Env, d counterData) (agent.Transition[counterData], error) {
+		select {
+		case <-ctx.Done():
+			return agent.Transition[counterData]{}, context.Cause(ctx)
+		case <-time.After(10 * time.Second):
+			return agent.Goto("done", d), nil
+		}
+	}
+	start := time.Now()
+	out, err := activate(context.Background(), agent.NewController(s, registry(t, typ)), claim(t, s), "r1", 0)
+	if err != nil || out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonBudgetExhausted || out.Reason.Budget != agent.BudgetActiveTime {
+		t.Fatalf("outcome = %+v, %v; want the default active-time budget exhausted", out, err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("activation took %s; the default budget did not cut it off", elapsed)
+	}
+}
+
 // The policy decides on the tool's identity, and the permission records it
 // (ADR 0011, item 3).
 func TestPermissionCarriesToolIdentity(t *testing.T) {

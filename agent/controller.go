@@ -214,7 +214,11 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 	}
 	a := &activation{
 		c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1, client: in.Client, maxSteps: max(in.MaxSteps, 0),
-		budgets: in.Budgets,
+		// A run not yet started takes the agent type's defaults for the
+		// budgets the host leaves unset (ADR 0011, item 7), here, before
+		// the activation's clocks are installed from them; a started run
+		// takes its recorded budgets below.
+		budgets: in.Budgets.withDefaults(&m.defaults),
 	}
 	latest, ok, err := c.store.LatestCheckpoint(durable(ctx), run.Instance)
 	if err != nil {
@@ -456,9 +460,8 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	}
 	a.start1 = start
 	// The run's inputs are prepared before anything can refuse them, so a
-	// start that fails records them (REC-1). The agent type's defaults
-	// fill the budgets the host left unset (ADR 0011, item 7).
-	a.budgets = a.budgets.withDefaults(&a.m.defaults)
+	// start that fails records them (REC-1). a.budgets already holds the
+	// agent type's defaults (begin).
 	var budgets *Budgets
 	if a.budgets != (Budgets{}) {
 		budgets = &a.budgets
