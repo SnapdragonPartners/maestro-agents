@@ -143,10 +143,13 @@ func createRun(t testing.TB, s store.Store, inst, id, trigger string) store.Run 
 	t.Helper()
 	run, created, err := s.CreateRun(context.Background(), store.Run{
 		ID: id, Instance: inst, AgentType: "test-agent", AgentVersion: "1",
-		TriggerID: trigger, Trigger: json.RawMessage(`{"file":"a.pdf"}`),
+		TriggerID: trigger, TriggerKind: "one_shot", Trigger: json.RawMessage(`{"file":"a.pdf"}`),
 	})
 	if err != nil || !created {
 		t.Fatalf("CreateRun(%s) = created %v, %v", id, created, err)
+	}
+	if run.TriggerKind != "one_shot" || getRun(t, s, id).TriggerKind != "one_shot" {
+		t.Fatalf("CreateRun(%s) did not keep the trigger kind", id)
 	}
 	return run
 }

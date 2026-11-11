@@ -7,6 +7,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"github.com/SnapdragonPartners/maestro-agents/internal/jsonschema"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
@@ -50,6 +51,28 @@ type Type[D any] struct {
 
 	// States declares every state. Names are unique.
 	States []State[D]
+
+	// Triggers names the trigger kinds the type accepts (MAN-1, MODE-4):
+	// at least one, each non-empty and named once. A run whose
+	// store.Run.TriggerKind is not among them fails at its start with
+	// ReasonConfigError (MAN-2, ADR 0011 item 5). TriggerOneShot,
+	// TriggerFolder and TriggerSchedule name MODE-4's kinds; the set is
+	// open.
+	Triggers []string
+
+	// Config is the instance configuration's JSON Schema (MAN-1), in the
+	// subset ADR 0011 item 6 lists; nil takes any configuration. A schema
+	// using any other keyword is refused at registration. At the run's
+	// start the configuration (JSON null if absent) is validated against
+	// it, and one it rejects fails the run with ReasonConfigError, the
+	// detail listing every problem (MAN-2).
+	Config json.RawMessage
+
+	// Budgets are default budgets (MAN-1, ADR 0011 item 7): each of the
+	// token, turn and active-time budgets that ActivationInput.Budgets
+	// leaves zero takes the value here when the run starts. A default
+	// deadline or cost budget is refused at registration.
+	Budgets Budgets
 }
 
 // State is one state of an agent type. Exactly one of Code, Model and End
@@ -152,12 +175,16 @@ func (t *Type[D]) TypeName() string { return t.Name }
 // machine is an agent type with its state data erased to JSON, as the
 // controller drives it.
 type machine struct {
-	init    func(ctx context.Context, env *Env) (json.RawMessage, error)
-	migrate func(ctx context.Context, from string, data json.RawMessage) (json.RawMessage, error)
-	states  map[string]*erasedState
-	name    string
-	version string
-	initial string
+	init     func(ctx context.Context, env *Env) (json.RawMessage, error)
+	migrate  func(ctx context.Context, from string, data json.RawMessage) (json.RawMessage, error)
+	states   map[string]*erasedState
+	triggers map[string]bool
+	config   *jsonschema.Schema
+	manifest encodedManifest
+	name     string
+	version  string
+	initial  string
+	defaults Budgets
 }
 
 type erasedState struct {
@@ -185,10 +212,15 @@ func (t *Type[D]) compile() (*machine, error) {
 	// (to register another version, say) does not change this machine.
 	initFn, migrate := t.Init, t.Migrate
 	m := &machine{
-		states:  make(map[string]*erasedState, len(t.States)),
-		name:    t.Name,
-		version: t.Version,
-		initial: t.Initial,
+		states:   make(map[string]*erasedState, len(t.States)),
+		triggers: make(map[string]bool, len(t.Triggers)),
+		name:     t.Name,
+		version:  t.Version,
+		initial:  t.Initial,
+		defaults: t.Budgets,
+	}
+	if err := t.compileManifest(m); err != nil {
+		return nil, err
 	}
 	m.init = func(ctx context.Context, env *Env) (json.RawMessage, error) {
 		var d D
@@ -213,7 +245,7 @@ func (t *Type[D]) compile() (*machine, error) {
 		s := &t.States[i]
 		es := &erasedState{name: s.Name, end: s.End, next: map[string]bool{}}
 		if s.Model != nil {
-			es.model = eraseModel(s.Model)
+			es.model = eraseModel(s.Model, t.Version)
 		}
 		for _, n := range s.Next {
 			es.next[n] = true
@@ -238,6 +270,24 @@ func (t *Type[D]) compile() (*machine, error) {
 		m.states[s.Name] = es
 	}
 	return m, nil
+}
+
+// compileManifest sets what the machine enforces of the type's manifest
+// (ADR 0011): its trigger kinds, its compiled configuration schema and the
+// manifest's encoding.
+func (t *Type[D]) compileManifest(m *machine) error {
+	for _, k := range t.Triggers {
+		m.triggers[k] = true
+	}
+	var err error
+	if t.Config != nil {
+		// check has compiled it once already, so this cannot fail.
+		if m.config, err = jsonschema.Compile(t.Config); err != nil {
+			return t.invalid("configuration schema: %v", err)
+		}
+	}
+	m.manifest, err = encodeManifest(t.manifest())
+	return err
 }
 
 func marshalData(d any) (json.RawMessage, error) {
@@ -283,6 +333,63 @@ func (t *Type[D]) check() error {
 		return t.invalid("initial state %q is not declared", t.Initial)
 	case init.End != "":
 		return t.invalid("initial state %q is terminal", t.Initial)
+	}
+	if err := t.checkTools(); err != nil {
+		return err
+	}
+	return t.checkManifest()
+}
+
+// checkManifest checks what the type declares beyond its states (MAN-1,
+// ADR 0011): its trigger kinds, configuration schema and default budgets.
+func (t *Type[D]) checkManifest() error {
+	if len(t.Triggers) == 0 {
+		return t.invalid("declares no trigger kind (MAN-1)")
+	}
+	for _, k := range t.Triggers {
+		if k == "" || !utf8.ValidString(k) {
+			return t.invalid("trigger kind %q is empty or not valid UTF-8", k)
+		}
+	}
+	if dup := duplicate(t.Triggers); dup != "" {
+		return t.invalid("declares trigger kind %q twice", dup)
+	}
+	if t.Config != nil {
+		if _, err := jsonschema.Compile(t.Config); err != nil {
+			return t.invalid("configuration schema: %v", err)
+		}
+	}
+	b := &t.Budgets
+	switch {
+	case !b.Deadline.IsZero():
+		return t.invalid("default budgets set a deadline, which is the host's to set (ADR 0011, item 7)")
+	case b.Cost != 0:
+		return t.invalid("default budgets set a cost budget, which is not built yet (MVP.md, BUD-1)")
+	}
+	if err := b.validate(); err != nil {
+		return t.invalid("default budgets: %v", err)
+	}
+	return nil
+}
+
+// checkTools checks that a tool name names one tool across the type's
+// states: tools of one name have one identity (ADR 0011, item 3).
+func (t *Type[D]) checkTools() error {
+	identities := map[string]string{}
+	for i := range t.States {
+		ms := t.States[i].Model
+		if ms == nil {
+			continue
+		}
+		for j := range ms.Tools {
+			tool := &ms.Tools[j]
+			name := tool.Definition.Name
+			id := toolIdentity(&tool.Definition, tool.Effect, tool.Contract, t.toolVersion(tool))
+			if prev, ok := identities[name]; ok && prev != id {
+				return t.invalid("tool %q is declared with different definitions, effects, contracts or versions in two states (ADR 0011, item 3)", name)
+			}
+			identities[name] = id
+		}
 	}
 	return nil
 }

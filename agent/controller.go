@@ -447,27 +447,46 @@ func (a *activation) start(ctx context.Context, config json.RawMessage) *ending 
 // again if this commit does not land). Until that commit lands, a terminal
 // ending carries the run's start with it (REC-1).
 func (a *activation) startRun(ctx context.Context, config json.RawMessage) *ending {
-	start := &runStart{entry: RunStarted{
-		AgentType: a.m.name, AgentVersion: a.m.version, TriggerID: a.run.TriggerID, Trigger: a.run.Trigger,
-	}}
+	start := &runStart{
+		entry: RunStarted{
+			AgentType: a.m.name, AgentVersion: a.m.version, Manifest: a.m.manifest.digest,
+			TriggerID: a.run.TriggerID, TriggerKind: a.run.TriggerKind, Trigger: a.run.Trigger,
+		},
+		manifest: &store.Artifact{Digest: a.m.manifest.digest, MediaType: "application/json", Content: a.m.manifest.json},
+	}
 	a.start1 = start
 	// The run's inputs are prepared before anything can refuse them, so a
-	// start that fails records them (REC-1).
+	// start that fails records them (REC-1). The agent type's defaults
+	// fill the budgets the host left unset (ADR 0011, item 7).
+	a.budgets = a.budgets.withDefaults(&a.m.defaults)
 	var budgets *Budgets
 	if a.budgets != (Budgets{}) {
 		budgets = &a.budgets
 		start.entry.Budgets = budgets
 	}
 	if err := store.ValidJSON(config); err != nil {
-		return a.fail(ctx, ReasonStateError, "configuration: "+err.Error())
+		return a.fail(ctx, ReasonConfigError, "configuration: "+err.Error())
 	}
 	if config != nil {
 		sum := sha256.Sum256(config)
 		start.entry.Config = hex.EncodeToString(sum[:])
 		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
 	}
+	if !a.m.triggers[a.run.TriggerKind] {
+		return a.fail(ctx, ReasonConfigError, fmt.Sprintf(
+			"trigger kind %q is not one agent type %q declares (MAN-2)", a.run.TriggerKind, a.m.name))
+	}
+	if a.m.config != nil {
+		raw := config
+		if raw == nil {
+			raw = json.RawMessage("null")
+		}
+		if err := a.m.config.Validate(raw); err != nil {
+			return a.fail(ctx, ReasonConfigError, "configuration: "+err.Error())
+		}
+	}
 	if err := a.budgets.validate(); err != nil {
-		return a.fail(ctx, ReasonStateError, "budgets: "+err.Error())
+		return a.fail(ctx, ReasonConfigError, "budgets: "+err.Error())
 	}
 	if a.budgets.Cost > 0 {
 		return a.refuseBudget(ctx, &budgetRefusal{ReasonBudgetUnenforceable, BudgetCost,
@@ -504,14 +523,16 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	return nil
 }
 
-// runStart is a run's start, not yet committed: the configuration
-// artifact, if any, and the run_started entry.
+// runStart is a run's start, not yet committed: the manifest's artifact,
+// the configuration's, if any, and the run_started entry.
 type runStart struct {
-	config *store.Artifact
-	entry  RunStarted
+	manifest *store.Artifact
+	config   *store.Artifact
+	entry    RunStarted
 }
 
 func (r *runStart) add(b *entries) {
+	b.ops = append(b.ops, store.PutArtifactOp(*r.manifest))
 	if r.config != nil {
 		b.ops = append(b.ops, store.PutArtifactOp(*r.config))
 	}

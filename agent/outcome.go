@@ -36,7 +36,8 @@ const (
 	// ReasonToolError: failed; a tool failed in a way the run cannot
 	// continue from: its Execute returned an error or panicked, it returned
 	// a result the runtime cannot record, a write's outcome is unknown, or
-	// the policy hook failed or asked for approval (ADR 0008).
+	// the policy hook failed or answered something other than a verdict
+	// (ADR 0008). A pending verdict is ReasonConfigError (ADR 0011).
 	ReasonToolError = "tool_error"
 	// ReasonInvalidOutput: failed; the agent type judged its output
 	// invalid.
@@ -54,6 +55,12 @@ const (
 	// or returned operations it may not (ADR 0007). A defect in the agent
 	// type or its input: retrying as-is cannot help.
 	ReasonStateError = "state_error"
+	// ReasonConfigError: failed; the run was refused for its
+	// configuration (ADR 0011, item 8): a trigger kind its agent type does
+	// not declare, a configuration that is not valid JSON or that the
+	// type's schema rejects, an invalid budget, or a policy that asked for
+	// approval no state or tool declares. Retrying as-is cannot help.
+	ReasonConfigError = "config_error"
 
 	// ReasonSuperseded: cancelled; the host superseded the run.
 	ReasonSuperseded = "superseded"

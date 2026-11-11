@@ -38,6 +38,11 @@ type ModelState[D any] struct {
 	// ReasonWrapUpFailed.
 	Nudge string
 
+	// Approval is what follows a pending verdict for the state's calls
+	// (TOOL-4). Approval is not built yet: a state declaring a mode is
+	// refused at registration (ADR 0011, item 9).
+	Approval Approval
+
 	// Tools are the tools offered to the model in this state (TOOL-1). A
 	// call naming any other tool is refused, and the model receives the
 	// refusal as a tool error (MAN-2).
@@ -107,6 +112,18 @@ type Tool[D any] struct {
 	// Contract is a write tool's write contract (TOOL-12): how it prevents
 	// a duplicate effect. A read tool declares none.
 	Contract WriteContract
+
+	// Version is the version of the code that implements the tool, part
+	// of its content identity (MAN-1, ADR 0011 item 3); empty takes the
+	// agent type's Version. A tool name names one tool in an agent type:
+	// states declaring tools of one name must declare the same
+	// definition, effect, contract and version.
+	Version string
+
+	// Approval is what follows a pending verdict for the tool's calls
+	// (TOOL-4). Approval is not built yet: a tool declaring a mode is
+	// refused at registration (ADR 0011, item 9).
+	Approval Approval
 
 	// Definition is the schema offered to the model.
 	Definition llms.ToolDefinition
@@ -239,9 +256,12 @@ type PolicyRequest struct {
 	AgentType string
 	State     string
 	Tool      string
-	Effect    Effect
-	Call      llms.ToolCall
-	Action    ActionID
+	// Identity is the tool's content identity (MAN-1, ADR 0011 item 3),
+	// which the decision is bound to and the permission records.
+	Identity string
+	Effect   Effect
+	Call     llms.ToolCall
+	Action   ActionID
 }
 
 // Decision is the policy hook's answer.
@@ -259,7 +279,9 @@ const (
 	VerdictAllow Verdict = "allow"
 	VerdictDeny  Verdict = "deny"
 	// VerdictPending asks for approval (TOOL-4). Approval is not built
-	// yet (MVP.md): a pending verdict fails the run with ReasonToolError.
+	// yet (MVP.md), so no state or tool declares a mode that could follow
+	// it: a pending verdict fails the run with ReasonConfigError (ADR
+	// 0011, item 10).
 	VerdictPending Verdict = "pending"
 )
 
@@ -343,6 +365,7 @@ type erasedTool struct {
 	exec     func(ctx context.Context, env *Env, data json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error)
 	effect   Effect
 	contract WriteContract
+	identity string
 	def      llms.ToolDefinition
 }
 
@@ -378,7 +401,7 @@ type erasedResult struct {
 	isError bool
 }
 
-func eraseModel[D any](ms *ModelState[D]) *erasedModel {
+func eraseModel[D any](ms *ModelState[D], typeVersion string) *erasedModel {
 	prompt := ms.Prompt
 	em := &erasedModel{
 		nudge: ms.Nudge, wrapMsg: ms.WrapUp.Message, reserve: ms.WrapUp.Reserve, wrapTurns: ms.WrapUp.Turns,
@@ -411,6 +434,11 @@ func eraseModel[D any](ms *ModelState[D]) *erasedModel {
 		// a copy, compacted as the recorded parameters hold it, so what is
 		// sent is what is recorded (ADR 0008, item 8).
 		et.def.InputSchema = compactJSON(t.Definition.InputSchema)
+		version := t.Version
+		if version == "" {
+			version = typeVersion
+		}
+		et.identity = toolIdentity(&et.def, t.Effect, t.Contract, version)
 		et.exec = func(ctx context.Context, env *Env, raw json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error) {
 			d, err := decodeData[D](raw)
 			if err != nil {
@@ -458,6 +486,9 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 	if !utf8.ValidString(ms.Nudge) {
 		return t.invalid("model state %q nudge is not valid UTF-8", s.Name)
 	}
+	if ms.Approval != "" {
+		return t.invalid("model state %q declares approval %q; approval is not built yet (TOOL-4, ADR 0011 item 9)", s.Name, ms.Approval)
+	}
 	seen := map[string]bool{}
 	for i := range ms.Tools {
 		tool := &ms.Tools[i]
@@ -471,6 +502,10 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 			return t.invalid("model state %q tool %q has no Execute", s.Name, name)
 		case !utf8.ValidString(name) || !utf8.ValidString(tool.Definition.Description):
 			return t.invalid("model state %q tool %d has a name or description that is not valid UTF-8", s.Name, i)
+		case !utf8.ValidString(tool.Version):
+			return t.invalid("model state %q tool %q version is not valid UTF-8", s.Name, name)
+		case tool.Approval != "":
+			return t.invalid("tool %q declares approval %q; approval is not built yet (TOOL-4, ADR 0011 item 9)", name, tool.Approval)
 		}
 		if schema := tool.Definition.InputSchema; schema != nil {
 			if err := store.ValidJSON(schema); err != nil {

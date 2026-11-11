@@ -66,6 +66,22 @@ type TokenBudget struct {
 	Estimated bool  `json:"estimated,omitempty"`
 }
 
+// withDefaults returns b with each token, turn and active-time budget it
+// leaves zero taken from d (ADR 0011, item 7). A token budget is taken
+// whole, with its kind.
+func (b Budgets) withDefaults(d *Budgets) Budgets { //nolint:gocritic // hugeParam: a value in, a value out
+	if b.Tokens.Limit == 0 && !b.Tokens.Estimated {
+		b.Tokens = d.Tokens
+	}
+	if b.Turns == 0 {
+		b.Turns = d.Turns
+	}
+	if b.ActiveTime == 0 {
+		b.ActiveTime = d.ActiveTime
+	}
+	return b
+}
+
 func (b *Budgets) validate() error {
 	var errs []error
 	if b.Tokens.Limit < 0 {

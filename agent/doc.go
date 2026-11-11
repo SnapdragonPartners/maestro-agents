@@ -6,6 +6,13 @@
 // and passes the claim to [Controller.Activate], which runs the instance's
 // run from its last step boundary (ADR 0003, ADR 0007).
 //
+// An agent type is also its manifest (MAN-1, ADR 0011): it declares the
+// trigger kinds it accepts, its configuration's JSON Schema and default
+// budgets, and [Registry.Manifest] returns what it declares, with each
+// tool's content identity, for an orchestrator to read. A run whose
+// trigger kind or configuration the type refuses fails at its start with
+// ReasonConfigError, and every run's start records the manifest's digest.
+//
 // Every durable write an activation makes is one fenced, atomic commit
 // (ADR 0005): the execution record's entries (ADR 0004), the checkpoint at
 // every step boundary, a code state's object operations with its

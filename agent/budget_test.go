@@ -478,8 +478,8 @@ func TestBudgetsInvalid(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonStateError || !strings.Contains(out.Detail, "budgets") {
-				t.Fatalf("outcome = %+v, want a state error naming the budgets", out)
+			if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonConfigError || !strings.Contains(out.Detail, "budgets") {
+				t.Fatalf("outcome = %+v, want a configuration error naming the budgets", out)
 			}
 		})
 	}

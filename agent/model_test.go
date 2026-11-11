@@ -116,9 +116,10 @@ func ledgerType(execs *execLog, tools ...agent.Tool[ledgerData]) *agent.Type[led
 		tools = ledgerTools(execs)
 	}
 	return &agent.Type[ledgerData]{
-		Name:    "ledger",
-		Version: "1",
-		Initial: "work",
+		Name:     "ledger",
+		Version:  "1",
+		Triggers: []string{agent.TriggerOneShot},
+		Initial:  "work",
 		States: []agent.State[ledgerData]{
 			{Name: "work", Next: []string{"review", "work"}, Model: &agent.ModelState[ledgerData]{
 				Prompt: func(_ context.Context, env *agent.Env, _ ledgerData) (llms.ChatRequest, error) {
@@ -203,7 +204,7 @@ func createLedgerRun(t testing.TB, s store.Store) {
 	const id = "r1"
 	t.Helper()
 	_, _, err := s.CreateRun(context.Background(), store.Run{
-		ID: id, Instance: inst, AgentType: "ledger", TriggerID: "trig-" + id, Trigger: json.RawMessage(`{}`),
+		ID: id, Instance: inst, AgentType: "ledger", TriggerID: "trig-" + id, TriggerKind: agent.TriggerOneShot, Trigger: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -539,8 +540,14 @@ func TestModelStatePolicyPendingAndError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonToolError {
-				t.Fatalf("outcome = %+v", out)
+			// Nothing can follow a pending verdict while approval is not
+			// built: a configuration error (ADR 0011, item 10).
+			want := agent.ReasonToolError
+			if name == "pending" {
+				want = agent.ReasonConfigError
+			}
+			if out.Status != store.StatusFailed || out.Reason.Code != want {
+				t.Fatalf("outcome = %+v, want %s", out, want)
 			}
 		})
 	}
@@ -936,7 +943,7 @@ func TestRegisterModelState(t *testing.T) {
 				return agent.Transition[ledgerData]{}, nil
 			}
 		}
-		return &agent.Type[ledgerData]{Name: "x", Initial: "m", States: []agent.State[ledgerData]{st, {Name: "end", End: agent.EndChanged}}}
+		return &agent.Type[ledgerData]{Name: "x", Initial: "m", Triggers: []string{agent.TriggerOneShot}, States: []agent.State[ledgerData]{st, {Name: "end", End: agent.EndChanged}}}
 	}
 	with := func(f func(*agent.Tool[ledgerData])) *agent.ModelState[ledgerData] {
 		tool := read

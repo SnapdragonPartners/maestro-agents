@@ -60,7 +60,7 @@ func wrapType(log *wrapLog, w agent.WrapUp) *agent.Type[wrapData] {
 		}
 	}
 	return &agent.Type[wrapData]{
-		Name: "ledger", Version: "1", Initial: "work",
+		Name: "ledger", Version: "1", Initial: "work", Triggers: []string{agent.TriggerOneShot},
 		States: []agent.State[wrapData]{
 			{Name: "work", Next: []string{"done", "manual"}, Model: &agent.ModelState[wrapData]{
 				Prompt: func(_ context.Context, env *agent.Env, _ wrapData) (llms.ChatRequest, error) {
