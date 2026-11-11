@@ -34,7 +34,7 @@ accept a forced choice.
 It amends ADR 0007 item 13 (`Env` gains the budget status, item 8), ADR
 0008 items 1 (`ModelState` gains the required `WrapUp`, item 1), 3 (a
 `Call` carries `WrapUp`, item 5), 8 and 11 (a wrap-up turn's parameters
-and the tools it offers, items 4 and 6), 10 (the checkpoint counts
+and the tools it offers, items 5 and 6), 10 (the checkpoint counts
 wrap-up turns, item 6), 14 (the completion policy gains forced wrap-up,
 items 1 to 5) and 19 (a model call cut off at the wrap-up point is a
 model failure that restarts the loop rather than failing the run, item
