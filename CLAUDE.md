@@ -80,7 +80,7 @@ Load-bearing decisions so far:
   `internal/jsonschema`; other keywords are refused at registration) and
   default budgets; `Registry.Manifest` returns it with each tool's content
   identity (definition, effect, contract and `Tool.Version`, defaulting to
-  the type's); a run refused for its trigger kind, configuration or
+  the type's), which the permission records and recovery enforces; a run refused for its trigger kind, configuration or
   budgets, or a `pending` verdict, fails with `config_error`; `run_started`
   records the manifest's digest and the trigger kind
   (`store.Run.TriggerKind`)

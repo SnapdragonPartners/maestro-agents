@@ -169,7 +169,9 @@ type ModelFailureEntry struct {
 type PermissionEntry struct {
 	Tool string `json:"tool"`
 	// Identity is the content identity of the tool the policy decided on
-	// (ADR 0011, item 3); empty in a permission recorded before manifests.
+	// (ADR 0011, item 3): recovery refuses the call if the tool now has
+	// another. Empty in a permission recorded before manifests, which is
+	// held to its effect alone.
 	Identity string `json:"identity,omitempty"`
 	// Effect is the tool's effect the policy decided on (TOOL-2): recovery
 	// refuses a call whose tool a later version declares with another.

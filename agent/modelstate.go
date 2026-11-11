@@ -1294,6 +1294,12 @@ func (r *modelRun) unavailable(i int) (string, bool) {
 		return refusedContent(name), true
 	case t.perm[i] != nil && t.perm[i].Effect != tool.effect:
 		return changedContent(name), true
+	case t.perm[i] != nil && t.perm[i].Identity != "" && t.perm[i].Identity != tool.identity:
+		// A decision is bound to the identity of the tool it decided on
+		// (ADR 0011, item 3): a changed tool is not executed under it. A
+		// permission recorded before manifests has no identity, and is
+		// held to its effect alone.
+		return changedContent(name), true
 	}
 	return "", false
 }

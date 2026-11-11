@@ -1357,6 +1357,49 @@ func TestModelStateChangedToolsDuringRecoveredTurn(t *testing.T) {
 	}
 }
 
+// A recorded call whose tool a later version declares with another
+// identity (here a new Tool.Version, effect unchanged) is refused, not
+// executed under the permission granted for the old tool (ADR 0011 item 3;
+// Codex round 2). An unchanged tool is reissued as before.
+func TestModelStateRecoveredCallChangedIdentity(t *testing.T) {
+	for _, changed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("changed=%v", changed), func(t *testing.T) {
+			s := newBackend(t, "memstore").open()
+			createLedgerRun(t, s)
+			// Commit 7 is the lookup's result: the read was attempted, its
+			// result did not land.
+			if _, err := activateWith(context.Background(), agent.NewController(&crashStore{Store: s, at: 7}, registry(t, ledgerType(&execLog{}))), claim(t, s), scripted(ledgerScript), 0); !errors.Is(err, agent.ErrStoreFailure) {
+				t.Fatalf("crashed activation = %v", err)
+			}
+			releaseIfOwned(t, s)
+			execs := &execLog{}
+			tools := ledgerTools(execs)
+			if changed {
+				tools[0].Version = "2"
+			}
+			if _, err := activateWith(context.Background(), agent.NewController(s, registry(t, ledgerType(execs, tools...))), claim(t, s), scripted(ledgerScript), 0); err != nil {
+				t.Fatal(err)
+			}
+			ran := slices.ContainsFunc(execs.calls, func(c string) bool { return strings.HasPrefix(c, "lookup#1.") })
+			if ran == changed {
+				t.Fatalf("executions = %v; lookup reissued %v, want %v", execs.calls, ran, !changed)
+			}
+			for _, e := range entries(t, s, "r1") {
+				if e.Kind != agent.EntryResult {
+					continue
+				}
+				if r := payload[agent.ResultEntry](t, e); r.Call == 0 && r.Tool == "lookup" {
+					if refused := r.Status == agent.ResultRefused && r.IsError; refused != changed {
+						t.Fatalf("lookup's result = %+v, refused %v, want %v", r, refused, changed)
+					}
+					return
+				}
+			}
+			t.Fatal("no result recorded for the lookup call")
+		})
+	}
+}
+
 // TestModelStateRecoveredCallChangedEffect: a recorded call whose tool a
 // later version declares with another effect is refused, not issued under
 // the permission granted for the old one (ADR 0008, item 11).

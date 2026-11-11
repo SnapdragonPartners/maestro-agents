@@ -63,6 +63,9 @@ It amends, item by item:
   `config_error`.
 - ADR 0008 item 8 (entry payloads): by item 3, a `permission` entry
   records the identity of the tool the policy decided on.
+- ADR 0008 item 11 (a recorded call whose tool the recovering version
+  declares with another effect is refused): by item 3, so is one whose
+  tool the recovering version declares with another identity.
 - ADR 0009 item 2 (where budgets come from, and how invalid ones fail): by
   items 7 and 8, an agent type's default budgets fill the fields the host
   leaves unset, and an invalid budget fails the run with `config_error`.
@@ -94,7 +97,13 @@ It amends, item by item:
    declaring tools of one name with different identities are refused at
    registration. The policy request (`PolicyRequest.Identity`) and the
    `permission` entry carry the identity, so a decision is bound to what
-   it decided on (TOOL-4). `llms.ToolDefinition` has no output schema, so
+   it decided on (TOOL-4): recovery refuses a recorded call whose tool
+   the recovering version declares with another identity, as it does one
+   with another effect (ADR 0008 item 11), rather than executing a
+   changed tool under the old decision; the model receives the refusal as
+   data, and a write attempted with no result is still unknown. A
+   permission recorded before manifests has no identity and is held to
+   its effect alone. `llms.ToolDefinition` has no output schema, so
    the identity has none until it does.
 4. **Tools from outside the agent type will join by name.** A host tool
    registry (TOOL-1, TOOL-6) grants its tools to states by name, with the
