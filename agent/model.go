@@ -458,9 +458,6 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 	if !utf8.ValidString(ms.Nudge) {
 		return t.invalid("model state %q nudge is not valid UTF-8", s.Name)
 	}
-	if err := t.checkWrapUp(s); err != nil {
-		return err
-	}
 	seen := map[string]bool{}
 	for i := range ms.Tools {
 		tool := &ms.Tools[i]
@@ -485,7 +482,9 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 			return err
 		}
 	}
-	return nil
+	// The wrap-up names declared tools, so it is checked after them: a
+	// defect in a tool's declaration is reported as itself.
+	return t.checkWrapUp(s)
 }
 
 // checkWrapUp checks a model state's wrap-up (ADR 0010): it names at least

@@ -955,11 +955,18 @@ func TestRegisterModelState(t *testing.T) {
 		"invalid nudge":       mk(&agent.ModelState[ledgerData]{Prompt: prompt, Nudge: "\xff"}, false),
 		"invalid description": mk(with(func(t *agent.Tool[ledgerData]) { t.Definition.Description = "\xff" }), false),
 		"invalid schema":      mk(with(func(t *agent.Tool[ledgerData]) { t.Definition.InputSchema = json.RawMessage(`{`) }), false),
-		"duplicate tool":      mk(&agent.ModelState[ledgerData]{Prompt: prompt, Tools: []agent.Tool[ledgerData]{read, read}}, false),
+		"duplicate tool": mk(&agent.ModelState[ledgerData]{
+			Prompt: prompt, Tools: []agent.Tool[ledgerData]{read, read}, WrapUp: agent.WrapUp{Tools: []string{"t"}},
+		}, false),
 	}
+	// A tool's defect is reported as itself, not as the wrap-up naming it.
+	wants := map[string]string{"unnamed tool": "has no name", "duplicate tool": "twice", "no execute": "no Execute"}
 	for name, typ := range cases {
-		if err := agent.NewRegistry().Register(typ); !errors.Is(err, agent.ErrInvalidType) {
+		err := agent.NewRegistry().Register(typ)
+		if !errors.Is(err, agent.ErrInvalidType) {
 			t.Errorf("%s: Register = %v, want ErrInvalidType", name, err)
+		} else if want := wants[name]; !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: Register = %v, want an error saying %q", name, err, want)
 		}
 	}
 	ok := mk(with(func(t *agent.Tool[ledgerData]) { t.Effect, t.Contract = agent.EffectWrite, agent.ContractUnprotected }), false)

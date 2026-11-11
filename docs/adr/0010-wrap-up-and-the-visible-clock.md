@@ -31,7 +31,7 @@ Opus 5.5, uses auto with a nudge for that reason (`internal/bench/judge.go`).
 The host chooses the model, and the runtime cannot know which providers
 accept a forced choice.
 
-It amends ADR 0007 item 13 (`Env` gains the budget status, item 9), ADR
+It amends ADR 0007 item 13 (`Env` gains the budget status, item 8), ADR
 0008 items 1 (`ModelState` gains the required `WrapUp`, item 1), 3 (a
 `Call` carries `WrapUp`, item 5), 8 and 11 (a wrap-up turn's parameters
 and the tools it offers, items 4 and 6), 10 (the checkpoint counts
