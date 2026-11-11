@@ -59,7 +59,9 @@ type RunStarted struct {
 	TriggerID    string   `json:"trigger_id"`
 	TriggerKind  string   `json:"trigger_kind,omitempty"`
 	Config       string   `json:"config,omitempty"`
-	// Namespace is the run's object-store namespace (STORE-2, ADR 0012).
+	// Namespace is the run's object-store namespace (STORE-2, ADR 0012);
+	// empty in the start of a run refused for a namespace that is not
+	// valid UTF-8, which the record cannot hold as passed.
 	Namespace string          `json:"namespace"`
 	Trigger   json.RawMessage `json:"trigger,omitempty"`
 	Clock

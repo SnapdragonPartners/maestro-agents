@@ -92,8 +92,9 @@ type ActivationInput struct {
 	// (STORE-2, ADR 0012), assigned by the host: instances given the same
 	// namespace share its objects, and a run reaches no other. It is
 	// required, recorded when the run starts and fixed for the run: a later
-	// activation ignores this field. A run started with none, or with one
-	// that is not valid UTF-8, fails with ReasonConfigError.
+	// activation ignores this field. A run started with none, with one that
+	// is not valid UTF-8, or with one the store refuses, fails with
+	// ReasonConfigError.
 	Namespace string
 	// Budgets are the run's budgets (BUD-1, ADR 0009), recorded when the
 	// run starts and fixed for the run: a later activation ignores this
@@ -475,11 +476,11 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 		entry: RunStarted{
 			AgentType: a.m.name, AgentVersion: a.m.version, Manifest: a.m.manifest.digest,
 			TriggerID: a.run.TriggerID, TriggerKind: a.run.TriggerKind, Trigger: a.run.Trigger,
-			Namespace: a.namespace,
 		},
 		manifest: &store.Artifact{Digest: a.m.manifest.digest, MediaType: "application/json", Content: a.m.manifest.json},
 	}
 	a.start1 = start
+	start.entry.Namespace = recordable(a.namespace)
 	// The run's inputs are prepared before anything can refuse them, so a
 	// start that fails records them (REC-1). a.budgets already holds the
 	// agent type's defaults (begin).
@@ -657,6 +658,17 @@ func (a *activation) checkTransition(st *erasedState, tr *erasedTransition) (*er
 		}
 	}
 	return a.m.states[tr.to], nil
+}
+
+// recordable returns s if the record can hold it as passed, and empty
+// otherwise. A namespace that is not valid UTF-8 is refused at the run's
+// start, and is not recorded: encoding/json would record U+FFFD in place
+// of its invalid bytes, a value the host never passed.
+func recordable(s string) string {
+	if !utf8.ValidString(s) {
+		return ""
+	}
+	return s
 }
 
 // namespaceProbe is the key a run's start reads to check that the store

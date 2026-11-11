@@ -64,7 +64,15 @@ func TestNamespaceRequired(t *testing.T) {
 				if !strings.Contains(out.Detail, "namespace") {
 					t.Fatalf("detail = %q, want it to name the namespace", out.Detail)
 				}
-				runStarted(t, s, "r1")
+				// The start is recorded with the namespace as passed, or
+				// with none where the record cannot hold it as passed.
+				want := namespace
+				if name == "invalid UTF-8" {
+					want = ""
+				}
+				if got := runStarted(t, s, "r1").Namespace; got != want {
+					t.Fatalf("run_started namespace = %q, want %q", got, want)
+				}
 				wantReleased(t, s)
 			})
 		})

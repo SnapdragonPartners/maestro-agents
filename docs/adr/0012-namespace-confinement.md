@@ -78,9 +78,12 @@ It amends, item by item:
 3. **Agent code never names a namespace.** `Env.Object(ctx, key)` and
    `Env.ListObjects(ctx, prefix)` read the run's namespace, and
    `Env.PutJSON`, `Env.PutBytes` and `Env.Delete` build operations in it.
-   `Env` does not expose the namespace's name: there is nothing for agent
-   code to do with it. Confinement is structural for reads: no read can
-   name another namespace.
+   `Env` has no namespace getter, and no read or helper takes a namespace,
+   so agent code cannot select one: confinement is structural for reads.
+   The name is not secret, though: a returned `store.Object` carries it in
+   its `Namespace` field, as do the operations the helpers build, so it
+   can reach state data, a prompt or an artifact. Nothing should rely on
+   it staying out of them.
 4. **Every object operation agent code returns is checked** at the one
    place each reaches a commit: a code state's transition (with the other
    checks of ADR 0007 item 10) and an atomic local transaction's result

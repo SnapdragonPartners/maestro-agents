@@ -292,6 +292,20 @@ func TestEnvListObjects(t *testing.T) {
 			t.Fatalf("outcome = %+v, %v; listed %q", out, err, got)
 		}
 
+		// A malformed read (an invalid key) is the state's defect, not a
+		// store failure (ADR 0007, item 13).
+		createRun(t, s, "r2", `{"target":1}`)
+		bad := counterType()
+		bad.States[0].Code = func(ctx context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
+			if _, _, rerr := env.Object(ctx, ""); rerr != nil {
+				return agent.Transition[counterData]{}, rerr
+			}
+			return agent.Goto("done", d), nil
+		}
+		out, err = activate(ctx, agent.NewController(s, registry(t, bad)), claim(t, s), "r2", 0)
+		if err != nil || out.Reason.Code != agent.ReasonStateError || !strings.Contains(out.Detail, "invalid request") {
+			t.Fatalf("outcome = %+v, %v; want state_error for the invalid key", out, err)
+		}
 		// A listing failure is a store failure, not a run failure.
 		createRun(t, s, "r3", `{"target":1}`)
 		_, err = activate(ctx, agent.NewController(failingLister{s}, registry(t, listing(&got))), claim(t, s), "r3", 0)
