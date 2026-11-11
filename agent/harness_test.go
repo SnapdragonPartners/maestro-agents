@@ -79,7 +79,7 @@ func counterType() *agent.Type[counterData] {
 }
 
 func countStep(ctx context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
-	obj, ok, err := env.Object(ctx, ns, env.RunID())
+	obj, ok, err := env.Object(ctx, env.RunID())
 	if err != nil {
 		return agent.Transition[counterData]{}, err
 	}
@@ -93,7 +93,7 @@ func countStep(ctx context.Context, env *agent.Env, d counterData) (agent.Transi
 		return agent.Transition[counterData]{}, fmt.Errorf("stored count %d, state data says %d", stored, d.N)
 	}
 	d.N++
-	op := store.PutObjectJSON(ns, env.RunID(), obj.Version, json.RawMessage(strconv.Itoa(d.N)))
+	op := env.PutJSON(env.RunID(), obj.Version, json.RawMessage(strconv.Itoa(d.N)))
 	if d.N >= d.Target {
 		return agent.Goto("done", d, op), nil
 	}
@@ -132,7 +132,7 @@ func claim(t testing.TB, s store.Store) store.Fence {
 
 func activate(ctx context.Context, c *agent.Controller, f store.Fence, run string, maxSteps int) (agent.Outcome, error) {
 	return c.Activate(ctx, agent.ActivationInput{
-		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: run}, MaxSteps: maxSteps,
+		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: run}, Namespace: ns, MaxSteps: maxSteps,
 	})
 }
 

@@ -1121,6 +1121,9 @@ func (r *modelRun) checkResult(tool *erasedTool, res *erasedResult) error {
 		if err := op.Validate(); err != nil {
 			return fmt.Errorf("operation %d: %w", i, err)
 		}
+		if err := r.a.inNamespace(op); err != nil {
+			return fmt.Errorf("operation %d: %w", i, err)
+		}
 	}
 	return checkParts(res.content, res.parts)
 }

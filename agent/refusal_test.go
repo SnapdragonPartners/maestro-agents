@@ -265,7 +265,7 @@ func TestEnvListObjects(t *testing.T) {
 	listing := func(got *[]string) *agent.Type[counterData] {
 		typ := counterType()
 		typ.States[0].Code = func(ctx context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
-			infos, err := env.ListObjects(ctx, ns, "a/")
+			infos, err := env.ListObjects(ctx, "a/")
 			if err != nil {
 				return agent.Transition[counterData]{}, err
 			}
@@ -292,19 +292,6 @@ func TestEnvListObjects(t *testing.T) {
 			t.Fatalf("outcome = %+v, %v; listed %q", out, err, got)
 		}
 
-		// A malformed listing is the state's defect.
-		createRun(t, s, "r2", `{"target":1}`)
-		bad := counterType()
-		bad.States[0].Code = func(ctx context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
-			if _, lerr := env.ListObjects(ctx, "", ""); lerr != nil {
-				return agent.Transition[counterData]{}, lerr
-			}
-			return agent.Goto("done", d), nil
-		}
-		out, err = activate(ctx, agent.NewController(s, registry(t, bad)), claim(t, s), "r2", 0)
-		if err != nil || out.Reason.Code != agent.ReasonStateError {
-			t.Fatalf("outcome = %+v, %v; want state_error", out, err)
-		}
 		// A listing failure is a store failure, not a run failure.
 		createRun(t, s, "r3", `{"target":1}`)
 		_, err = activate(ctx, agent.NewController(failingLister{s}, registry(t, listing(&got))), claim(t, s), "r3", 0)

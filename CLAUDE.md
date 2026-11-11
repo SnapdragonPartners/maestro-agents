@@ -19,12 +19,12 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
-budgets, forced wrap-up with the visible clock, and manifests (`agent/`);
-namespace confinement, skills, then the intake agent, come next. The requirements are in
+budgets, forced wrap-up with the visible clock, manifests and namespace
+confinement (`agent/`); skills, then the intake agent, come next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0011; further design arrives with the code, each piece with its ADR.
+0012; further design arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -85,6 +85,14 @@ Load-bearing decisions so far:
   records the manifest's digest and the trigger kind
   (`store.Run.TriggerKind`)
   ([ADR 0011](docs/adr/0011-manifests.md))
+- A run has exactly one object-store namespace, `ActivationInput.Namespace`,
+  required, recorded in `run_started` and the checkpoint and fixed for the
+  run; agent code never names one: `Env.Object`/`ListObjects` read it and
+  `Env.PutJSON`/`PutBytes`/`Delete` build operations in it, and an
+  operation outside it fails the run (`state_error` from a code state,
+  `tool_error` from a tool); a missing namespace, or one the store refuses,
+  fails the start with `config_error`
+  ([ADR 0012](docs/adr/0012-namespace-confinement.md))
 
 ### Related repositories
 
@@ -151,7 +159,7 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, record entries (ADR 0007-0011)
+agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, record entries (ADR 0007-0012)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock

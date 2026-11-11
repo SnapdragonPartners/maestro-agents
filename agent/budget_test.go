@@ -20,7 +20,7 @@ import (
 
 func activateBudgets(ctx context.Context, c *agent.Controller, f store.Fence, client llms.ChatClient, maxSteps int, b agent.Budgets) (agent.Outcome, error) {
 	return c.Activate(ctx, agent.ActivationInput{
-		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Client: client, MaxSteps: maxSteps, Budgets: b,
+		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: client, MaxSteps: maxSteps, Budgets: b,
 	})
 }
 
@@ -491,7 +491,7 @@ func TestBudgetsCodeStatesUnaffected(t *testing.T) {
 	s := newBackend(t, "memstore").open()
 	createRun(t, s, "r1", `{"target":2}`)
 	out, err := agent.NewController(s, registry(t, counterType())).Activate(context.Background(), agent.ActivationInput{
-		Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"},
+		Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns,
 		Budgets: agent.Budgets{Turns: 1, Tokens: agent.TokenBudget{Limit: 1}},
 	})
 	if err != nil || out.Status != store.StatusSucceeded || out.Consumed.Turns != 0 {
@@ -657,7 +657,7 @@ func TestBudgetsRefusedStartRecordsInputs(t *testing.T) {
 			s := newBackend(t, "memstore").open()
 			createLedgerRun(t, s)
 			out, err := agent.NewController(s, registry(t, ledgerType(&execLog{}))).Activate(context.Background(), agent.ActivationInput{
-				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Client: scripted(ledgerScript),
+				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: scripted(ledgerScript),
 				Config: json.RawMessage(`{"k":1}`), Budgets: b,
 			})
 			if err != nil || out.Status != store.StatusFailed {

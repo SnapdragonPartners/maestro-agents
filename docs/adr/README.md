@@ -37,12 +37,13 @@ template.
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-serial-execution-within-an-agent-instance.md) | Serial execution within an agent instance | Accepted |
-| [0003](0003-run-model-identities-and-activation-results.md) | Run model: identities, stored status and activation results | Amended by ADR-0007 |
-| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011 |
-| [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Amended by ADR-0006 |
+| [0003](0003-run-model-identities-and-activation-results.md) | Run model: identities, stored status and activation results | Amended by ADR-0007, ADR-0012 |
+| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011, ADR-0012 |
+| [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Amended by ADR-0006, ADR-0012 |
 | [0006](0006-store-interface.md) | The store interface | Amended by ADR-0008 |
-| [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009, ADR-0010, ADR-0011 |
-| [0008](0008-model-states.md) | Model states | Amended by ADR-0010, ADR-0011 |
+| [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012 |
+| [0008](0008-model-states.md) | Model states | Amended by ADR-0010, ADR-0011, ADR-0012 |
 | [0009](0009-budgets.md) | Budgets | Amended by ADR-0010, ADR-0011 |
 | [0010](0010-wrap-up-and-the-visible-clock.md) | Wrap-up and the visible clock | Accepted |
-| [0011](0011-manifests.md) | Manifests | Accepted |
+| [0011](0011-manifests.md) | Manifests | Amended by ADR-0012 |
+| [0012](0012-namespace-confinement.md) | Namespace confinement | Accepted |

@@ -43,7 +43,7 @@ func recoveryAgent() *agent.Type[recoveryData] {
 		if err := json.Unmarshal(c.ToolCall.Parameters, &args); err != nil {
 			return agent.ErrorResult[recoveryData](err.Error()), nil
 		}
-		obj, ok, err := c.Env.Object(ctx, recoveryNS, c.Env.RunID())
+		obj, ok, err := c.Env.Object(ctx, c.Env.RunID())
 		if err != nil {
 			return agent.Result[recoveryData]{}, err
 		}
@@ -59,7 +59,7 @@ func recoveryAgent() *agent.Type[recoveryData] {
 		}
 		return agent.Result[recoveryData]{
 			Content: "wrote " + args.Item,
-			Ops:     []store.Op{store.PutObjectJSON(recoveryNS, c.Env.RunID(), obj.Version, raw)},
+			Ops:     []store.Op{c.Env.PutJSON(c.Env.RunID(), obj.Version, raw)},
 		}, nil
 	}
 	return &agent.Type[recoveryData]{
@@ -191,7 +191,7 @@ func recoveryActivate(t testing.TB, s agent.Store, ctrl store.ControlPlane, clk 
 	}
 	c := agent.NewController(s, reg, agent.WithPolicy(recoveryPolicy))
 	return c.Activate(context.Background(), agent.ActivationInput{ //nolint:wrapcheck // the caller checks the error's class
-		Fence: own.Fence(), Scope: store.Scope{Kind: store.ScopeRun, ID: runID}, Client: recoveryClient(),
+		Fence: own.Fence(), Scope: store.Scope{Kind: store.ScopeRun, ID: runID}, Namespace: recoveryNS, Client: recoveryClient(),
 	})
 }
 
