@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -13,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -104,6 +104,8 @@ func loadSkill(fsys fs.FS, dir string) (*skill, error) {
 			return err //nolint:wrapcheck // wrapped with the skill's name by the caller
 		}
 		switch {
+		case !plainLine(rel):
+			return fmt.Errorf("path %q holds a control character, a line or paragraph separator, or U+FFFD", rel)
 		case len(b) > MaxSkillFileBytes:
 			return fmt.Errorf("%q is %d bytes, over the %d cap", rel, len(b), MaxSkillFileBytes)
 		case !utf8.Valid(b):
@@ -168,6 +170,8 @@ func (s *skill) parse(raw string) error {
 		return fmt.Errorf("name %q is not lower-case words joined by hyphens, at most %d characters", s.name, maxSkillNameLen)
 	case s.description == "":
 		return errors.New("description is required")
+	case !plainLine(s.description):
+		return errors.New("description holds a control character, a line or paragraph separator, or U+FFFD; it is one line of text")
 	case utf8.RuneCountInString(s.description) > maxSkillDescriptionLen:
 		return fmt.Errorf("description is over %d characters", maxSkillDescriptionLen)
 	}
@@ -176,6 +180,22 @@ func (s *skill) parse(raw string) error {
 		return errors.New("empty body")
 	}
 	return nil
+}
+
+// plainLine reports whether s is one line of plain text: no control
+// character (tab, CR, NUL, NEL and the rest), no line or paragraph
+// separator, and no U+FFFD. A skill's description and file paths reach the
+// model as text (the index, the file list), so none can break a line; and
+// with no U+FFFD in a path, a model's invalid UTF-8 or unpaired surrogate,
+// which decoding turns into U+FFFD, can never name a file (ADR 0013, items
+// 2 and 3).
+func plainLine(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
+			return false
+		}
+	}
+	return true
 }
 
 // digest returns the skill's content identity (ADR 0013, item 4): the
@@ -248,32 +268,69 @@ func readSkill(granted []*skill) *erasedTool {
 	return et
 }
 
-// readSkillResult answers a read-skill call.
+// readSkillResult answers a read-skill call. The input must be valid
+// UTF-8 holding one JSON object, nothing after it, whose keys are exactly
+// "skill" and optionally "file" (matched exactly, not case-folded), each a
+// string; anything else gets the no-such-skill tool error. A decoded value
+// holding U+FFFD is refused too, since no skill or path holds one.
 func readSkillResult(byName map[string]*skill, names []string, params json.RawMessage) erasedResult {
-	var in struct {
-		File  *string `json:"file"`
-		Skill string  `json:"skill"`
-	}
-	dec := json.NewDecoder(bytes.NewReader(params))
-	dec.DisallowUnknownFields()
-	var s *skill
-	if dec.Decode(&in) == nil {
-		s = byName[in.Skill]
-	}
-	if s == nil {
+	in, ok := decodeReadSkill(params)
+	s := byName[in.skill]
+	if !ok || s == nil {
 		return erasedResult{content: "No such skill. Choose one of: " + strings.Join(names, ", ") + ".", isError: true}
 	}
-	if in.File == nil || *in.File == SkillFile {
+	if !in.hasFile || in.file == SkillFile {
 		content := s.body
 		if refs := s.references(); len(refs) > 0 {
 			content += "\n\nFiles in this skill: " + strings.Join(refs, ", ") + "."
 		}
 		return erasedResult{content: content}
 	}
-	if f, ok := s.files[*in.File]; ok {
+	if f, ok := s.files[in.file]; ok {
 		return erasedResult{content: f}
 	}
 	return erasedResult{content: fmt.Sprintf("Skill %s has no such file. Its files: %s.", s.name, strings.Join(s.paths, ", ")), isError: true}
+}
+
+type readSkillInput struct {
+	skill   string
+	file    string
+	hasFile bool
+}
+
+// decodeReadSkill decodes a read-skill call's input strictly, the one
+// choke point for what the model writes to the tool (ADR 0013, item 3).
+func decodeReadSkill(params json.RawMessage) (readSkillInput, bool) {
+	var in readSkillInput
+	if !utf8.Valid(params) {
+		return in, false
+	}
+	// A map's keys are matched exactly; Unmarshal refuses trailing data.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(params, &fields) != nil || fields == nil {
+		return in, false
+	}
+	str := func(raw json.RawMessage) (string, bool) {
+		var v *string
+		if json.Unmarshal(raw, &v) != nil || v == nil || strings.ContainsRune(*v, utf8.RuneError) {
+			return "", false
+		}
+		return *v, true
+	}
+	for k, raw := range fields {
+		var ok bool
+		switch k {
+		case "skill":
+			in.skill, ok = str(raw)
+		case "file":
+			in.file, ok = str(raw)
+			in.hasFile = true
+		}
+		if !ok {
+			return readSkillInput{}, false
+		}
+	}
+	return in, fields["skill"] != nil
 }
 
 // SkillManifest is one skill in a manifest (MAN-1, ADR 0013 item 4).

@@ -75,7 +75,11 @@ It amends, item by item:
    between `---` markers, then the instructions. The header has exactly
    `name` (lower-case words joined by hyphens, at most 64 characters, equal
    to the directory's name) and `description` (required, at most 1024
-   characters, one line), the Agent Skills format's limits. Any other field
+   characters), the Agent Skills format's limits. A description, and every
+   file's path, is one line of plain text: no control character (CR, tab,
+   NUL, NEL and the rest), no line or paragraph separator (U+2028,
+   U+2029) and no U+FFFD. Both reach the model as text (the index, a
+   skill's file list), so neither can forge another line. Any other field
    is refused rather than ignored: silently dropping `allowed-tools`, say,
    would mislead the author. A file at the root, a directory without
    `SKILL.md`, an empty body, a file that is not valid UTF-8, or one over
@@ -94,8 +98,15 @@ It amends, item by item:
      the runtime editing the system instructions `Prompt` returns, and the
      index is covered by the tool's identity (item 4).
    - Its input is `{skill, file?}`, `skill` an enum of the granted names.
-     The enum is advice, not validation. `Execute` checks the input against
-     the granted skills and the named skill's files, by exact path. A call
+     The enum is advice, not validation. `Execute` decodes the input
+     strictly, at one choke point: valid UTF-8, one JSON object with
+     nothing after it, keys exactly `skill` and optionally `file` (matched
+     exactly, not case-folded, as `encoding/json` would into a struct),
+     each a string (`null` is refused, not read as omitted), and no decoded
+     value holding U+FFFD. Since no path holds U+FFFD (item 2), invalid
+     UTF-8 or an unpaired surrogate, which decoding replaces with it, can
+     never alias a file. It then checks the input against the granted
+     skills and the named skill's files, by exact path. A call
      without `file` (or with `SKILL.md`) returns the instructions without
      the header, followed by the list of the skill's other files. A
      malformed input, an ungranted skill or an unknown file gets a tool
