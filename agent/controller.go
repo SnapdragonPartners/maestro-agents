@@ -89,7 +89,9 @@ type ActivationInput struct {
 	Config json.RawMessage
 	// Budgets are the run's budgets (BUD-1, ADR 0009), recorded when the
 	// run starts and fixed for the run: a later activation ignores this
-	// field. The zero value sets no limit.
+	// field. A zero token, turn or active-time budget takes the agent
+	// type's default (Type.Budgets, ADR 0011 item 7), and sets no limit
+	// only if the type has none; a deadline or cost is never defaulted.
 	Budgets Budgets
 	// MaxSteps is how many steps this activation may complete before it
 	// stops with the run runnable (STM-7). Zero is no limit.

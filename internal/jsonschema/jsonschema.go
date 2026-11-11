@@ -52,16 +52,6 @@ type node struct {
 	hasConst   bool
 }
 
-// isAnnotation reports whether k is an annotation the subset accepts and
-// that validates nothing.
-func isAnnotation(k string) bool {
-	switch k {
-	case "$schema", "$comment", "title", "description", "default", "examples", "deprecated":
-		return true
-	}
-	return false
-}
-
 const typeNumber = "number"
 
 func isTypeName(t string) bool {
@@ -153,8 +143,14 @@ func (n *node) valueKeyword(k string, v any, at string) error {
 		if !ok || len(list) == 0 {
 			return badValue(k, at, "a non-empty list")
 		}
+		if !numbersInRange(v) {
+			return badValue(k, at, fmt.Sprintf("a list whose numbers have exponents within ±%d", maxExponent))
+		}
 		n.enum = list
 	case "const":
+		if !numbersInRange(v) {
+			return badValue(k, at, fmt.Sprintf("a value whose numbers have exponents within ±%d", maxExponent))
+		}
 		n.constV, n.hasConst = v, true
 	case "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum":
 		return n.compileBound(k, v, at)
@@ -171,11 +167,55 @@ func (n *node) valueKeyword(k string, v any, at string) error {
 		}
 		n.pattern = re
 	default:
-		if !isAnnotation(k) {
-			return fmt.Errorf("jsonschema: keyword %q at %s is not supported (ADR 0011, item 6)", k, display(at))
-		}
+		return annotation(k, v, at)
 	}
 	return nil
+}
+
+// annotation checks an annotation's value: it validates nothing, but an
+// invalid one makes the schema invalid. default takes any value.
+func annotation(k string, v any, at string) error {
+	switch k {
+	case "$schema", "$comment", "title", "description":
+		if _, ok := v.(string); !ok {
+			return badValue(k, at, "a string")
+		}
+	case "deprecated":
+		if _, ok := v.(bool); !ok {
+			return badValue(k, at, "a boolean")
+		}
+	case "examples":
+		if _, ok := v.([]any); !ok {
+			return badValue(k, at, "a list")
+		}
+	case "default":
+	default:
+		return fmt.Errorf("jsonschema: keyword %q at %s is not supported (ADR 0011, item 6)", k, display(at))
+	}
+	return nil
+}
+
+// numbersInRange reports whether every number in v has an exponent the
+// exact comparison supports, so an enum or const can be enforced.
+func numbersInRange(v any) bool {
+	switch x := v.(type) {
+	case json.Number:
+		_, ok := rat(x)
+		return ok
+	case []any:
+		for _, e := range x {
+			if !numbersInRange(e) {
+				return false
+			}
+		}
+	case map[string]any:
+		for _, e := range x {
+			if !numbersInRange(e) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func badValue(k, at, want string) error {

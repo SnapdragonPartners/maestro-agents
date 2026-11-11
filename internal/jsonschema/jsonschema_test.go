@@ -52,6 +52,15 @@ func TestCompileRefuses(t *testing.T) {
 		"additionalProperties num":  `{"additionalProperties": 3}`,
 		"invalid UTF-8":             "{\"title\": \"\xff\"}",
 		"patternProperties refused": `{"patternProperties": {}}`,
+		"const huge exponent":       `{"const": 1e1001}`,
+		"const nested huge":         `{"const": {"a": [1e-1001]}}`,
+		"enum huge exponent":        `{"enum": [1, 1e1001]}`,
+		"title not string":          `{"title": 123}`,
+		"description not string":    `{"description": false}`,
+		"comment not string":        `{"$comment": []}`,
+		"schema not string":         `{"$schema": 1}`,
+		"deprecated not boolean":    `{"deprecated": "false"}`,
+		"examples not list":         `{"examples": true}`,
 	}
 	for name, schema := range cases {
 		t.Run(name, func(t *testing.T) {
