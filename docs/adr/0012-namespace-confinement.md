@@ -19,14 +19,15 @@ item 7 and [ADR 0008](0008-model-states.md) item 4 left confinement to
 
 The design first drafted for it had each agent type declare logical
 namespaces, which the host bound to physical ones and granted per state or
-per tool. That design was rejected as too complex for what it bought:
+per tool. That design was rejected for its cost against present need, not
+because it cannot work: agent code could name a logical handle that the
+host binds and the runtime records, without learning physical names. But
 within one instance, a per-state grant isolates little, since a code
-state can read whatever the type's other states read, and the agent type
-still had to learn the physical names somehow, through configuration or
-`Env`, which brings back the binding problem. The intake agent, the MVP's
-one consumer, needs two things from the object store: "has this file hash
-been seen?" (a lookup) and "records awaiting review" (a prefix listing).
-Both fit in one namespace, under two key prefixes.
+state can read whatever the type's other states read, and no consumer yet
+needs more than one namespace. The intake agent, the MVP's one consumer,
+needs two things from the object store: "has this file hash been seen?"
+(a lookup) and "records awaiting review" (a prefix listing). Both fit in
+one namespace, under two key prefixes.
 
 It amends, item by item:
 
@@ -108,19 +109,42 @@ It amends, item by item:
   code, holding the store, is not confined; nor are tools that do not
   write through the object store (external effects, TOOL-12).
 - One extra point read per run start (item 5's probe).
-- A type that needs more than one namespace (say, read-only reference
-  data another agent type maintains) does not fit. The expected answer is
-  a tool or host-supplied data for the other store's contents, since
-  reading another type's namespace couples the two types' key schemas. A
-  second namespace, declared by the type and bound by the host, can be
-  added when a type needs it; until then the single namespace stands.
+- Key prefixes organize a namespace; they do not confine. Every run given
+  a namespace can read and write all of it, so `department/A/` beside
+  `department/B/` in one namespace is a convention, not a boundary.
+- One namespace per run partitions access into disjoint sharing groups.
+  It does not fit data shared on overlapping scopes: for example, records
+  private to one department beside a registry shared by all of them,
+  where a step must write both in one commit with its checkpoint. A tool
+  cannot bridge that, since its operations must be in the run's namespace
+  (item 4), and a separate service gives up the single commit. That case
+  is narrower than it looks: when the registry guards an external effect
+  (a billing API, say), it cannot be the authority, since other people
+  and agents act on the destination too. The destination's own check or
+  idempotency key is what prevents the duplicate (TOOL-5, TOOL-12,
+  HOST-6), and an internal registry is then advisory and need not commit
+  atomically with the checkpoint. What remains is purely internal state
+  shared on overlapping scopes. Read-only reference data another agent
+  type maintains is served by a tool or host-supplied data, unless direct
+  shared access is a deliberate, versioned contract.
+- The extension path, when a consumer has that need: keep the run's
+  default namespace and add further namespaces the agent type declares
+  under logical names, which the host binds and the runtime records, fixed
+  for the run, with operations in any of them joining the same fenced
+  commit (so all must be in the same store). Restricting which tools reach
+  which namespace is separate work, needed only for a tool-level boundary;
+  giving every tool every namespace adds no protection. Until a consumer
+  needs it, the single namespace stands.
+- Separate namespaces would not separate every copy of the data: a
+  transition's and a result's entries record their operations, values
+  included, in the execution record, whose retention is its own.
 - The manifest says nothing about namespaces: which namespace a run uses
   is the host's deployment decision, not part of the agent type's
   behavior identity (ADR 0011, item 11).
 
 ## References
 
-- [docs/requirements.md](../requirements.md): STORE-2, STORE-3, RUN-1,
+- [docs/requirements.md](../requirements.md): STORE-2, STORE-3, RUN-1, TOOL-5, TOOL-12, HOST-6,
   RUN-3, MAN-2, REC-1
 - [ADR 0005](0005-storage-one-fenced-commit.md), item 7
 - [ADR 0007](0007-agent-types-and-the-run-controller.md), items 4, 6, 8,
