@@ -229,7 +229,41 @@ func (v *verifier) checkClosing(col []*columnAmount, ending *columnAmount) {
 	}
 	if row, ok := v.rowAfter(end); ok {
 		fail("the row %q after the ending prints an amount in the same column; the closing balance is the table's last row", row)
+		return
 	}
+	if row, ok := v.continuesTo(end); ok {
+		fail("the ending plus the rows printed after it reaches %q: the roll-forward continues past the ending, so it is not the closing balance", row)
+	}
+}
+
+// subtotalLabel matches a row that may restate rows above it.
+var subtotalLabel = regexp.MustCompile(`(?i)\b(total|subtotal|net)\b`)
+
+// continuesTo looks past headings for the roll-forward continuing below
+// the ending: a later row in the chosen column whose amount is the ending
+// plus the rows printed between them, read as movements (all of them, or
+// all but those labeled as totals), with at least one nonzero row between.
+// A copy of the ending with nothing between is a repeat, for check 3.
+func (v *verifier) continuesTo(end int) (string, bool) {
+	p := v.pages[v.rec.Ending.Page]
+	all, noTotals := v.rec.Ending.Amount, v.rec.Ending.Amount
+	moved := false
+	for li := end + 1; li < len(p.lines); li++ {
+		l := &p.lines[li]
+		t, ok := l.amountAt(v.edge)
+		if !ok {
+			continue
+		}
+		if moved && (t.value.Equal(all) || t.value.Equal(noTotals)) {
+			return strings.TrimSpace(l.text), true
+		}
+		all = all.Add(t.value)
+		if !subtotalLabel.MatchString(l.text) {
+			noTotals = noTotals.Add(t.value)
+		}
+		moved = moved || t.value.Sign() != 0
+	}
+	return "", false
 }
 
 // unsubmittedRow returns the first row strictly between from and to that
@@ -323,7 +357,7 @@ func (v *verifier) headerAt(edge, top, cols int) (nearestText string, ok bool) {
 	want := normWords(c.Label)
 	for li := top - 1; li >= 0 && li >= top-headerWindow; li-- {
 		l := &p.lines[li]
-		if l.hasCells() {
+		if l.hasLooseCells() {
 			return "", false // a row of another table: this one has no header row
 		}
 		phs := l.phrases()
@@ -443,16 +477,17 @@ func (v *verifier) findSection() {
 			continue
 		}
 		seen++
-		if l.hasCells() || !fundHeader.MatchString(l.text) {
+		if l.hasLooseCells() || !fundHeader.MatchString(l.text) {
 			continue
 		}
-		if phs := l.phrases(); len(phs) >= 2 && seen <= sectionWindow {
+		if phs := l.phrases(); len(phs) >= 2 && seen <= sectionWindow && v.section == nil && v.fundTable == "" {
 			v.section = &sectionHeader{phrases: phs, groupOf: groupColumns(phs, cols)}
-			return
+			continue
 		}
-		// A fund or general-partner heading no partner-group row resolves:
-		// one phrase over the table, or anywhere above it. The table's
-		// ownership is then unverified.
+		// Any other fund or general-partner heading above the table (one
+		// phrase, beyond the window, nearer than the group row or above
+		// it) is evidence the group row does not resolve: the table's
+		// ownership is unverified.
 		if v.fundTable == "" {
 			v.fundTable = strings.TrimSpace(l.text)
 		}
@@ -702,9 +737,9 @@ func (v *verifier) checkInvestor() {
 				"the ending %s is printed under %q, not under the investor", r.Ending.Amount, v.section.phrases[g].text)
 		}
 	}
-	if v.section == nil && v.fundTable != "" {
+	if v.fundTable != "" {
 		v.add(CheckInvestor, Error, "fund_table", "ending", r.Ending.Page,
-			"%q is printed above the table and no partner-group row resolves it: the balances may be the fund's or a general partner's, not the investor's", v.fundTable)
+			"%q is printed above the table and the partner-group row, if any, does not resolve it: the balances may be the fund's or a general partner's, not the investor's", v.fundTable)
 	}
 	v.checkLargest()
 	if r.FundTotal != nil && r.Ending.Amount.Abs().Cmp(r.FundTotal.Amount.Abs()) >= 0 {

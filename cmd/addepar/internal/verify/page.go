@@ -356,6 +356,33 @@ func (l *pageLine) hasCells() bool {
 	return false
 }
 
+// hasLooseCells reports whether the line prints a cell standing alone: a
+// phrase of nothing but cells, signs and glyphs, set apart by two or more
+// spaces ("Commitments        2.10%"). A number or dash inside a lettered
+// phrase ("Total Fund (Including GP) - Class 1") belongs to a heading.
+func (l *pageLine) hasLooseCells() bool {
+	for i := 0; i < len(l.words); {
+		j := i + 1
+		for j < len(l.words) && l.words[j].start-l.words[j-1].end < 2 {
+			j++
+		}
+		cells, letters := false, false
+		for _, t := range l.toks[i:j] {
+			switch t.kind {
+			case tokAmount, tokDash, tokPct:
+				cells = true
+			case tokOther:
+				letters = true
+			}
+		}
+		if cells && !letters {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
 // cellAt reports whether the line prints an amount or a dash in the column
 // whose right edge is edge.
 func (l *pageLine) cellAt(edge int) bool {
@@ -365,6 +392,24 @@ func (l *pageLine) cellAt(edge int) bool {
 		}
 	}
 	return false
+}
+
+// amountAt returns the amount the line prints in the column whose right
+// edge is edge; a dash there reads as zero.
+func (l *pageLine) amountAt(edge int) (token, bool) {
+	for _, t := range l.toks {
+		if abs(t.end-edge) > columnTolerance {
+			continue
+		}
+		switch t.kind {
+		case tokAmount:
+			return t, true
+		case tokDash:
+			t.value = decimal.Decimal{}
+			return t, true
+		}
+	}
+	return token{}, false
 }
 
 func abs(n int) int {

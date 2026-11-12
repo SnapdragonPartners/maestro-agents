@@ -386,3 +386,52 @@ func TestHeaderBoundToTable(t *testing.T) {
 	page += "\n                              Quarter\n"
 	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "1/column_mismatch/column")
 }
+
+// Codex round 3.
+
+func TestSubtotalBeforeSubheading(t *testing.T) {
+	page := strings.Replace(simplePage, "Fees                               (101)\n",
+		"Fees                               (101)\nCapital before gains            104,899\n\nInvestment income\n", 1)
+	rec := simpleRecord(t)
+	rec.Lines = rec.Lines[:2]
+	rec.Ending = statement.Amount{Label: "Capital before gains", Amount: decimal.MustParse("104899"), Page: 1}
+	assertError(t, verify.Verify(simpleDoc(usd(page)), rec), "2/ending_not_closing/ending")
+}
+
+func TestFundHeadingWithNumbers(t *testing.T) {
+	page := strings.Replace(simplePage, "                              Quarter\n",
+		"            Total Fund (Including GP) - Class 1\n                              Quarter\n", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "4/fund_table/ending")
+}
+
+func TestNearerFundHeadingNotErasedByGroupRow(t *testing.T) {
+	page := `Example Fund I, LP   Example Holdings IV, LLC
+For the period ending March 31, 2026
+                    Limited Partner          General Partner
+                                    General Partner
+                         Quarter
+Opening Balance          100,000
+Contributions              5,000
+Fees                        (101)
+Gains                      2,000
+Ending Balance           106,899
+`
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "4/fund_table/ending")
+}
+
+// TestCommitmentTableBelowIsNotContinuation keeps the continuation rule
+// honest: a commitment table printed below the ending in the same column
+// (as one sample does) does not sum from the ending and passes.
+func TestCommitmentTableBelowIsNotContinuation(t *testing.T) {
+	page := simplePage + `
+Commitment Reconciliation
+Total commitment, end of period  2,000,000
+Unfunded commitment, beginning   1,900,000
+Less: contributions                (5,000)
+Unfunded commitment, end         1,895,000
+`
+	res := verify.Verify(simpleDoc(usd(page)), simpleRecord(t))
+	if res.Verdict != verify.Pass {
+		t.Fatalf("%s", describe(&res))
+	}
+}

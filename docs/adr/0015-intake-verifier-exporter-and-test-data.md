@@ -79,9 +79,10 @@ five to verify.
    fails (`column_unverified`). The ending must be the closing balance,
    established from the printed table rather than from what was submitted:
    its label not an opening balance's, its row below the beginning and
-   every movement, and no row after it printing a cell in the column
-   before the table ends at the first line with no cells
-   (`ending_not_closing`); and every row between the beginning and the
+   every movement, no row after it printing a cell in the column before
+   the table ends at the first line with no cells, and no later row in the
+   column, past any heading, whose amount is the ending plus the rows
+   between (the roll-forward continuing) (`ending_not_closing`); and every row between the beginning and the
    ending that prints a cell in the column must be submitted
    (`row_not_submitted`). Names (investor, fund, period label,
    currency evidence) are matched keeping every digit; only labels and
@@ -93,9 +94,12 @@ five to verify.
    fund total, the general partner or all partners groups the ending line's
    columns: in order when they divide evenly among its phrases, otherwise
    each column to the nearest phrase; an ending under a fund phrase fails.
-   Any other such heading above the table (one phrase, or beyond those four
-   lines) leaves the table's ownership unverified, which fails
-   (`fund_table`). The record's claimed section plays no part in finding
+   Any other such heading above the table (one phrase, beyond those four
+   lines, or nearer the table than the group row) leaves the table's
+   ownership unverified, which fails (`fund_table`). A heading is a line
+   whose numbers and dashes, if any, sit inside lettered phrases ("Total
+   Fund (Including GP) - Class 1"); a line with a cell standing alone is a
+   data row. The record's claimed section plays no part in finding
    the groups. When a total-over-all-partners header is printed, an
    ending that is the largest of the distinct balances on its line fails
    too. A declared `fund_total` must be larger than the value, and a
