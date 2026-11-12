@@ -239,33 +239,6 @@ func (v *verifier) checkClosing(col []*columnAmount, ending *columnAmount) {
 // subtotalLabel matches a row that may restate rows above it.
 var subtotalLabel = regexp.MustCompile(`(?i)\b(total|subtotal|net)\b`)
 
-// continuesTo looks past headings for the roll-forward continuing below
-// the ending: a later row in the chosen column whose amount is the ending
-// plus the rows printed between them, read as movements (all of them, or
-// all but those labeled as totals), with at least one nonzero row between.
-// A copy of the ending with nothing between is a repeat, for check 3.
-func (v *verifier) continuesTo(end int) (string, bool) {
-	p := v.pages[v.rec.Ending.Page]
-	all, noTotals := v.rec.Ending.Amount, v.rec.Ending.Amount
-	moved := false
-	for li := end + 1; li < len(p.lines); li++ {
-		l := &p.lines[li]
-		t, ok := l.amountAt(v.edge)
-		if !ok {
-			continue
-		}
-		if moved && (t.value.Equal(all) || t.value.Equal(noTotals)) {
-			return strings.TrimSpace(l.text), true
-		}
-		all = all.Add(t.value)
-		if !subtotalLabel.MatchString(l.text) {
-			noTotals = noTotals.Add(t.value)
-		}
-		moved = moved || t.value.Sign() != 0
-	}
-	return "", false
-}
-
 // unsubmittedRow returns the first row strictly between from and to that
 // prints a cell in the chosen column and is not submitted.
 func (v *verifier) unsubmittedRow(from, to int, submitted map[int]bool) (string, bool) {
@@ -293,6 +266,54 @@ func (v *verifier) rowAfter(end int) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// continuesTo looks past headings for the roll-forward continuing below
+// the ending: a later row in the chosen column whose amount is the ending
+// plus the rows printed between them, read as movements (all of them, or
+// all but those labeled as totals), with at least one nonzero row between.
+// On a whole-unit statement the comparison allows check 2's rounding,
+// max(1, 0.5 x the amounts summed). A copy of the ending with nothing
+// between is a repeat, for check 3.
+func (v *verifier) continuesTo(end int) (string, bool) {
+	p := v.pages[v.rec.Ending.Page]
+	all, noTotals := v.rec.Ending.Amount, v.rec.Ending.Amount
+	nAll, nNoTotals := 1, 1
+	moved := false
+	for li := end + 1; li < len(p.lines); li++ {
+		l := &p.lines[li]
+		t, ok := l.amountAt(v.edge)
+		if !ok {
+			continue
+		}
+		if moved && (v.within(t.value, all, nAll) || v.within(t.value, noTotals, nNoTotals)) {
+			return strings.TrimSpace(l.text), true
+		}
+		all, nAll = all.Add(t.value), nAll+1
+		if !subtotalLabel.MatchString(l.text) {
+			noTotals, nNoTotals = noTotals.Add(t.value), nNoTotals+1
+		}
+		moved = moved || t.value.Sign() != 0
+	}
+	return "", false
+}
+
+// within reports whether got equals want, exactly on a cents statement and
+// within check 2's rounding tolerance for n addends on a whole-unit one.
+func (v *verifier) within(got, want decimal.Decimal, n int) bool {
+	if v.rec.Precision == statement.Cents {
+		return got.Equal(want)
+	}
+	return got.Sub(want).Abs().Cmp(roundingTolerance(n)) <= 0
+}
+
+// roundingTolerance is max(1, 0.5 x n) for n rounded amounts summed.
+func roundingTolerance(n int) decimal.Decimal {
+	tol := decimal.FromInt(int64(n)).Half()
+	if tol.Cmp(decimal.FromInt(1)) < 0 {
+		return decimal.FromInt(1)
+	}
+	return tol
 }
 
 // tableTop returns the line of the table's first submitted row at edge:
@@ -480,7 +501,7 @@ func (v *verifier) findSection() {
 		if l.hasLooseCells() || !fundHeader.MatchString(l.text) {
 			continue
 		}
-		if phs := l.phrases(); len(phs) >= 2 && seen <= sectionWindow && v.section == nil && v.fundTable == "" {
+		if phs := l.phrases(); len(phs) >= 2 && seen <= sectionWindow && v.section == nil && v.fundTable == "" && partnerGroups(phs) {
 			v.section = &sectionHeader{phrases: phs, groupOf: groupColumns(phs, cols)}
 			continue
 		}
@@ -492,6 +513,23 @@ func (v *verifier) findSection() {
 			v.fundTable = strings.TrimSpace(l.text)
 		}
 	}
+}
+
+// partnerHeader matches a phrase naming a partner group: the investor's or
+// another's.
+var partnerHeader = regexp.MustCompile(`(?i)\b(limited partners?|general partners?|partners|investors?|members?|lp|gp|shareholders?|unitholders?|total fund|fund total|total partnership|all partners|your (share|account|capital))\b`)
+
+// partnerGroups reports whether every phrase of a line names a partner
+// group, so that the line splits the table's columns among owners. A fund
+// heading beside anything else ("Total Fund (Including GP)    USD") does
+// not, and stays a table-wide heading.
+func partnerGroups(phs []phrase) bool {
+	for _, ph := range phs {
+		if !partnerHeader.MatchString(ph.text) {
+			return false
+		}
+	}
+	return true
 }
 
 // sectionWindow is how many printed lines above the table's first row are
@@ -552,10 +590,7 @@ func (v *verifier) checkRollForward() {
 			r.Beginning.Amount, sum, r.Ending.Amount, diff)
 		return
 	}
-	tol := decimal.FromInt(int64(n)).Half()
-	if tol.Cmp(decimal.FromInt(1)) < 0 {
-		tol = decimal.FromInt(1)
-	}
+	tol := roundingTolerance(n)
 	if diff.Abs().Cmp(tol) > 0 {
 		v.add(CheckRollForward, Error, "does_not_tie", "", r.Ending.Page,
 			"beginning %s plus the movements is %s, not the ending %s (off by %s; rounding allows %s over %d lines)",

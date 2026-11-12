@@ -435,3 +435,21 @@ Unfunded commitment, end         1,895,000
 		t.Fatalf("%s", describe(&res))
 	}
 }
+
+// Codex round 4.
+
+func TestRoundedContinuation(t *testing.T) {
+	page := strings.Replace(simplePage, "Fees                               (101)\n",
+		"Fees                               (101)\nCapital before gains            104,899\n\nInvestment income\n", 1)
+	page = strings.Replace(page, "106,899", "106,900", 1)
+	rec := simpleRecord(t)
+	rec.Lines = rec.Lines[:2]
+	rec.Ending = statement.Amount{Label: "Capital before gains", Amount: decimal.MustParse("104899"), Page: 1}
+	assertError(t, verify.Verify(simpleDoc(usd(page)), rec), "2/ending_not_closing/ending")
+}
+
+func TestFundHeadingBesideNonGroupPhrase(t *testing.T) {
+	page := strings.Replace(simplePage, "                              Quarter\n",
+		"            Total Fund (Including GP)          USD\n                              Quarter\n", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "4/fund_table/ending")
+}

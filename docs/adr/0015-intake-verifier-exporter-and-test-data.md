@@ -82,7 +82,8 @@ five to verify.
    every movement, no row after it printing a cell in the column before
    the table ends at the first line with no cells, and no later row in the
    column, past any heading, whose amount is the ending plus the rows
-   between (the roll-forward continuing) (`ending_not_closing`); and every row between the beginning and the
+   between, within check 2's rounding on a whole-unit statement (the
+   roll-forward continuing) (`ending_not_closing`); and every row between the beginning and the
    ending that prints a cell in the column must be submitted
    (`row_not_submitted`). Names (investor, fund, period label,
    currency evidence) are matched keeping every digit; only labels and
@@ -92,7 +93,9 @@ five to verify.
    check 4 stands between it and a wrong value. Among the four printed
    lines above the table's first row, a line with no cells that names the
    fund total, the general partner or all partners groups the ending line's
-   columns: in order when they divide evenly among its phrases, otherwise
+   columns, if every phrase on it names a partner group (so "Total Fund
+   (Including GP)    USD" is not a group row): in order when they divide
+   evenly among its phrases, otherwise
    each column to the nearest phrase; an ending under a fund phrase fails.
    Any other such heading above the table (one phrase, beyond those four
    lines, or nearer the table than the group row) leaves the table's
