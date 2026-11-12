@@ -61,7 +61,7 @@ func TestNormWord(t *testing.T) {
 		"$":              "",
 	}
 	for in, want := range cases {
-		if got := normWord(in); got != want {
+		if got := normWord(in, true); got != want {
 			t.Errorf("normWord(%q) = %q, want %q", in, got, want)
 		}
 	}

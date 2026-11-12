@@ -190,19 +190,26 @@ type verifier struct {
 	endTok *token
 	// The section header over the ending's line, when the table has one.
 	section *sectionHeader
+	// fundTable is a one-phrase fund or general-partner heading over the
+	// table, when there is one and no partner-group row.
+	fundTable string
 	// The column the roll-forward's amounts were read from, once check 1
 	// has found it: their shared right edge.
 	edge    int
 	hasEdge bool
+	// beginningLine is the beginning balance's line on the ending's page,
+	// or -1.
+	beginningLine int
 }
 
 func newVerifier(doc *document.Document, rec *statement.Record) *verifier {
 	return &verifier{
-		doc:      doc,
-		rec:      rec,
-		pages:    map[int]*pageText{},
-		findings: map[int][]Finding{},
-		skipped:  map[int]bool{},
+		doc:           doc,
+		rec:           rec,
+		pages:         map[int]*pageText{},
+		findings:      map[int][]Finding{},
+		skipped:       map[int]bool{},
+		beginningLine: -1,
 	}
 }
 

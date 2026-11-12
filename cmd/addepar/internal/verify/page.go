@@ -20,10 +20,15 @@ import (
 const columnTolerance = 4
 
 type word struct {
-	raw   string // as printed
-	norm  string // normalized for matching; "" for a word that matches nothing
-	start int    // first rune column
-	end   int    // one past the last rune column
+	raw string // as printed
+	// norm is the word normalized for matching a label or header, with a
+	// glued footnote reference dropped; "" for a word that matches nothing.
+	norm string
+	// exact is normalized like norm but keeps every digit, for matching a
+	// name: "Series1" and "Series2" are different funds.
+	exact string
+	start int // first rune column
+	end   int // one past the last rune column
 }
 
 type tokenKind int
@@ -53,7 +58,7 @@ type pageLine struct {
 
 type pageText struct {
 	lines []pageLine
-	words []string // every normalized non-empty word on the page, in order
+	exact []string // every non-empty exact-normalized word on the page, in order
 }
 
 func readPage(text string) *pageText {
@@ -63,8 +68,8 @@ func readPage(text string) *pageText {
 		pl.toks = make([]token, len(pl.words))
 		for j, w := range pl.words {
 			pl.toks[j] = classify(w)
-			if w.norm != "" {
-				p.words = append(p.words, w.norm)
+			if w.exact != "" {
+				p.exact = append(p.exact, w.exact)
 			}
 		}
 		p.lines = append(p.lines, pl)
@@ -86,7 +91,7 @@ func splitWords(line string) []word {
 			j++
 		}
 		raw := string(runes[i:j])
-		out = append(out, word{raw: raw, norm: normWord(raw), start: i, end: j})
+		out = append(out, word{raw: raw, norm: normWord(raw, true), exact: normWord(raw, false), start: i, end: j})
 		i = j
 	}
 	return out
@@ -110,13 +115,15 @@ func foldPunct(s string) string {
 	}, s)
 }
 
-// normWord folds case and typographic punctuation, drops trailing ':' ',' ';'
-// and a footnote reference glued to the end of a word ("Contributions1",
-// "Gain/(Loss)3"). A standalone number is kept: "Fund 3" stays "fund" "3".
-func normWord(raw string) string {
+// normWord folds case and typographic punctuation and drops trailing ':'
+// ',' ';'. With footnotes set it also drops a footnote reference glued to
+// the end of a word ("Contributions1", "Gain/(Loss)3"), for labels and
+// headers; names keep every digit. A standalone number is always kept:
+// "Fund 3" stays "fund" "3".
+func normWord(raw string, footnotes bool) string {
 	w := strings.ToLower(foldPunct(raw))
 	w = strings.TrimRight(w, ":,;")
-	if i := strings.LastIndexFunc(w, func(r rune) bool { return r < '0' || r > '9' }); i >= 0 && i < len(w)-1 {
+	if i := strings.LastIndexFunc(w, func(r rune) bool { return r < '0' || r > '9' }); footnotes && i >= 0 && i < len(w)-1 {
 		prev := rune(w[i])
 		if unicode.IsLetter(prev) || prev == ')' {
 			w = w[:i+1]
@@ -129,11 +136,17 @@ func normWord(raw string) string {
 	return w
 }
 
-// normWords normalizes free text into the words matching compares.
-func normWords(s string) []string {
+// normWords normalizes a label or header into the words matching compares,
+// dropping glued footnote references.
+func normWords(s string) []string { return splitNorm(s, true) }
+
+// exactWords normalizes a name, keeping every digit.
+func exactWords(s string) []string { return splitNorm(s, false) }
+
+func splitNorm(s string, footnotes bool) []string {
 	var out []string
 	for _, f := range strings.Fields(foldPunct(s)) {
-		if n := normWord(f); n != "" {
+		if n := normWord(f, footnotes); n != "" {
 			out = append(out, n)
 		}
 	}
@@ -213,10 +226,23 @@ func (l *pageLine) lineNorms() (norms []string, idx []int) {
 	return norms, idx
 }
 
-// containsText reports whether the page prints s, compared word by word
-// after normalization; the words may run across lines.
+// containsText reports whether the page prints the name or text s, compared
+// word by word, every digit kept; the words may run across lines.
 func (p *pageText) containsText(s string) bool {
-	return findPhrase(p.words, normWords(s), 0) >= 0
+	return findPhrase(p.exact, exactWords(s), 0) >= 0
+}
+
+// containsHeader is containsText for a label or header, which may carry a
+// glued footnote reference.
+func (p *pageText) containsHeader(s string) bool {
+	want := normWords(s)
+	for li := range p.lines {
+		norms, _ := p.lines[li].lineNorms()
+		if findPhrase(norms, want, 0) >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // labelHit is one place a label is printed with the amounts that follow it.
@@ -228,6 +254,10 @@ type labelHit struct {
 // findLabel returns every line printing the label, each with its run: the
 // tokens after the label up to the next word that is not a cell (a word with
 // letters, a date). Currency signs and junk inside the run are skipped.
+//
+// The label must be the whole printed label, not its tail: it starts the
+// line or follows a cell (a side-by-side box), never another word, so
+// "Contributions" does not match "Less: contributions".
 func (p *pageText) findLabel(label string) []labelHit {
 	want := normWords(label)
 	var hits []labelHit
@@ -238,6 +268,10 @@ func (p *pageText) findLabel(label string) []labelHit {
 			at := findPhrase(norms, want, from)
 			if at < 0 {
 				break
+			}
+			from = at + 1
+			if first := idx[at]; first > 0 && l.toks[first-1].kind == tokOther {
+				continue // the tail of a longer label
 			}
 			after := idx[at+len(want)-1] + 1
 			var run []token
@@ -250,7 +284,6 @@ func (p *pageText) findLabel(label string) []labelHit {
 				run = cellRun(l.toks[after:])
 			}
 			hits = append(hits, labelHit{line: l, run: run})
-			from = at + 1
 		}
 	}
 	return hits

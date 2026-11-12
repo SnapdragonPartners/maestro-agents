@@ -16,6 +16,7 @@ import (
 // columnAmount is a roll-forward amount that must sit in the record's column.
 type columnAmount struct {
 	amount  *statement.Amount
+	chosen  *candidate // the hit in the chosen column, once found
 	subject string
 	hits    []candidate
 }
@@ -33,9 +34,9 @@ func (v *verifier) checkGrounding() {
 	if r.Currency.Evidence != "" {
 		v.groundText("currency", r.Currency.Evidence, r.Currency.Page)
 	}
-	v.groundText("column", r.Column.Label, r.Column.Page)
+	v.groundHeader("column", r.Column.Label, r.Column.Page)
 	if r.Column.Section != "" {
-		v.groundText("column section", r.Column.Section, r.Column.Page)
+		v.groundHeader("column section", r.Column.Section, r.Column.Page)
 	}
 
 	col := make([]*columnAmount, 0, len(r.Lines)+2)
@@ -58,6 +59,14 @@ func (v *verifier) checkGrounding() {
 	}
 	v.chooseColumn(col, ending)
 	v.checkColumnHeader()
+	v.checkClosing(col, ending)
+}
+
+func (v *verifier) groundHeader(subject, text string, page int) {
+	p := v.page(CheckGrounding, subject, page)
+	if p != nil && !p.containsHeader(text) {
+		v.add(CheckGrounding, Error, "not_printed", subject, page, "%s %q is not printed on page %d", subject, text, page)
+	}
 }
 
 func (v *verifier) groundText(subject, text string, page int) {
@@ -150,12 +159,50 @@ func (v *verifier) chooseColumn(col []*columnAmount, ending *columnAmount) {
 		v.ending, v.endTok = e.hit, &e.tok
 	}
 	for _, c := range col {
-		if len(c.hits) == 0 || c.amount.Page != v.rec.Ending.Page {
-			continue // ungrounded (already reported) or on another page
+		switch {
+		case len(c.hits) == 0:
+			// ungrounded, already reported
+		case c.amount.Page != v.rec.Ending.Page:
+			// A column is a right edge on one page; across pages it cannot
+			// be shown to be the same column.
+			v.add(CheckGrounding, Error, "column_unverified", c.subject, c.amount.Page,
+				"%s is on page %d and the ending on page %d; the column cannot be verified across pages", c.subject, c.amount.Page, v.rec.Ending.Page)
+		default:
+			c.chosen = nearest(c.hits, best)
+			if c.chosen != nil && c.amount == v.rec.Beginning {
+				v.beginningLine = c.chosen.hit.line.index
+			}
+			if c.chosen == nil {
+				v.add(CheckGrounding, Error, "other_column", c.subject, c.amount.Page,
+					"%s amount %s is printed beside %q but not in the column the other amounts come from", c.subject, c.amount.Amount, c.amount.Label)
+			}
 		}
-		if nearest(c.hits, best) == nil {
-			v.add(CheckGrounding, Error, "other_column", c.subject, c.amount.Page,
-				"%s amount %s is printed beside %q but not in the column the other amounts come from", c.subject, c.amount.Amount, c.amount.Label)
+	}
+}
+
+// checkClosing establishes that the ending is the period's closing
+// balance: its row is printed below the beginning and every movement, and
+// it is not labeled as an opening balance. Otherwise the opening row could
+// be submitted as the ending with no movements, and the roll-forward would
+// tie trivially.
+func (v *verifier) checkClosing(col []*columnAmount, ending *columnAmount) {
+	if beginningLabel.MatchString(foldPunct(v.rec.Ending.Label)) {
+		v.add(CheckRollForward, Error, "ending_not_closing", "ending", v.rec.Ending.Page,
+			"the ending's label %q is an opening balance's", v.rec.Ending.Label)
+		return
+	}
+	if ending.chosen == nil {
+		return
+	}
+	for _, c := range col {
+		if c == ending || c.chosen == nil {
+			continue
+		}
+		if c.chosen.hit.line.index >= ending.chosen.hit.line.index {
+			v.add(CheckRollForward, Error, "ending_not_closing", "ending", v.rec.Ending.Page,
+				"the ending %q is printed at or above %s %q; the closing balance comes after the roll-forward",
+				v.rec.Ending.Label, c.subject, c.amount.Label)
+			return
 		}
 	}
 }
@@ -237,8 +284,13 @@ func (v *verifier) headerAt(edge, cols int) (nearestText string, ok bool) {
 // the column and that is reported here.
 func (v *verifier) checkColumnHeader() {
 	c := v.rec.Column
-	if !v.hasEdge || v.ending == nil || c.Page != v.rec.Ending.Page || v.pages[c.Page] == nil {
+	if c.Page != v.rec.Ending.Page {
+		v.add(CheckGrounding, Error, "column_unverified", "column", c.Page,
+			"the column header is cited on page %d and the ending on page %d; a column is verified only on the amounts' own page", c.Page, v.rec.Ending.Page)
 		return
+	}
+	if !v.hasEdge || v.ending == nil || v.pages[c.Page] == nil {
+		return // the ending was not grounded: already an error
 	}
 	nearestText, ok := v.headerAt(v.edge, len(columnsOf(v.ending.run)))
 	switch {
@@ -289,26 +341,39 @@ func columnsOf(run []token) []int {
 	return cols
 }
 
-// findSection looks above the ending's line for a section header that names
-// the fund, the general partner or the record's own section, and maps the
-// ending line's columns onto its phrases: in order when the columns divide
-// evenly among them (three under "Limited Partner", three under "Total
-// Fund"), else each to the nearest phrase.
+// findSection looks for a partner-group header over the table, from the
+// page alone: a line without cells, among the few lines above the table's
+// first roll-forward row, that names the fund total, the general partner or
+// all partners. With two or more phrases ("Limited Partner   Total Fund
+// (Including GP)") it maps the ending line's columns onto its phrases: in
+// order when they divide evenly among them, else each to the nearest
+// phrase. With one phrase it heads the whole table, and the table is the
+// fund's (fundTable). The record's claimed section plays no part.
 func (v *verifier) findSection() {
 	if v.ending == nil {
 		return
 	}
 	p := v.pages[v.rec.Ending.Page]
+	top := v.ending.line.index
+	if v.beginningLine >= 0 && v.beginningLine < top {
+		top = v.beginningLine
+	}
 	cols := columnsOf(v.ending.run)
-	secNorm := normWords(v.rec.Column.Section)
-	for li := v.ending.line.index - 1; li >= 0; li-- {
+	seen := 0
+	for li := top - 1; li >= 0 && seen < sectionWindow; li-- {
 		l := &p.lines[li]
-		if l.hasCells() {
+		if strings.TrimSpace(l.text) == "" {
+			continue
+		}
+		seen++
+		if l.hasCells() || !fundHeader.MatchString(l.text) {
 			continue
 		}
 		phs := l.phrases()
-		named := fundHeader.MatchString(l.text) || (len(secNorm) > 0 && findPhrase(flatten(phs), secNorm, 0) >= 0)
-		if len(phs) < 2 || !named {
+		if len(phs) < 2 {
+			if v.fundTable == "" {
+				v.fundTable = strings.TrimSpace(l.text)
+			}
 			continue
 		}
 		v.section = &sectionHeader{phrases: phs, groupOf: groupColumns(phs, cols)}
@@ -316,13 +381,10 @@ func (v *verifier) findSection() {
 	}
 }
 
-func flatten(phs []phrase) []string {
-	var out []string
-	for _, ph := range phs {
-		out = append(out, ph.norm...)
-	}
-	return out
-}
+// sectionWindow is how many printed lines above the table's first row are
+// searched for a partner-group header: the column header row, the group
+// row and a title or two.
+const sectionWindow = 4
 
 func groupColumns(phs []phrase, cols []int) func(edge int) int {
 	if len(cols) > 0 && len(cols)%len(phs) == 0 {
@@ -464,12 +526,86 @@ func (v *verifier) checkConsistency() {
 			}
 		}
 	}
+	v.discoverRepeats()
 	for i, rep := range r.Repeats {
 		if !rep.Amount.Equal(r.Ending.Amount) {
 			v.add(CheckConsistency, Error, "repeat_disagrees", fmt.Sprintf("repeat %d", i+1), rep.Page,
 				"%q prints %s, but the ending is %s", rep.Label, rep.Amount, r.Ending.Amount)
 		}
 	}
+}
+
+// discoverRepeats finds, without relying on the record's Repeats, every
+// other line in the document that prints the ending's label with amounts,
+// and requires every investor balance on it to agree with the ending. On a
+// page the record cites, or one printing the investor's name, a
+// disagreement is an error. On any other page it may be another investor's
+// statement in the same PDF (E-4), so it is a warning a person must accept,
+// never silence.
+func (v *verifier) discoverRepeats() {
+	r := v.rec
+	cited := v.citedPages()
+	for _, pg := range v.doc.Pages {
+		if !pg.Usable {
+			continue
+		}
+		p := v.pages[pg.Number]
+		if p == nil {
+			p = readPage(pg.Text)
+			v.pages[pg.Number] = p
+		}
+		mine := slices.Contains(cited, pg.Number) || p.containsText(r.Investor.Text)
+		if t, ok := v.disagreeingCopy(p, pg.Number); ok {
+			sev, code := Error, "ending_disagrees"
+			if !mine {
+				sev, code = Warning, "other_page_ending"
+			}
+			v.add(CheckConsistency, sev, code, fmt.Sprintf("page %d", pg.Number), pg.Number,
+				"page %d prints %q as %s, but the ending is %s; every copy of the ending balance must agree (a page of another statement must be confirmed as such)",
+				pg.Number, r.Ending.Label, t.value, r.Ending.Amount)
+		}
+	}
+}
+
+// disagreeingCopy returns the first amount printed beside the ending's
+// label on page n, other than on the ending's own line and other than
+// another partner group's, that differs from the ending.
+func (v *verifier) disagreeingCopy(p *pageText, n int) (token, bool) {
+	r := v.rec
+	for _, h := range p.findLabel(r.Ending.Label) {
+		if v.ending != nil && h.line == v.ending.line {
+			continue
+		}
+		for _, t := range h.run {
+			if t.kind != tokAmount {
+				continue
+			}
+			if n == r.Ending.Page && v.section != nil && v.endTok != nil && v.section.groupOf(t.end) != v.section.groupOf(v.endTok.end) {
+				continue
+			}
+			if !t.value.Equal(r.Ending.Amount) {
+				return t, true
+			}
+		}
+	}
+	return token{}, false
+}
+
+// citedPages lists the pages the record cites, in order.
+func (v *verifier) citedPages() []int {
+	r := v.rec
+	pages := []int{r.Investor.Page, r.Fund.Page, r.Period.Page, r.Column.Page, r.Ending.Page}
+	if r.Beginning != nil {
+		pages = append(pages, r.Beginning.Page)
+	}
+	for _, l := range r.Lines {
+		pages = append(pages, l.Page)
+	}
+	for _, a := range r.Repeats {
+		pages = append(pages, a.Page)
+	}
+	slices.Sort(pages)
+	return slices.Compact(pages)
 }
 
 // --- Check 4: investor, not fund -------------------------------------------
@@ -487,6 +623,10 @@ func (v *verifier) checkInvestor() {
 			v.add(CheckInvestor, Error, "fund_column", "ending", r.Ending.Page,
 				"the ending %s is printed under %q, not under the investor", r.Ending.Amount, v.section.phrases[g].text)
 		}
+	}
+	if v.section == nil && v.fundTable != "" {
+		v.add(CheckInvestor, Error, "fund_table", "ending", r.Ending.Page,
+			"the table is headed %q: its balances are the fund's or a general partner's, not the investor's", v.fundTable)
 	}
 	v.checkLargest()
 	if r.FundTotal != nil && r.Ending.Amount.Abs().Cmp(r.FundTotal.Amount.Abs()) >= 0 {
@@ -591,7 +731,15 @@ func (v *verifier) otherPeriods(want time.Time) {
 				continue
 			}
 			end, isRange, ok := periodEnd(line)
-			if !ok || (!isRange && !strongPeriodWord.MatchString(line)) {
+			strong := strongPeriodWord.MatchString(line)
+			if !ok && strong {
+				// Several dates on a period line: every one must be this
+				// period's end, or the statement names two periods.
+				if d, bad := otherDate(line, want); bad {
+					end, ok = d, true
+				}
+			}
+			if !ok || (!isRange && !strong) {
 				continue
 			}
 			if !want.Equal(end) {
@@ -601,6 +749,16 @@ func (v *verifier) otherPeriods(want time.Time) {
 			}
 		}
 	}
+}
+
+// otherDate returns the first date on line that is not want, if any.
+func otherDate(line string, want time.Time) (time.Time, bool) {
+	for _, d := range findDates(line) {
+		if !d.date.Equal(want) {
+			return d.date, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // --- Check 6: currency -------------------------------------------------------

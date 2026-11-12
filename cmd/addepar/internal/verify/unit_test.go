@@ -246,3 +246,105 @@ func TestColumnLabelOnlyInProse(t *testing.T) {
 		t.Fatalf("%s", describe(&res))
 	}
 }
+
+// The fail-closed regressions (Codex round 1). Each page states its
+// currency, so without the fix the wrong record would pass all seven checks.
+
+const usdLine = "All amounts in USD\n"
+
+func usd(page string) string { return usdLine + page }
+
+func assertError(t *testing.T, res verify.Result, id string) {
+	t.Helper()
+	if !slices.Contains(ids(res, verify.Error), id) {
+		t.Fatalf("want error %s\n%s", id, describe(&res))
+	}
+}
+
+const groupedPage = `Example Fund I, LP   Example Holdings IV, LLC
+For the period ending March 31, 2026
+                         Limited Partner           General Partner    Total Partners
+                         Quarter        Year       Quarter            Quarter
+Opening Balance          100,000      90,000         1,000            101,000
+Gains                      6,899      16,899            10              6,909
+Ending Balance           106,899     106,899         1,010            107,909
+`
+
+func gpRecord(t *testing.T) *statement.Record {
+	t.Helper()
+	gp := simpleRecord(t)
+	gp.Lines = gp.Lines[2:]
+	gp.Beginning.Amount = decimal.MustParse("1000")
+	gp.Lines[0].Amount.Amount = decimal.MustParse("10")
+	gp.Ending.Amount = decimal.MustParse("1010")
+	return gp
+}
+
+func TestClaimedSectionDoesNotMaskPartnerGroups(t *testing.T) {
+	gp := gpRecord(t)
+	gp.Column.Section = "Quarter" // a header row, claimed as the section
+	assertError(t, verify.Verify(simpleDoc(usd(groupedPage)), gp), "4/fund_column/ending")
+}
+
+func TestOnePhraseFundHeading(t *testing.T) {
+	page := strings.Replace(simplePage, "                              Quarter\n",
+		"                    Total Fund (Including GP)\n                              Quarter\n", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "4/fund_table/ending")
+}
+
+func TestOpeningRowAsEnding(t *testing.T) {
+	rec := simpleRecord(t)
+	rec.Ending = *rec.Beginning
+	rec.Lines = nil
+	assertError(t, verify.Verify(simpleDoc(usd(simplePage)), rec), "2/ending_not_closing/ending")
+
+	// An ending row printed above a movement is not the closing balance
+	// either, whatever its label.
+	page := strings.Replace(simplePage, "Ending Balance                  106,899\n", "", 1)
+	page = strings.Replace(page, "Opening Balance                 100,000\n",
+		"Opening Balance                 100,000\nEnding Balance                  106,899\n", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "2/ending_not_closing/ending")
+}
+
+func TestNamesKeepDigits(t *testing.T) {
+	page := strings.Replace(simplePage, "Example Fund I, LP", "Example Series1, LP", 1)
+	rec := simpleRecord(t)
+	rec.Fund.Text = "Example Series2, LP"
+	assertError(t, verify.Verify(simpleDoc(usd(page)), rec), "1/not_printed/fund")
+	rec.Fund.Text = "Example Series1, LP"
+	if res := verify.Verify(simpleDoc(usd(page)), rec); res.Verdict != verify.Pass {
+		t.Fatalf("%s", describe(&res))
+	}
+}
+
+func TestUnreportedEndingCopy(t *testing.T) {
+	// A cited or investor-naming page disagreeing is an error.
+	second := "Example Holdings IV, LLC\nEnding Balance                  999,999\n"
+	assertError(t, verify.Verify(simpleDoc(usd(simplePage), second), simpleRecord(t)), "3/ending_disagrees/page 2")
+	// A page of possibly another statement is a warning that blocks export.
+	other := "Another Investor, LLC\nEnding Balance                  999,999\n"
+	res := verify.Verify(simpleDoc(usd(simplePage), other), simpleRecord(t))
+	if !slices.Contains(ids(res, verify.Warning), "3/other_page_ending/page 2") || res.Verdict != verify.Warn {
+		t.Fatalf("%s", describe(&res))
+	}
+}
+
+func TestTwoPeriodsOnOneLine(t *testing.T) {
+	page := strings.Replace(simplePage, "          For the period ending March 31, 2026",
+		"          For the period ending March 31, 2026     For the period ending June 30, 2026", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "5/conflicting_period/period")
+}
+
+func TestColumnOnAnotherPage(t *testing.T) {
+	rec := simpleRecord(t)
+	rec.Column.Page = 2
+	res := verify.Verify(simpleDoc(usd(simplePage), "                Quarter     YTD\n"), rec)
+	assertError(t, res, "1/column_unverified/column")
+}
+
+func TestLabelTailDoesNotGround(t *testing.T) {
+	page := usd(simplePage) + "Less: contributions               (5,000)\n"
+	rec := simpleRecord(t)
+	rec.Lines[0].Amount.Amount = decimal.MustParse("-5000")
+	assertError(t, verify.Verify(simpleDoc(page), rec), "1/amount_not_printed/line 1")
+}

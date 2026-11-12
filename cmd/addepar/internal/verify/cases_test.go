@@ -147,6 +147,15 @@ func genericMutations(rec *statement.Record) []mutation {
 		// Printed, but not a column header: no header row confirms the column.
 		{Name: "column named by the fund's title", Set: map[string]any{"column.label": rec.Fund.Text, "column.page": rec.Fund.Page}, Fail: []int{verify.CheckGrounding}},
 	}
+	if b := rec.Beginning; b != nil {
+		// The opening row submitted as the ending, with no movements: the
+		// arithmetic ties trivially, so the row's position must catch it.
+		muts = append(muts, mutation{
+			Name: "opening row as the ending",
+			Set:  map[string]any{"ending": map[string]any{"label": b.Label, "amount": b.Amount.String(), "page": b.Page}, "lines": nil},
+			Fail: []int{verify.CheckRollForward},
+		})
+	}
 	for i, l := range rec.Lines {
 		if l.Kind == statement.Movement && l.Amount.Amount.Sign() != 0 {
 			muts = append(muts, mutation{

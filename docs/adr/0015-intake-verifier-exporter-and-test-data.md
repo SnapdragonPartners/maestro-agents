@@ -51,12 +51,18 @@ five to verify.
    recorded*. The intake requirements document is to be updated to match.
    Restriction is read from `pdfinfo`'s report; an encrypted PDF whose copy
    permission is unstated counts as restricted.
-3. **Text in layout mode, read as a character grid.** Pages come from
+3. **Fail closed.** The verifier establishes every fact from the page;
+   where it cannot (the evidence is ambiguous, across pages, or only the
+   record asserts it), that is an error, or a warning a person must accept,
+   never a pass. Points 4 to 6 apply this rule.
+4. **Text in layout mode, read as a character grid.** Pages come from
    `maestro-cms` v0.9.0's `pdftotext` engine with `WithLayout`, called
    directly (its `Extractor` normalizes whitespace and would erase the
    columns). The verifier reads each line as words with their character
    columns. An amount is grounded when it appears in the **run** after its
-   label: the cells (amounts, dashes, percentages) following the label up
+   label, and the label is the whole printed label (it starts the line or
+   follows a cell, never another word, so "Contributions" does not match
+   "Less: contributions"); the run is the cells (amounts, dashes, percentages) following the label up
    to the next word with letters; a cell stands at least two spaces from
    the label, so a label cut short ("Balance, March 31") does not adopt the
    year as a cell. A column is a right edge the roll-forward's amounts
@@ -67,41 +73,52 @@ five to verify.
    label, matched as a whole header on a header row (a line of two or more
    phrases with no cells; a one-phrase line counts only in a one-column
    table), so a title or prose that merely contains the label confirms
-   nothing.
-4. **Check 4 is decided from the page, not the record's claim.** The total
+   nothing. A column is verified only on the amounts' own page: a column
+   header, or a roll-forward amount, cited on another page than the ending
+   fails (`column_unverified`). The ending must be the closing balance: its
+   row below the beginning and every movement, its label not an opening
+   balance's (`ending_not_closing`). Names (investor, fund, period label,
+   currency evidence) are matched keeping every digit; only labels and
+   headers drop a glued footnote reference.
+5. **Check 4 is decided from the page, not the record's claim.** The total
    fund column passes checks 1, 2, 3 and 5 when read consistently, so only
-   check 4 stands between it and a wrong value. Above the ending line, a
-   header line with no cells that names the fund total, the general
-   partner or all partners (or the record's own section) groups the ending
-   line's columns: in order when they divide evenly among its phrases,
-   otherwise each column to the nearest phrase; an ending under a fund
-   phrase fails. When a total-over-all-partners header is printed, an
+   check 4 stands between it and a wrong value. Among the four printed
+   lines above the table's first row, a line with no cells that names the
+   fund total, the general partner or all partners groups the ending line's
+   columns: in order when they divide evenly among its phrases, otherwise
+   each column to the nearest phrase; an ending under a fund phrase fails.
+   A one-phrase such heading heads the whole table, which fails
+   (`fund_table`). The record's claimed section plays no part in finding
+   the groups. When a total-over-all-partners header is printed, an
    ending that is the largest of the distinct balances on its line fails
    too. A declared `fund_total` must be larger than the value, and a
    column label or section that names the fund fails outright.
-5. **Readings of the rules where the intake text is silent.** Check 2
+6. **Readings of the rules where the intake text is silent.** Check 2
    counts the beginning balance and each movement as "lines summed" for
    the whole-unit tolerance; subtotals (`kind: subtotal`) are grounded but
    not summed; the claimed precision must match how the ending is printed.
    A record with no roll-forward when the page prints a beginning balance
    fails check 2 (`roll_forward_omitted`) rather than earning check 7's
    warning, so omitting the roll-forward cannot turn an error into a
-   warning. Check 5 accepts a label with a period phrase, a date range, or
+   warning. Check 3 finds the ending's copies itself: every other line in
+   the document printing the ending's label must agree, an error on a page
+   the record cites or that names the investor, else a warning (it may be
+   another investor's statement in the same PDF, E-4). Check 5 accepts a label with a period phrase, a date range, or
    a date standing alone on its line, and rejects a date with a time of
    day or a word such as "printed"; another period end under a strong
-   period phrase anywhere in the document fails it ("as of" dates do not
-   count). Check 6 fails, rather than warns, when the statement states a
+   period phrase anywhere in the document fails it, as does a period line
+   carrying more than one date ("as of" dates do not count). Check 6 fails, rather than warns, when the statement states a
    currency other than the record's: a wrong currency is a wrong row. A
    dash is zero only when the record states the table's convention
    (`dash_zero`).
-6. **Findings are addressable.** Each finding has an ID, check/code/subject
+7. **Findings are addressable.** Each finding has an ID, check/code/subject
    (`6/not_stated/currency`), that a warning's acceptance names. A record
    change reruns verification and voids every acceptance and the approval
    (R-4); the ID excludes the message so rewording one does not.
-7. **Decimals.** A local exact decimal (`internal/decimal`, a `big.Int`
+8. **Decimals.** A local exact decimal (`internal/decimal`, a `big.Int`
    coefficient and a scale) keeps the precision printed; amounts are JSON
    strings, and a JSON number is refused (N-4).
-8. **The exporter is the last gate.** It refuses a record with no named
+9. **The exporter is the last gate.** It refuses a record with no named
    approver, an approval older than a later review action, a verification
    error, an unaccepted warning, or a text cell beginning with a formula
    character. Rows sort by owner, asset, date and currency, so the same
