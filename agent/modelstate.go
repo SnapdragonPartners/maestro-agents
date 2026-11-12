@@ -588,14 +588,16 @@ func (r *modelRun) attempt(ctx context.Context, req *llms.ChatRequest) error {
 		return errAbort
 	}
 	a := r.a
+	// The attempt this one replaces was sent and failed: it is charged
+	// whatever becomes of this one, which is charged nothing unless sent.
+	model := modelRef(r.client.Model())
+	if call.n > 0 {
+		a.used.charge(model, nil, &r.res)
+	}
 	if !reflect.DeepEqual(*req, call.req) {
 		r.abort = a.fail(ctx, ReasonModelError, fmt.Sprintf(
 			"state %q: a model client layer changed the request before it was sent; layers must pass it on unchanged", r.st.name))
 		return errAbort
-	}
-	model := modelRef(r.client.Model())
-	if call.n > 0 {
-		a.used.charge(model, nil, &r.res)
 	}
 	res, refusal := a.admitAttempt(req, r.client, call.n > 0)
 	if refusal != nil {

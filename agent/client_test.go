@@ -434,3 +434,34 @@ func TestModelClientEstimatedRetryMustFit(t *testing.T) {
 		t.Fatalf("%d calls; consumed %+v, want the first attempt's %d", len(base.Calls()), out.Consumed, one)
 	}
 }
+
+// TestModelClientChangedRetryChargesSentAttempt: an outer layer that
+// retries a failed call with a changed request ends the run, and the sent
+// attempt is still charged its reservation; the refused retry is not.
+func TestModelClientChangedRetryChargesSentAttempt(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	retryChanged := func(next llms.ChatClient) llms.ChatClient {
+		return &testllm.FakeChatClient{ModelRef: next.Model(), Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+			resp, err := next.Complete(ctx, req)
+			if err == nil {
+				return resp, nil
+			}
+			req.Messages = append(slices.Clone(req.Messages), llms.UserText("try again"))
+			return next.Complete(ctx, req)
+		}}
+	}
+	base := failingFirst("fake")
+	mc := newModelClient(t, base, agent.ModelClientConfig{Outer: []middleware.ChatMiddleware{retryChanged}, Retry: &middleware.RetryConfig{MaxAttempts: 1}})
+	out, err := activateClient(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), mc, 0, agent.Budgets{})
+	if err != nil || out.Reason.Code != agent.ReasonModelError {
+		t.Fatalf("outcome = %+v, %v; want model_error", out, err)
+	}
+	at := attempts(t, entries(t, s, "r1"))
+	if len(base.Calls()) != 1 || len(at) != 1 {
+		t.Fatalf("%d calls, %d attempts; want the first only", len(base.Calls()), len(at))
+	}
+	if c := out.Consumed; c.Tokens != at[0].Reservation.Tokens || c.Turns != 1 || c.Models[0].Unknown != 1 {
+		t.Fatalf("consumed = %+v, want the sent attempt's %d", c, at[0].Reservation.Tokens)
+	}
+}
