@@ -299,3 +299,138 @@ func TestModelClientHardTokenBudgetNeedsBounder(t *testing.T) {
 		t.Fatalf("an attempt was made: %d calls", len(base.Calls()))
 	}
 }
+
+// countingLimiter admits every request and counts what its reservations
+// see; with block set, its first Reserve waits for the context to end, as a
+// rate limiter's wait would.
+type countingLimiter struct {
+	reserves, commits, releases, rollbacks atomic.Int32
+	block                                  bool
+}
+
+func (l *countingLimiter) Reserve(ctx context.Context, _ ratelimit.ReservationRequest) (ratelimit.Reservation, error) {
+	if l.reserves.Add(1) == 1 && l.block {
+		<-ctx.Done()
+		return nil, &llms.LimitError{Reason: "waited", Cause: ctx.Err()}
+	}
+	return &countingReservation{l: l}, nil
+}
+
+type countingReservation struct{ l *countingLimiter }
+
+func (r *countingReservation) Commit(context.Context, llms.Usage) error {
+	r.l.commits.Add(1)
+	return nil
+}
+
+func (r *countingReservation) Release(context.Context) error {
+	r.l.releases.Add(1)
+	return nil
+}
+
+func (r *countingReservation) Rollback(context.Context) error {
+	r.l.rollbacks.Add(1)
+	return nil
+}
+
+// TestModelClientHostReservations: the host's reservation is committed and
+// released for a sent attempt, and rolled back for one the runtime refused
+// before sending it.
+func TestModelClientHostReservations(t *testing.T) {
+	t.Run("sent", func(t *testing.T) {
+		s := newBackend(t, "memstore").open()
+		createLedgerRun(t, s)
+		l := &countingLimiter{}
+		mc := newModelClient(t, scripted(ledgerScript), agent.ModelClientConfig{Limiter: l})
+		if _, err := activateClient(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), mc, 1, agent.Budgets{}); err != nil {
+			t.Fatal(err)
+		}
+		if l.reserves.Load() != 1 || l.commits.Load() != 1 || l.releases.Load() != 1 || l.rollbacks.Load() != 0 {
+			t.Fatalf("reserves %d, commits %d, releases %d, rollbacks %d", l.reserves.Load(), l.commits.Load(), l.releases.Load(), l.rollbacks.Load())
+		}
+	})
+	t.Run("refused retry", func(t *testing.T) {
+		s := newBackend(t, "memstore").open()
+		createLedgerRun(t, s)
+		l := &countingLimiter{}
+		mc := newModelClient(t, failingFirst(llms.ProviderAnthropic), agent.ModelClientConfig{Limiter: l, Retry: fastRetry})
+		out, err := activateClient(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), mc, 0,
+			agent.Budgets{Tokens: agent.TokenBudget{Limit: 1_000_000}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantBudgetFailure(t, out, agent.ReasonBudgetExhausted, agent.BudgetTokens)
+		// The failed attempt was sent: released, nothing to commit. The
+		// refused retry was not: rolled back.
+		if l.reserves.Load() != 2 || l.commits.Load() != 0 || l.releases.Load() != 1 || l.rollbacks.Load() != 1 {
+			t.Fatalf("reserves %d, commits %d, releases %d, rollbacks %d", l.reserves.Load(), l.commits.Load(), l.releases.Load(), l.rollbacks.Load())
+		}
+	})
+}
+
+// TestModelClientWrapUpDuringLimiterWait: a rate limiter's wait that
+// reaches the wrap-up point begins the wrap-up; no attempt was sent, so
+// none is recorded as failed (ADR 0010).
+func TestModelClientWrapUpDuringLimiterWait(t *testing.T) {
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	base := &testllm.FakeChatClient{
+		ModelRef: llms.ModelRef{Provider: "fake", Name: "wrap"},
+		Func: func(context.Context, llms.ChatRequest) (llms.ChatResponse, error) {
+			return callsResp(tc("s", "submit", `{}`)), nil
+		},
+	}
+	l := &countingLimiter{block: true}
+	mc := newModelClient(t, base, agent.ModelClientConfig{Limiter: l, Retry: &middleware.RetryConfig{MaxAttempts: 1}})
+	const reserve = 2 * time.Second
+	reg := registry(t, wrapType(&wrapLog{}, agent.WrapUp{Tools: []string{"submit"}, Reserve: reserve}))
+	out, err := activateClient(context.Background(), agent.NewController(s, reg), claim(t, s), mc, 0, agent.Budgets{ActiveTime: reserve + time.Second})
+	if err != nil || out.Status != store.StatusSucceeded {
+		t.Fatalf("outcome = %+v, %v", out, err)
+	}
+	es := entries(t, s, "r1")
+	at := attempts(t, es)
+	if countKind(es, agent.EntryModelFailure) != 0 || len(at) != 1 || !at[0].WrapUp || len(base.Calls()) != 1 {
+		t.Fatalf("record = %v, attempts %+v", kinds(es), at)
+	}
+}
+
+// TestModelClientEstimatedRetryMustFit: a retry under an estimated budget is
+// refused when its whole estimate no longer fits after the failed attempt
+// was charged, so the run never overshoots by a second reservation.
+func TestModelClientEstimatedRetryMustFit(t *testing.T) {
+	const capTokens = 50
+	typ := func() *agent.Type[ledgerData] {
+		typ := ledgerType(&execLog{})
+		prompt := typ.States[0].Model.Prompt
+		typ.States[0].Model.Prompt = func(ctx context.Context, env *agent.Env, d ledgerData) (llms.ChatRequest, error) {
+			req, err := prompt(ctx, env, d)
+			req.MaxTokens = capTokens
+			return req, err
+		}
+		return typ
+	}
+	// Learn the first request's estimate from a run with no budget.
+	ps := newBackend(t, "memstore").open()
+	createLedgerRun(t, ps)
+	probe := scripted(ledgerScript)
+	if _, err := activateWith(context.Background(), agent.NewController(ps, registry(t, typ())), claim(t, ps), probe, 1); err != nil {
+		t.Fatal(err)
+	}
+	one := int64(middleware.DefaultEstimator{}.EstimateChat(probe.Calls()[0]).Tokens())
+
+	// The first attempt fits with room to spare; the retry's input would
+	// still fit, but its whole estimate does not.
+	s := newBackend(t, "memstore").open()
+	createLedgerRun(t, s)
+	base := failingFirst("fake")
+	out, err := activateClient(context.Background(), agent.NewController(s, registry(t, typ())), claim(t, s),
+		newModelClient(t, base, agent.ModelClientConfig{Retry: fastRetry}), 0, agent.Budgets{Tokens: agent.TokenBudget{Limit: 2*one - 1, Estimated: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBudgetFailure(t, out, agent.ReasonBudgetExhausted, agent.BudgetTokens)
+	if len(base.Calls()) != 1 || len(attempts(t, entries(t, s, "r1"))) != 1 || out.Consumed.Tokens != one {
+		t.Fatalf("%d calls; consumed %+v, want the first attempt's %d", len(base.Calls()), out.Consumed, one)
+	}
+}

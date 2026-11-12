@@ -524,17 +524,7 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 	}
 	call := r.call
 	if call.n == 0 {
-		// No attempt reached the provider: the chain refused the call
-		// before its attempt layer (validation, an open circuit, the rate
-		// limiter, the context). The pending results commit alone.
-		if len(b.ops) > 0 && !r.commitTurnEntries(ctx, b, completes) {
-			return llms.ChatResponse{}, errAbort
-		}
-		if err == nil {
-			r.abort = r.a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: the model client answered without sending an attempt", r.st.name))
-			return llms.ChatResponse{}, errAbort
-		}
-		return llms.ChatResponse{}, err
+		return llms.ChatResponse{}, r.noAttempt(ctx, callCtx, err)
 	}
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(context.Cause(callCtx), errWrapUpDue) {
@@ -547,6 +537,27 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 		return llms.ChatResponse{}, r.recordFailure(ctx, err, nil)
 	}
 	return r.recordTurn(ctx, &resp, call.delta, call.ddelta)
+}
+
+// noAttempt ends a call that reached no attempt: the chain refused it before
+// its attempt layer (validation, an open circuit, the rate limiter, the
+// context). The call's pending results commit alone, and the error is the
+// loop's to classify; a wrap-up point reached first (a rate limiter's wait)
+// begins the wrap-up, with no attempt to record a failure for (ADR 0010).
+func (r *modelRun) noAttempt(ctx, callCtx context.Context, err error) error {
+	call := r.call
+	if len(call.b.ops) > 0 && !r.commitTurnEntries(ctx, call.b, call.completes) {
+		return errAbort
+	}
+	switch {
+	case err == nil:
+		r.abort = r.a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: the model client answered without sending an attempt", r.st.name))
+		return errAbort
+	case ctx.Err() == nil && errors.Is(context.Cause(callCtx), errWrapUpDue):
+		r.wrapUp, r.restart = true, true
+		return errWrapUp
+	}
+	return err
 }
 
 // callState is a logical model call in flight: what its first attempt
@@ -586,7 +597,7 @@ func (r *modelRun) attempt(ctx context.Context, req *llms.ChatRequest) error {
 	if call.n > 0 {
 		a.used.charge(model, nil, &r.res)
 	}
-	res, refusal := a.admitAttempt(req, r.client)
+	res, refusal := a.admitAttempt(req, r.client, call.n > 0)
 	if refusal != nil {
 		r.abort = a.refuseBudget(ctx, refusal)
 		return errAbort

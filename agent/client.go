@@ -57,11 +57,13 @@ type ModelClientConfig struct {
 // NewModelClient builds a ModelClient over base, a maestro-llms provider
 // client, in a fixed order (ADR 0014, item 2):
 //
-//	Outer -> validation -> retry -> timeout -> circuit -> rate limit -> attempt -> metrics -> base
+//	Outer -> validation -> retry -> timeout -> circuit -> rate limit and attempt -> metrics -> base
 //
-// The attempt layer is the runtime's: it sits inside the retry loop and the
-// host's rate limiter, so a rate-limit wait or refusal happens before an
-// attempt is admitted or recorded. The order is not configurable.
+// The rate limit and attempt layer is the runtime's: inside the retry loop,
+// it reserves on the host's limiter first, so a rate-limit wait or refusal
+// happens before an attempt is admitted or recorded, and rolls that
+// reservation back when the runtime refuses the attempt before it is sent.
+// The order is not configurable.
 func NewModelClient(base llms.ChatClient, cfg ModelClientConfig) (*ModelClient, error) { //nolint:gocritic // hugeParam: a configuration struct, passed once
 	if isNil(base) {
 		return nil, errors.New("agent: NewModelClient: base client is nil")
@@ -86,13 +88,10 @@ func NewModelClient(base llms.ChatClient, cfg ModelClientConfig) (*ModelClient, 
 		mws = append(mws, middleware.TimeoutChat(cfg.Timeout))
 	}
 	mws = append(mws, middleware.CircuitChat(cfg.Circuit))
-	if cfg.Limiter != nil {
-		if isNil(cfg.Limiter) {
-			return nil, errors.New("agent: NewModelClient: limiter is a typed nil")
-		}
-		mws = append(mws, middleware.RateLimitChat(cfg.Limiter, est))
+	if cfg.Limiter != nil && isNil(cfg.Limiter) {
+		return nil, errors.New("agent: NewModelClient: limiter is a typed nil")
 	}
-	mws = append(mws, attemptLayer)
+	mws = append(mws, attemptLayer(cfg.Limiter, est))
 	if cfg.Observer != nil {
 		mws = append(mws, middleware.MetricsChat(cfg.Observer))
 	}
@@ -127,22 +126,94 @@ func isNil(v any) bool {
 // context to the attempt layer.
 type attemptKey struct{}
 
-// attemptLayer is the runtime's layer in every ModelClient: for a call made
-// by an activation's model state it admits and records each provider attempt
-// (modelRun.attempt); any other call passes through.
-func attemptLayer(next llms.ChatClient) llms.ChatClient { return &attemptClient{next: next} }
+// attemptLayer is the runtime's layer in every ModelClient (ADR 0014, item
+// 2). For each attempt it reserves on the host's limiter, if any, as
+// maestro-llms' RateLimitChat does; then, for a call made by an
+// activation's model state, it admits and records the attempt
+// (modelRun.attempt) before sending it. An attempt the runtime refuses was
+// never sent, so the host's reservation is rolled back where it supports
+// that (ratelimit.Rollbacker), and otherwise released. Any other call
+// passes through the limiter alone.
+func attemptLayer(limiter ratelimit.Limiter, est middleware.TokenEstimator) middleware.ChatMiddleware {
+	return func(next llms.ChatClient) llms.ChatClient {
+		return &attemptClient{next: next, limiter: limiter, est: est}
+	}
+}
 
-type attemptClient struct{ next llms.ChatClient }
+type attemptClient struct {
+	next    llms.ChatClient
+	limiter ratelimit.Limiter
+	est     middleware.TokenEstimator
+}
 
 func (c *attemptClient) Model() llms.ModelRef { return c.next.Model() }
 
 func (c *attemptClient) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) { //nolint:gocritic // hugeParam: llms.ChatClient's signature
-	r, ok := ctx.Value(attemptKey{}).(*modelRun)
-	if !ok || r == nil {
-		return c.next.Complete(ctx, req) //nolint:wrapcheck // passed through unchanged
+	var held ratelimit.Reservation
+	if c.limiter != nil {
+		rr, err := c.reservation(&req)
+		if err != nil {
+			return llms.ChatResponse{}, err
+		}
+		if held, err = c.limiter.Reserve(ctx, rr); err != nil {
+			return llms.ChatResponse{}, err //nolint:wrapcheck // limiter errors (*llms.LimitError) pass through for retry and circuit
+		}
 	}
-	if err := r.attempt(ctx, &req); err != nil {
-		return llms.ChatResponse{}, err
+	if r, ok := ctx.Value(attemptKey{}).(*modelRun); ok && r != nil {
+		if err := r.attempt(ctx, &req); err != nil {
+			if held != nil {
+				rollback(context.WithoutCancel(ctx), held)
+			}
+			return llms.ChatResponse{}, err
+		}
 	}
-	return c.next.Complete(ctx, req) //nolint:wrapcheck // the provider's errors pass through for retry and classification
+	if held == nil {
+		return c.next.Complete(ctx, req) //nolint:wrapcheck // the provider's errors pass through for retry and classification
+	}
+	defer func() { _ = held.Release(context.WithoutCancel(ctx)) }()
+	resp, err := c.next.Complete(ctx, req)
+	if err == nil && usageReported(&resp.Usage) {
+		_ = held.Commit(context.WithoutCancel(ctx), resp.Usage)
+	}
+	return resp, err //nolint:wrapcheck // the provider's errors pass through for retry and classification
+}
+
+// reservation is the host limiter's request for req, as RateLimitChat
+// builds it: the estimate and, where the estimator bounds it, the bound.
+func (c *attemptClient) reservation(req *llms.ChatRequest) (ratelimit.ReservationRequest, error) {
+	m := c.next.Model()
+	rr := ratelimit.ReservationRequest{
+		Provider: m.Provider, Model: m.Name, Operation: ratelimit.OperationChat, Purpose: req.Purpose,
+		EstimatedUnits: c.est.EstimateChat(*req), Metadata: req.Metadata,
+	}
+	if b, ok := c.est.(middleware.InputBounder); ok {
+		u, has, err := b.BoundChat(m, *req)
+		if err != nil {
+			return rr, err //nolint:wrapcheck // the host's bounder names its own failure
+		}
+		if has {
+			rr.BoundUnits = &u
+		}
+	}
+	return rr, nil
+}
+
+// rollback returns a reservation whose request was never sent: by Rollback
+// where the limiter supports it, otherwise by Release, which keeps the
+// limiter's charge.
+func rollback(ctx context.Context, r ratelimit.Reservation) {
+	if rb, ok := r.(ratelimit.Rollbacker); ok {
+		_ = rb.Rollback(ctx)
+		return
+	}
+	_ = r.Release(ctx)
+}
+
+// usageReported reports whether a response reported any usage; a zero
+// Usage is unknown and is not committed, so the limiter keeps its estimate
+// (as maestro-llms' rate-limit middleware does).
+func usageReported(u *llms.Usage) bool {
+	return u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
+		u.ReasoningTokens != 0 || u.BillableOutputTokens != 0 ||
+		u.EmbeddingTokens != 0 || u.CacheReadTokens != 0 || u.CacheWriteTokens != 0
 }

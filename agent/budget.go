@@ -288,9 +288,12 @@ func (a *activation) admitTurn(req *llms.ChatRequest, c *ModelClient) *budgetRef
 // budget reserves the request's known-safe bound, input plus output cap,
 // and refuses the attempt when it does not fit; an estimated budget
 // reserves the estimate and refuses an attempt whose estimated input leaves
-// no output token; with no token budget the estimate is still reserved, so
-// an attempt whose usage is unknown is charged something.
-func (a *activation) admitAttempt(req *llms.ChatRequest, c *ModelClient) (Reservation, *budgetRefusal) {
+// no output token, or a retry whose whole estimate no longer fits (its cap
+// was lowered before the failed attempt was charged), so a run overshoots
+// an estimated budget by no more than one attempt's estimation error; with
+// no token budget the estimate is still reserved, so an attempt whose usage
+// is unknown is charged something.
+func (a *activation) admitAttempt(req *llms.ChatRequest, c *ModelClient, retry bool) (Reservation, *budgetRefusal) {
 	b := &a.budgets
 	left := b.Tokens.Limit - a.used.Tokens
 	if b.Tokens.Limit > 0 && !b.Tokens.Estimated {
@@ -309,6 +312,10 @@ func (a *activation) admitAttempt(req *llms.ChatRequest, c *ModelClient) (Reserv
 	if b.Tokens.Limit > 0 && int64(est.InputTokens) >= left {
 		return Reservation{}, &budgetRefusal{ReasonBudgetExhausted, BudgetTokens, fmt.Sprintf(
 			"token budget %d: %d consumed, and the next attempt's input is estimated at %d", b.Tokens.Limit, a.used.Tokens, est.InputTokens)}
+	}
+	if b.Tokens.Limit > 0 && retry && int64(est.Tokens()) > left {
+		return Reservation{}, &budgetRefusal{ReasonBudgetExhausted, BudgetTokens, fmt.Sprintf(
+			"token budget %d: %d consumed, and the retry is estimated at %d", b.Tokens.Limit, a.used.Tokens, est.Tokens())}
 	}
 	return Reservation{Tokens: int64(est.Tokens()), MaxTokens: req.MaxTokens}, nil
 }

@@ -90,7 +90,7 @@ of what is amended.
    activation passes through unrecorded and unbudgeted.
 2. **The chain's order is fixed:**
 
-   `Outer` → validation → retry → timeout → circuit → rate limit → attempt → metrics → base
+   `Outer` → validation → retry → timeout → circuit → rate limit and attempt → metrics → base
 
    `ModelClientConfig` holds the host's settings: `Limiter` (its rate
    limiter), `Estimator` (nil: `DefaultEstimator`), `Observer` (the
@@ -99,12 +99,19 @@ of what is amended.
    host's own layers, outermost first. Maestro's chain fits: its outermost
    metrics and its two wrappers are `Outer` layers. The order is not
    configurable: the attempt layer must sit inside the retry loop and
-   inside the host's rate limiter. Being inside the rate limiter means a
-   rate-limit wait or refusal happens before an attempt is admitted or
-   recorded, so a refused request is never charged to a budget. Being
-   outside the metrics layer means the observer sees only attempts
-   actually sent. A layer inside the chain, if a host ever needs one, is
-   a later addition.
+   inside the host's rate limiter. **The runtime's layer drives the host's
+   limiter itself**, building its reservation as maestro-llms'
+   `RateLimitChat` does (the estimate, and the bound where the estimator
+   gives one). It reserves first, so a rate-limit wait or refusal happens
+   before an attempt is admitted or recorded, and a refused request is
+   never charged to a budget. It then admits the attempt (item 4). An
+   attempt the runtime refuses was never sent, so the host's reservation
+   is rolled back where the limiter supports `ratelimit.Rollbacker`, and
+   otherwise released, which keeps the limiter's charge. A sent attempt
+   commits its reported usage and releases its reservation, as
+   `RateLimitChat` does. Being outside the metrics layer means the
+   observer sees only attempts actually sent. A layer inside the chain,
+   if a host ever needs one, is a later addition.
 3. **An outer layer must pass the request on unchanged.** It may observe
    a call, retry it and map its errors. The runtime records the request
    the model state built, so before each attempt the attempt layer
@@ -140,7 +147,9 @@ of what is amended.
    was refused before the attempt layer: by validation, an open circuit,
    the rate limiter or the context. It commits only its pending results,
    and the loop sees its error, so the run fails with `model_error`, or
-   ends by its context's cause.
+   ends by its context's cause. When that cause is the wrap-up point
+   (a rate limiter's wait reaching it), the wrap-up begins, as for a call
+   cut off there, with no attempt to record a failure for (ADR 0010).
 5. **A turn is a logical call; its attempts are numbered.**
    `ModelAttemptEntry.Attempt` numbers a call's provider attempts from 1.
    The first attempt's commit counts the turn, and a retry counts none.
@@ -174,7 +183,11 @@ of what is amended.
      provider other than Anthropic, provider parameters or an unsupported
      provider. A bounder's error fails the run with `model_error`.
    - an **estimated** budget reserves the estimate and refuses an attempt
-     whose estimated input leaves no output token (ADR 0009, item 6).
+     whose estimated input leaves no output token (ADR 0009, item 6), and
+     a retry whose whole estimate no longer fits. A retry's cap was
+     lowered before the failed attempt was charged, so without this check
+     a run could overshoot by a second reservation, not just by one
+     attempt's estimation error (BUD-1).
    - with no token budget the estimate is still reserved, so an attempt
      whose usage is unknown is charged something (ADR 0009, item 5).
 
@@ -187,8 +200,7 @@ of what is amended.
 7. **Charging is unchanged** (ADR 0009, items 7 and 8): observed usage
    from the `turn`, a reservation for an attempt that failed, was retried
    or was interrupted. The host's rate limiter keeps its own accounting
-   through its reservation's `Commit` and `Release`, as maestro-llms'
-   rate-limit middleware drives them.
+   through its reservation (item 2).
 
 ## Rejected alternatives
 
@@ -198,8 +210,12 @@ of what is amended.
   but the attempt's entry must record the request write-ahead. A limiter
   also cannot see a layer that changed the request. The attempt layer
   gets the same placement, inside retry and after the rate limiter's
-  wait, with the request in hand. `Rollback` is not needed: nothing after
-  the attempt layer can refuse an attempt before it is sent.
+  wait, with the request in hand.
+- **Leaving the host's limiter to maestro-llms' `RateLimitChat`, outside
+  the attempt layer.** `RateLimitChat` only releases, so a reservation
+  for an attempt the runtime refused before sending would keep its
+  charge on a shared quota. Driving the limiter in the runtime's layer
+  lets it roll back exactly the attempts that were never sent.
 - **Accepting any `llms.ChatClient`, and failing closed when a token
   budget meets a client the runtime does not recognize.** That refusal
   would arrive late, after work had been done, and only for runs with a

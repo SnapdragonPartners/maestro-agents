@@ -68,12 +68,13 @@ Load-bearing decisions so far:
 - The model client is `*agent.ModelClient`, built only by
   `agent.NewModelClient` over a `maestro-llms` client, so any other client
   fails to compile; its chain's order is fixed (host `Outer` layers,
-  validation, retry, timeout, circuit, the host's rate limiter, the
-  runtime's attempt layer, metrics); the attempt layer admits and records
+  validation, retry, timeout, circuit, the runtime's layer driving the
+  host's rate limiter, metrics); that layer admits and records
   every provider attempt, retries included (numbered; a retry counts no
   turn and charges the failed attempt its reservation); a hard token
   budget is admitted on `maestro-llms`' known-safe bound, and a request
-  with none fails with `budget_unenforceable`; an outer layer that
+  with none fails with `budget_unenforceable`; a refused attempt's
+  host reservation is rolled back; an outer layer that
   changes the request fails the run with `model_error`
   ([ADR 0014](docs/adr/0014-model-client-and-attempt-admission.md))
 - Every model state declares `WrapUp.Tools`, its exits: when a time
