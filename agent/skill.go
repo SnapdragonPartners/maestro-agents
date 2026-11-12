@@ -152,8 +152,11 @@ func (s *skill) results() error {
 		s.instructions += "\n\nFiles in this skill: " + strings.Join(refs, ", ") + "."
 	}
 	s.missing = fmt.Sprintf("Skill %s has no such file. Its files: %s.", s.name, strings.Join(s.paths, ", "))
-	if n := max(len(s.instructions), len(s.missing)); n > MaxSkillFileBytes {
+	if n := len(s.instructions); n > MaxSkillFileBytes {
 		return fmt.Errorf("%s's instructions with the list of its %d files are %d bytes, over the %d cap", SkillFile, len(s.paths), n, MaxSkillFileBytes)
+	}
+	if n := len(s.missing); n > MaxSkillFileBytes {
+		return fmt.Errorf("the no-such-file error listing its %d files is %d bytes, over the %d cap", len(s.paths), n, MaxSkillFileBytes)
 	}
 	return nil
 }

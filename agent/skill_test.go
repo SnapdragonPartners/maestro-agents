@@ -76,9 +76,12 @@ func TestRegisterRefusesSkills(t *testing.T) {
 		"over cap":              {fstest.MapFS{"a/SKILL.md": {Data: []byte("---\nname: a\ndescription: d\n---\nbody")}, "a/big.md": {Data: []byte(big + "x")}}, nil, "over the"},
 		"file list over cap":    {manyFiles, nil, "files are"},
 		"body at cap with file": {fstest.MapFS{"a/SKILL.md": {Data: []byte(atCap)}, "a/" + strings.Repeat("r", 60) + ".md": {Data: []byte("x")}}, nil, "files are"},
-		"unknown grant":         {skillFS(), []string{"nope"}, "do not hold"},
-		"grant twice":           {skillFS(), []string{"style", "style"}, "twice"},
-		"grant without fs":      {nil, []string{"style"}, "do not hold"},
+		// The instructions ("body" plus the list) fit; the no-such-file
+		// error, which also lists SKILL.md, is 20 bytes longer and does not.
+		"error over cap":   {fstest.MapFS{"a/SKILL.md": {Data: []byte("---\nname: a\ndescription: d\n---\nbody")}, "a/" + strings.Repeat("r", agent.MaxSkillFileBytes-33) + ".md": {Data: []byte("x")}}, nil, "no-such-file error"},
+		"unknown grant":    {skillFS(), []string{"nope"}, "do not hold"},
+		"grant twice":      {skillFS(), []string{"style", "style"}, "twice"},
+		"grant without fs": {nil, []string{"style"}, "do not hold"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
