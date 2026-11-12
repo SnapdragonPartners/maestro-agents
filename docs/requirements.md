@@ -572,7 +572,8 @@ Known consumers:
   whose consumption is unknown is charged its full reservation.
   Compaction and wrap-up calls are admitted the same way. Because
   `maestro-llms` retries inside the injected client, the injected-client
-  contract must give the runtime a hook at each attempt (section 7).
+  contract must give the runtime a hook at each attempt (section 7); the
+  runtime's model client provides it (ADR 0014).
 - **BUD-4 Must: the library does not price, and unknowns stay explicit.**
   It reports tokens per model; a cost budget uses a pricing function the
   host supplies. Unknown usage or an unpriced model is an explicit unknown,
@@ -950,7 +951,7 @@ to agents stays here.
 |---|---|---|---|
 | Image and document content | `maestro-llms`' `ContentPart` has only text, tool call, tool result and reasoning parts | LLM-2 | [maestro-llms#147](https://github.com/SnapdragonPartners/maestro-llms/issues/147) |
 | Non-text tool results | `maestro-llms`' `ToolResult.Content` is a string, in `llms` and in `toolloop` | TOOL-11 | [maestro-llms#148](https://github.com/SnapdragonPartners/maestro-llms/issues/148) |
-| Budget admission before each provider attempt, including retries, and a known-safe input bound | Retries run inside the injected client, and `maestro-llms` ADR 0031 gave attempts an observer, which cannot refuse one, rather than a middleware slot; the existing estimator is approximate, not a bound | BUD-3 | [maestro-llms#149](https://github.com/SnapdragonPartners/maestro-llms/issues/149) |
+| Budget admission before each provider attempt, including retries, and a known-safe input bound | Landed in `maestro-llms` v1.3.0 (`ratelimit.Rollbacker`, `ReservationRequest.BoundUnits`, `middleware.InputBounder`); used by ADR 0014 | BUD-3 | [maestro-llms#149](https://github.com/SnapdragonPartners/maestro-llms/issues/149) |
 | An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 | [maestro-llms#150](https://github.com/SnapdragonPartners/maestro-llms/issues/150) |
 | PDF layout-mode text, word positions and page rendering | `maestro-cms`' `pdftotext` engine returns plain text per page in reading order, which separates labels from their numbers | The verification checks and the vertical slice's step 1 (layout mode); the intake review UI's evidence highlighting (section 6) | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
 

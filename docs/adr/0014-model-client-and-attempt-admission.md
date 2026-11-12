@@ -52,6 +52,10 @@ It amends, item by item:
   by its retry, with no `model_failure` entry.
 - ADR 0008 item 6 (the client is `ActivationInput.Client`, an
   `llms.ChatClient`): by item 1, it is a `*agent.ModelClient`.
+- ADR 0010 item 2 (the wrap-up point is checked before each model
+  attempt, in the recording client): by item 4, it is checked before each
+  logical call; a retry is cut off at the wrap-up point by the call's
+  context rather than checked again.
 - ADR 0009 item 4 (a turn is a logical call; until #149 a turn is one
   attempt): by item 5, a turn is one or more attempts, and its first
   attempt's commit counts it.
@@ -150,6 +154,12 @@ of what is amended.
    ends by its context's cause. When that cause is the wrap-up point
    (a rate limiter's wait reaching it), the wrap-up begins, as for a call
    cut off there, with no attempt to record a failure for (ADR 0010).
+
+   The wrap-up point is checked before each logical call, in the
+   recording client (ADR 0010, item 2), not again before a retry: the
+   call's context ends at the wrap-up point, so a retry still waiting
+   then is cut off with the call, as an attempt in flight is, and the
+   wrap-up begins.
 5. **A turn is a logical call; its attempts are numbered.**
    `ModelAttemptEntry.Attempt` numbers a call's provider attempts from 1.
    The first attempt's commit counts the turn, and a retry counts none.

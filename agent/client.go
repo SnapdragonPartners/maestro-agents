@@ -68,9 +68,18 @@ func NewModelClient(base llms.ChatClient, cfg ModelClientConfig) (*ModelClient, 
 	if isNil(base) {
 		return nil, errors.New("agent: NewModelClient: base client is nil")
 	}
+	if cfg.Estimator != nil && isNil(cfg.Estimator) {
+		return nil, errors.New("agent: NewModelClient: estimator is a typed nil")
+	}
+	if cfg.Observer != nil && isNil(cfg.Observer) {
+		return nil, errors.New("agent: NewModelClient: observer is a typed nil")
+	}
 	est := cfg.Estimator
 	if est == nil {
 		est = middleware.DefaultEstimator{}
+	}
+	if cfg.Limiter != nil && isNil(cfg.Limiter) {
+		return nil, errors.New("agent: NewModelClient: limiter is a typed nil")
 	}
 	retry := middleware.DefaultRetryConfig()
 	if cfg.Retry != nil {
@@ -87,11 +96,7 @@ func NewModelClient(base llms.ChatClient, cfg ModelClientConfig) (*ModelClient, 
 	if cfg.Timeout > 0 {
 		mws = append(mws, middleware.TimeoutChat(cfg.Timeout))
 	}
-	mws = append(mws, middleware.CircuitChat(cfg.Circuit))
-	if cfg.Limiter != nil && isNil(cfg.Limiter) {
-		return nil, errors.New("agent: NewModelClient: limiter is a typed nil")
-	}
-	mws = append(mws, attemptLayer(cfg.Limiter, est))
+	mws = append(mws, middleware.CircuitChat(cfg.Circuit), attemptLayer(cfg.Limiter, est))
 	if cfg.Observer != nil {
 		mws = append(mws, middleware.MetricsChat(cfg.Observer))
 	}
@@ -120,6 +125,73 @@ func isNil(v any) bool {
 	default:
 		return false
 	}
+}
+
+// cloneRequest returns a deep copy of req, sharing no slice, map or pointer
+// with it: the baseline each attempt is compared with, which a layer that
+// edits the request in place cannot also change (ADR 0014, item 3).
+func cloneRequest(req *llms.ChatRequest) llms.ChatRequest {
+	return deepCopy(reflect.ValueOf(*req)).Interface().(llms.ChatRequest) //nolint:forcetypeassert // deepCopy keeps the type
+}
+
+// deepCopy copies v and everything it reaches through pointers, slices,
+// maps, arrays, interfaces and exported struct fields (llms' request types
+// have no others). The request is a tree, so there are no cycles to track.
+func deepCopy(v reflect.Value) reflect.Value {
+	switch v.Kind() { //nolint:exhaustive // other kinds are values, copied by assignment
+	case reflect.Pointer, reflect.Interface:
+		return deepCopyRef(v)
+	case reflect.Slice:
+		if v.IsNil() {
+			return v
+		}
+		n := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := range v.Len() {
+			n.Index(i).Set(deepCopy(v.Index(i)))
+		}
+		return n
+	case reflect.Array:
+		n := reflect.New(v.Type()).Elem()
+		for i := range v.Len() {
+			n.Index(i).Set(deepCopy(v.Index(i)))
+		}
+		return n
+	case reflect.Map:
+		if v.IsNil() {
+			return v
+		}
+		n := reflect.MakeMapWithSize(v.Type(), v.Len())
+		for it := v.MapRange(); it.Next(); {
+			n.SetMapIndex(deepCopy(it.Key()), deepCopy(it.Value()))
+		}
+		return n
+	case reflect.Struct:
+		n := reflect.New(v.Type()).Elem()
+		n.Set(v)
+		for i := range v.NumField() {
+			if f := n.Field(i); f.CanSet() {
+				f.Set(deepCopy(v.Field(i)))
+			}
+		}
+		return n
+	default:
+		return v
+	}
+}
+
+// deepCopyRef copies a pointer or an interface and what it holds.
+func deepCopyRef(v reflect.Value) reflect.Value {
+	if v.IsNil() {
+		return v
+	}
+	if v.Kind() == reflect.Pointer {
+		n := reflect.New(v.Type().Elem())
+		n.Elem().Set(deepCopy(v.Elem()))
+		return n
+	}
+	n := reflect.New(v.Type()).Elem()
+	n.Set(deepCopy(v.Elem()))
+	return n
 }
 
 // attemptKey carries the model run a call serves through the chain's

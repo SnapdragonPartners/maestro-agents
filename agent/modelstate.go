@@ -27,8 +27,10 @@ var errAbort = errors.New("agent: activation ending")
 var errStepLimit = errors.New("agent: step limit reached")
 
 // modelRun runs one model state within an activation (ADR 0008): it drives
-// toolloop.Run with a client decorator that records each attempt and turn
-// before the loop sees it, and tool wrappers that record each call's
+// toolloop.Run with a client decorator that admits each logical call and
+// records its turn or failure before the loop sees it, the model client's
+// attempt layer recording each provider attempt before it is sent
+// (modelRun.attempt, ADR 0014), and tool wrappers that record each call's
 // permission, attempt and result.
 type modelRun struct {
 	// point is the state's wrap-up point (ADR 0010).
@@ -477,9 +479,11 @@ func (r *modelRun) decide(ctx context.Context, out *toolloop.Outcome) (e *ending
 	return a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: tool loop ended with %s: %v", r.st.name, out.Kind, out.Err)), true
 }
 
-// recordingClient is the client decorator (ADR 0004, items 6 to 8): it
-// commits each attempt before sending it and its response or failure before
-// returning to the loop.
+// recordingClient is the client decorator (ADR 0004, items 6 to 8, as
+// amended by ADR 0014): it admits each logical call, hands it to the model
+// client, whose attempt layer commits each provider attempt before sending
+// it, and commits the call's response or failure before returning to the
+// loop.
 type recordingClient modelRun
 
 func (c *recordingClient) Model() llms.ModelRef { return c.client.Model() }
@@ -516,7 +520,7 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 	// Each provider attempt, retries included, is admitted and recorded by
 	// the client's attempt layer (modelRun.attempt, ADR 0014), which finds
 	// this call in the context.
-	r.call = &callState{b: b, completes: completes, req: req}
+	r.call = &callState{b: b, completes: completes, req: cloneRequest(&req)}
 	defer func() { r.call = nil }()
 	resp, err := c.client.Complete(context.WithValue(callCtx, attemptKey{}, r), req)
 	if r.abort != nil {
@@ -564,7 +568,9 @@ func (r *modelRun) noAttempt(ctx, callCtx context.Context, err error) error {
 // commits and what every attempt must send.
 type callState struct {
 	b *entries
-	// req is the request the model state built, admitted by admitTurn.
+	// req is a deep copy of the request the model state built, admitted
+	// by admitTurn: no layer can change it through the request it is
+	// handed.
 	req llms.ChatRequest
 	// entry is the first attempt's entry, which a retry repeats.
 	entry *ModelAttemptEntry

@@ -3,7 +3,9 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,6 +53,10 @@ func activateClient(ctx context.Context, c *agent.Controller, f store.Fence, mc 
 	})
 }
 
+type nopObserver struct{}
+
+func (*nopObserver) Observe(middleware.Event) {}
+
 type refusingLimiter struct{}
 
 func (*refusingLimiter) Reserve(context.Context, ratelimit.ReservationRequest) (ratelimit.Reservation, error) {
@@ -61,14 +67,18 @@ func TestNewModelClientRefusesBadConfig(t *testing.T) {
 	base := scripted(ledgerScript)
 	var nilBase *testllm.FakeChatClient
 	var nilLimiter *refusingLimiter
+	var nilEstimator *middleware.DefaultEstimator
+	var nilObserver *nopObserver
 	for name, tc := range map[string]struct {
 		base llms.ChatClient
 		cfg  agent.ModelClientConfig
 	}{
-		"nil base":          {nil, agent.ModelClientConfig{}},
-		"typed nil base":    {nilBase, agent.ModelClientConfig{}},
-		"nil outer layer":   {base, agent.ModelClientConfig{Outer: []middleware.ChatMiddleware{nil}}},
-		"typed nil limiter": {base, agent.ModelClientConfig{Limiter: nilLimiter}},
+		"nil base":            {nil, agent.ModelClientConfig{}},
+		"typed nil base":      {nilBase, agent.ModelClientConfig{}},
+		"nil outer layer":     {base, agent.ModelClientConfig{Outer: []middleware.ChatMiddleware{nil}}},
+		"typed nil limiter":   {base, agent.ModelClientConfig{Limiter: nilLimiter}},
+		"typed nil estimator": {base, agent.ModelClientConfig{Estimator: nilEstimator}},
+		"typed nil observer":  {base, agent.ModelClientConfig{Observer: nilObserver}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if mc, err := agent.NewModelClient(tc.base, tc.cfg); err == nil || mc != nil {
@@ -257,6 +267,110 @@ func TestModelClientOuterLayers(t *testing.T) {
 			t.Fatalf("the changed request was sent or recorded: %d calls", len(base.Calls()))
 		}
 	})
+	// A layer that edits the request in place, through the slices it shares
+	// with the model state's request, is refused the same way (PR #13).
+	t.Run("edited in place", func(t *testing.T) {
+		s := newBackend(t, "memstore").open()
+		createLedgerRun(t, s)
+		edit := func(next llms.ChatClient) llms.ChatClient {
+			return &testllm.FakeChatClient{ModelRef: next.Model(), Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+				req.Messages[0].Content[0].Text += " (edited)"
+				return next.Complete(ctx, req)
+			}}
+		}
+		base := scripted(ledgerScript)
+		mc := newModelClient(t, base, agent.ModelClientConfig{Outer: []middleware.ChatMiddleware{edit}})
+		out, err := activateClient(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), claim(t, s), mc, 0, agent.Budgets{})
+		if err != nil || out.Reason.Code != agent.ReasonModelError {
+			t.Fatalf("outcome = %+v, %v; want model_error", out, err)
+		}
+		if len(base.Calls()) != 0 || len(attempts(t, entries(t, s, "r1"))) != 0 {
+			t.Fatalf("the edited request was sent or recorded: %d calls", len(base.Calls()))
+		}
+	})
+}
+
+// failingEachTurn answers the first attempt of each turn with a retryable
+// provider failure and its retry from the ledger script.
+func failingEachTurn() *testllm.FakeChatClient {
+	inner := scripted(ledgerScript)
+	var mu sync.Mutex
+	failed := map[int]bool{}
+	return &testllm.FakeChatClient{
+		ModelRef: llms.ModelRef{Provider: "fake", Name: "flaky"},
+		Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+			mu.Lock()
+			n := len(req.Messages)
+			first := !failed[n]
+			failed[n] = true
+			mu.Unlock()
+			if first {
+				return llms.ChatResponse{}, &llms.ProviderError{Provider: "fake", Kind: llms.ErrorKindUnavailable, StatusCode: 503, Message: "busy"}
+			}
+			return inner.Complete(ctx, req)
+		},
+	}
+}
+
+// TestModelClientRetryCrashAtEveryCommit: with every turn retried once,
+// wherever an activation dies the consumption the run ends with is what
+// its record charges. In particular a retried call whose first attempt
+// commits with the previous turn's pending results and checkpoint (the
+// ledger's refused bogus call) leaves that attempt past the checkpoint, so
+// recovery charges it its reservation as the live run did (PR #13).
+func TestModelClientRetryCrashAtEveryCommit(t *testing.T) {
+	// No token budget: a failed attempt is charged its estimate, not all a
+	// budget leaves, so every turn's retry runs.
+	budgets := agent.Budgets{Turns: 100}
+	activate := func(s store.Store, f store.Fence) (agent.Outcome, error) {
+		mc := newModelClient(t, failingEachTurn(), agent.ModelClientConfig{Retry: fastRetry})
+		return activateClient(context.Background(), agent.NewController(s, registry(t, ledgerType(&execLog{}))), f, mc, 0, budgets)
+	}
+	total := func() int {
+		s := &countingStore{Store: newBackend(t, "memstore").open()}
+		createLedgerRun(t, s)
+		out, err := activate(s, claim(t, s))
+		if err != nil || out.Status != store.StatusSucceeded {
+			t.Fatalf("outcome = %+v, %v", out, err)
+		}
+		retries := 0
+		for _, e := range entries(t, s, "r1") {
+			if e.Kind == agent.EntryModelAttempt && payload[agent.ModelAttemptEntry](t, e).Attempt == 2 {
+				retries++
+			}
+		}
+		if retries != len(ledgerScript) {
+			t.Fatalf("%d retries, want one per turn", retries)
+		}
+		return s.n
+	}()
+	for at := 1; at <= total; at++ {
+		for _, landing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("commit-%d/landing-%v", at, landing), func(t *testing.T) {
+				t.Parallel()
+				s := newBackend(t, "memstore").open()
+				createLedgerRun(t, s)
+				if _, err := activate(&crashStore{Store: s, at: at, landing: landing}, claim(t, s)); !errors.Is(err, agent.ErrStoreFailure) {
+					t.Fatalf("crashed activation = %v, want a store failure", err)
+				}
+				if runRecord(t, s, "r1").Status.Terminal() {
+					return
+				}
+				releaseIfOwned(t, s)
+				out, err := activate(s, claim(t, s))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if out.Status != store.StatusSucceeded {
+					t.Fatalf("outcome = %+v", out)
+				}
+				turns, tokens := recordedCharges(t, entries(t, s, "r1"))
+				if out.Consumed.Turns != turns || out.Consumed.Tokens != tokens {
+					t.Fatalf("consumed %d turns, %d tokens; the record charges %d, %d", out.Consumed.Turns, out.Consumed.Tokens, turns, tokens)
+				}
+			})
+		}
+	}
 }
 
 // TestModelClientRateLimiterRefusal: the host's rate limiter refuses before
