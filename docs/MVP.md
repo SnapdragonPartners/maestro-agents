@@ -131,9 +131,9 @@ wait:
 
 | ID | Class | MVP |
 |---|---|---|
-| BUD-1 | Build | Tokens, turns, active time and the deadline, hard and estimated. Until `maestro-llms#149` lands, the intake agent's client is built without `maestro-llms`' retry middleware, so each model call is a single provider attempt, admitted on its estimate before it is sent; a failed attempt fails the call. Cost budgets are deferred (**contract:** the pricing-function interface) |
+| BUD-1 | Build | Tokens, turns, active time and the deadline, hard and estimated. The host builds its client with `agent.NewModelClient`, retries included; each provider attempt, every retry included, is admitted and recorded before it is sent ([ADR 0014](adr/0014-model-client-and-attempt-admission.md)). Cost budgets are deferred (**contract:** the pricing-function interface) |
 | BUD-2 | Build | Both clocks and the visible clock. The active-time pause is not needed while there are no in-process waits |
-| BUD-3 | Build | The fail-closed path is built from the start: with no known-safe input bound, a hard token budget fails the run with `budget_unenforceable`. So until `maestro-llms#149` lands, hosts get hard turn and time budgets, while token budgets must be configured as estimated (the intake configuration does this); admission against the bound is built once #149 lands |
+| BUD-3 | Build | A hard token budget is admitted on `maestro-llms`' known-safe bound (#149, v1.3.0): text requests to Anthropic, and to OpenAI or Google without tools. A request with no bound (images, documents, tools on OpenAI or Google) fails the run with `budget_unenforceable`, so the intake configuration, whose requests carry PDFs and images, keeps its token budget estimated ([ADR 0014](adr/0014-model-client-and-attempt-admission.md)) |
 | BUD-4 | Build | |
 
 ### Host seams, delivery, execution record and tests

@@ -214,7 +214,7 @@ func createLedgerRun(t testing.TB, s store.Store) {
 
 func activateWith(ctx context.Context, c *agent.Controller, f store.Fence, client llms.ChatClient, maxSteps int) (agent.Outcome, error) {
 	return c.Activate(ctx, agent.ActivationInput{
-		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: client, MaxSteps: maxSteps,
+		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: modelClient(client), MaxSteps: maxSteps,
 	})
 }
 

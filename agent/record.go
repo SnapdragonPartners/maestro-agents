@@ -100,7 +100,11 @@ type ModelRef struct {
 // rest, without messages) and the transcript: the Base messages the state's
 // latest checkpoint holds, followed by the Messages artifacts added since.
 // Reservation is what the attempt was admitted on (BUD-3); an attempt
-// recorded before budgets were built has none. Params are the parameters
+// recorded before budgets were built has none. Attempt numbers the
+// provider attempts of one logical call from 1 (ADR 0014): a later one is a
+// retry inside the model client, which repeats the first's request and
+// counts no turn; an entry recorded before retries were recorded has none,
+// and is a first attempt. Params are the parameters
 // sent; when they differ from the state's own (a token budget lowered the
 // output cap, or a wrap-up turn offered only the wrap-up's tools, ADR
 // 0010), StateParams are the state's own, from which later attempts are
@@ -113,6 +117,7 @@ type ModelAttemptEntry struct {
 	StateParams string       `json:"state_params,omitempty"`
 	Messages    []string     `json:"messages,omitempty"`
 	Base        int          `json:"base"`
+	Attempt     int          `json:"attempt,omitempty"`
 	// WrapUp marks a wrap-up turn's attempt (ADR 0010): its calls execute
 	// with Call.WrapUp, and only the wrap-up's tools were offered.
 	WrapUp bool `json:"wrap_up,omitempty"`

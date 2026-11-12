@@ -38,9 +38,11 @@
 //
 // A run's [Budgets] (ADR 0009) come with its first activation and are fixed
 // for the run. Each model turn is admitted against the turn and token
-// budgets before its attempt is recorded, the time budgets cancel the
-// activation's context, and the run's [Consumption] is checkpointed and
-// returned in every [Outcome].
+// budgets, and each provider attempt, every retry included, against the
+// token budget before it is recorded and sent, by the attempt layer in the
+// host's [ModelClient] (ADR 0014); the time budgets cancel the activation's
+// context, and the run's [Consumption] is checkpointed and returned in
+// every [Outcome].
 //
 // Near a budget's end a model state wraps up (ADR 0010): its next turns
 // offer only the exits its [WrapUp] declares, and their calls see

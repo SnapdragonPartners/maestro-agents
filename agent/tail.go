@@ -125,7 +125,10 @@ func (f *tailFold) addAttempt(e *store.Entry) error {
 	}
 	f.open = &m
 	f.wrapUp = f.wrapUp || m.WrapUp
-	f.used.admitTurn(m.Model)
+	// A retry is a further attempt of the same turn (ADR 0014, item 5).
+	if m.Attempt <= 1 {
+		f.used.admitTurn(m.Model)
+	}
 	if f.states == nil {
 		f.states = map[string]bool{}
 	}
