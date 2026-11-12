@@ -10,8 +10,9 @@ through [maestro-llms](https://github.com/SnapdragonPartners/maestro-llms).
 **Building the MVP** ([docs/MVP.md](docs/MVP.md)). The store interface and
 its reference stores (memory and files) exist, in `store/`, and so do agent
 types, the run controller for code and model states, budgets, forced
-wrap-up with the visible clock, manifests and namespace confinement, in
-`agent/`; skills, then the intake agent, come next, each with an
+wrap-up with the visible clock, manifests, namespace confinement, and
+skills and prompt templates, in `agent/`; budget admission through
+`maestro-llms`' limiter, then the intake agent, come next, each with an
 [ADR](docs/adr/README.md).
 
 ## Layout

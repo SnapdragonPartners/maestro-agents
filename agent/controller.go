@@ -351,7 +351,7 @@ func (a *activation) env() *Env {
 	if a.model != nil {
 		point = &a.model.point
 	}
-	return &Env{reader: a.c.store, namespace: a.namespace, config: a.config, run: a.run, state: state, step: a.step1(), budget: a.budgetStatus(point)}
+	return &Env{reader: a.c.store, templates: a.m.templates, namespace: a.namespace, config: a.config, run: a.run, state: state, step: a.step1(), budget: a.budgetStatus(point)}
 }
 
 // step1 is the current step: the checkpoint's next step, or 1 before the

@@ -19,12 +19,13 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
-budgets, forced wrap-up with the visible clock, manifests and namespace
-confinement (`agent/`); skills, then the intake agent, come next. The requirements are in
+budgets, forced wrap-up with the visible clock, manifests, namespace
+confinement, and skills and prompt templates (`agent/`); budget admission
+through `maestro-llms`' limiter, then the intake agent, come next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0012; further design arrives with the code, each piece with its ADR.
+0013; further design arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -93,6 +94,15 @@ Load-bearing decisions so far:
   `tool_error` from a tool); a missing namespace, or one the store refuses,
   fails the start with `config_error`
   ([ADR 0012](docs/adr/0012-namespace-confinement.md))
+- Skills are `Type.Skills`, an `fs.FS` of `<name>/SKILL.md` (strict
+  `name`/`description` header) plus reference files, and templates
+  `Type.Templates`, an `fs.FS` of `text/template` files; both are read,
+  checked and hashed at registration and listed in the manifest with
+  their identities; a model state's `Skills` grant offers the built-in
+  `read_skill` tool, whose description indexes them (not the system
+  prompt) and whose identity follows their content; `Env.Render`
+  renders a template
+  ([ADR 0013](docs/adr/0013-skills-and-prompt-templates.md))
 
 ### Related repositories
 
@@ -159,7 +169,7 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, record entries (ADR 0007-0012)
+agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, record entries (ADR 0007-0013)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
