@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
+
 	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 	"github.com/SnapdragonPartners/maestro-agents/store/filestore"
@@ -223,4 +226,17 @@ type countingStore struct {
 func (c *countingStore) Commit(ctx context.Context, f store.Fence, ops []store.Op) error {
 	c.n++
 	return c.Store.Commit(ctx, f, ops)
+}
+
+// modelClient wraps a test client in a ModelClient with a single attempt per
+// call, so a scripted failure fails the call; nil stays nil.
+func modelClient(c llms.ChatClient) *agent.ModelClient {
+	if c == nil {
+		return nil
+	}
+	mc, err := agent.NewModelClient(c, agent.ModelClientConfig{Retry: &middleware.RetryConfig{MaxAttempts: 1}})
+	if err != nil {
+		panic(err)
+	}
+	return mc
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
+	"github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
 )
 
 // Budget names, as Reason.Budget carries them (RUN-3, BUD-1).
@@ -59,8 +60,9 @@ type Pricing interface {
 
 // TokenBudget is a token budget and its kind (BUD-1). A hard budget (the
 // default) is admitted only on a known-safe upper bound of each attempt's
-// input; with none available it fails the run with
-// ReasonBudgetUnenforceable at the first attempt (BUD-3). An estimated
+// usage, from the model client's estimator; a request with none (an image
+// or a document, say) fails the run with ReasonBudgetUnenforceable before
+// it is sent (BUD-3, ADR 0014). An estimated
 // budget is admitted on maestro-llms' estimate and may overshoot by one
 // attempt's error.
 type TokenBudget struct {
@@ -139,8 +141,8 @@ type ModelConsumption struct {
 // Reservation is what a model attempt was admitted on (BUD-3), recorded in
 // its model_attempt entry: Tokens, the input's size plus the output cap,
 // and MaxTokens, the output cap sent (zero: none). Bound reports that the
-// input's size is a known-safe upper bound rather than an estimate; until
-// maestro-llms#149 supplies a bound it is always false.
+// input's size is a known-safe upper bound rather than an estimate: a hard
+// token budget's attempts are reserved on their bound (ADR 0014).
 type Reservation struct {
 	Tokens    int64 `json:"tokens"`
 	MaxTokens int   `json:"max_tokens,omitempty"`
@@ -224,47 +226,118 @@ type budgetRefusal struct {
 	code, budget, detail string
 }
 
-// admit admits a model attempt against the run's budgets (BUD-1, BUD-3):
-// it checks the turn budget and, with a token budget, lowers req.MaxTokens
-// to what the budget leaves. It returns the attempt's reservation, or the
-// refusal; it neither counts the turn nor charges the reservation, which
-// recordAttempt does with the attempt's commit (ADR 0009, items 4 and 7).
-// Until maestro-llms#149 lands each call is a single provider attempt
-// (MVP.md, BUD-1), so a turn and an attempt are admitted together.
-func (a *activation) admit(req *llms.ChatRequest) (Reservation, *budgetRefusal) {
+// admitTurn admits a logical model call against the run's budgets (BUD-1,
+// BUD-3, ADR 0014): it checks the turn budget and, with a token budget,
+// lowers req.MaxTokens to what the budget leaves after the request's input:
+// its known-safe bound for a hard budget, its estimate for an estimated
+// one. It neither counts the turn nor reserves anything: each attempt is
+// admitted by admitAttempt, and the first attempt's commit counts the turn
+// (ADR 0009, items 4 and 7).
+func (a *activation) admitTurn(req *llms.ChatRequest, c *ModelClient) *budgetRefusal {
 	b := &a.budgets
 	if b.Turns > 0 && a.used.Turns >= b.Turns {
-		return Reservation{}, &budgetRefusal{ReasonBudgetExhausted, BudgetTurns,
-			fmt.Sprintf("turn budget %d exhausted", b.Turns)}
+		return &budgetRefusal{ReasonBudgetExhausted, BudgetTurns, fmt.Sprintf("turn budget %d exhausted", b.Turns)}
 	}
+	if b.Tokens.Limit == 0 {
+		return nil
+	}
+	var input int64
+	if b.Tokens.Estimated {
+		input = int64(c.est.EstimateChat(*req).InputTokens)
+	} else {
+		// The input's bound does not depend on the output cap, but no
+		// bound is given for a request without one.
+		probe := *req
+		if probe.MaxTokens <= 0 {
+			probe.MaxTokens = 1
+		}
+		u, refusal := a.bound(&probe, c)
+		if refusal != nil {
+			return refusal
+		}
+		input = int64(u.InputTokens)
+	}
+	left := b.Tokens.Limit - a.used.Tokens
+	// A thinking budget must stay below the output cap (Anthropic's
+	// budget_tokens), so the cap the budget leaves must exceed it: lowering
+	// the cap never makes a valid request invalid. A prompt whose own cap
+	// is below its thinking budget is invalid without any budget, and is
+	// not refused here (ADR 0009, item 5).
+	var thinking int64
+	if req.Reasoning != nil && req.Reasoning.BudgetTokens > 0 {
+		thinking = int64(req.Reasoning.BudgetTokens)
+	}
+	if input+thinking >= left {
+		kind := "bounded"
+		if b.Tokens.Estimated {
+			kind = "estimated"
+		}
+		return &budgetRefusal{ReasonBudgetExhausted, BudgetTokens, fmt.Sprintf(
+			"token budget %d: %d consumed, and the next request's input is %s at %d with a thinking budget of %d",
+			b.Tokens.Limit, a.used.Tokens, kind, input, thinking)}
+	}
+	if out := left - input; req.MaxTokens <= 0 || int64(req.MaxTokens) > out {
+		req.MaxTokens = int(min(out, math.MaxInt32))
+	}
+	return nil
+}
+
+// admitAttempt admits one provider attempt of the call admitTurn admitted,
+// against what the token budget leaves now (a retried attempt was charged
+// its reservation), and returns its reservation (BUD-3, ADR 0014): a hard
+// budget reserves the request's known-safe bound, input plus output cap,
+// and refuses the attempt when it does not fit; an estimated budget
+// reserves the estimate and refuses an attempt whose estimated input leaves
+// no output token, or a retry whose whole estimate no longer fits (its cap
+// was lowered before the failed attempt was charged), so a run overshoots
+// an estimated budget by no more than one attempt's estimation error; with
+// no token budget the estimate is still reserved, so an attempt whose usage
+// is unknown is charged something.
+func (a *activation) admitAttempt(req *llms.ChatRequest, c *ModelClient, retry bool) (Reservation, *budgetRefusal) {
+	b := &a.budgets
+	left := b.Tokens.Limit - a.used.Tokens
 	if b.Tokens.Limit > 0 && !b.Tokens.Estimated {
-		return Reservation{}, &budgetRefusal{ReasonBudgetUnenforceable, BudgetTokens,
-			"hard token budget: no known-safe input bound is available (maestro-llms#149); configure the budget as estimated"}
-	}
-	est := middleware.DefaultEstimator{}.EstimateChat(*req)
-	input := int64(est.InputTokens)
-	if b.Tokens.Limit > 0 {
-		left := b.Tokens.Limit - a.used.Tokens
-		// A thinking budget must stay below the output cap (Anthropic's
-		// budget_tokens), so the cap the budget leaves must exceed it:
-		// lowering the cap never makes a valid request invalid. A prompt
-		// whose own cap is below its thinking budget is invalid without
-		// any budget, and is not refused here (ADR 0009, item 5).
-		var thinking int64
-		if req.Reasoning != nil && req.Reasoning.BudgetTokens > 0 {
-			thinking = int64(req.Reasoning.BudgetTokens)
+		u, refusal := a.bound(req, c)
+		if refusal != nil {
+			return Reservation{}, refusal
 		}
-		if input+thinking >= left {
+		tokens := int64(u.Tokens())
+		if tokens > left {
 			return Reservation{}, &budgetRefusal{ReasonBudgetExhausted, BudgetTokens, fmt.Sprintf(
-				"token budget %d: %d consumed, and the next request's input is estimated at %d with a thinking budget of %d",
-				b.Tokens.Limit, a.used.Tokens, input, thinking)}
+				"token budget %d: %d consumed, and the next attempt's bound is %d", b.Tokens.Limit, a.used.Tokens, tokens)}
 		}
-		if out := left - input; req.MaxTokens <= 0 || int64(req.MaxTokens) > out {
-			req.MaxTokens = int(min(out, math.MaxInt32))
-		}
-		est = middleware.DefaultEstimator{}.EstimateChat(*req)
+		return Reservation{Tokens: tokens, MaxTokens: req.MaxTokens, Bound: true}, nil
+	}
+	est := c.est.EstimateChat(*req)
+	if b.Tokens.Limit > 0 && int64(est.InputTokens) >= left {
+		return Reservation{}, &budgetRefusal{ReasonBudgetExhausted, BudgetTokens, fmt.Sprintf(
+			"token budget %d: %d consumed, and the next attempt's input is estimated at %d", b.Tokens.Limit, a.used.Tokens, est.InputTokens)}
+	}
+	if b.Tokens.Limit > 0 && retry && int64(est.Tokens()) > left {
+		return Reservation{}, &budgetRefusal{ReasonBudgetExhausted, BudgetTokens, fmt.Sprintf(
+			"token budget %d: %d consumed, and the retry is estimated at %d", b.Tokens.Limit, a.used.Tokens, est.Tokens())}
 	}
 	return Reservation{Tokens: int64(est.Tokens()), MaxTokens: req.MaxTokens}, nil
+}
+
+// bound is req's known-safe usage bound from the client's estimator
+// (maestro-llms' middleware.InputBounder, ADR 0014 item 6), or the refusal
+// of a hard token budget that has none.
+func (a *activation) bound(req *llms.ChatRequest, c *ModelClient) (ratelimit.UsageUnits, *budgetRefusal) {
+	bounder, ok := c.est.(middleware.InputBounder)
+	if !ok {
+		return ratelimit.UsageUnits{}, &budgetRefusal{ReasonBudgetUnenforceable, BudgetTokens,
+			"hard token budget: the model client's estimator gives no input bound (middleware.InputBounder); configure the budget as estimated"}
+	}
+	u, ok, err := bounder.BoundChat(c.Model(), *req)
+	if err != nil {
+		return ratelimit.UsageUnits{}, &budgetRefusal{ReasonModelError, "", fmt.Sprintf("bound the request: %v", err)}
+	}
+	if !ok {
+		return ratelimit.UsageUnits{}, &budgetRefusal{ReasonBudgetUnenforceable, BudgetTokens,
+			"hard token budget: no known-safe input bound for this request (an image or document, tools on a provider that does not document their overhead, a provider with no bound, or provider parameters); configure the budget as estimated"}
+	}
+	return u, nil
 }
 
 // clocks derives the activation's context from the run's time budgets

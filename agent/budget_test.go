@@ -20,7 +20,7 @@ import (
 
 func activateBudgets(ctx context.Context, c *agent.Controller, f store.Fence, client llms.ChatClient, maxSteps int, b agent.Budgets) (agent.Outcome, error) {
 	return c.Activate(ctx, agent.ActivationInput{
-		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: client, MaxSteps: maxSteps, Budgets: b,
+		Fence: f, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: modelClient(client), MaxSteps: maxSteps, Budgets: b,
 	})
 }
 
@@ -518,7 +518,7 @@ func TestBudgetsCostNotBuilt(t *testing.T) {
 }
 
 // recordedCharges recomputes a run's turns and tokens from its record:
-// each attempt counts a turn and is charged its turn's usage, or its
+// each first attempt counts a turn, and each attempt is charged its turn's usage, or its
 // reservation when the usage is unknown, it failed or it was interrupted.
 func recordedCharges(t *testing.T, es []store.Entry) (turns int, tokens int64) {
 	t.Helper()
@@ -543,7 +543,9 @@ func recordedCharges(t *testing.T, es []store.Entry) (turns int, tokens int64) {
 			settle(nil)
 			at := payload[agent.ModelAttemptEntry](t, e)
 			open = at.Reservation
-			turns++
+			if at.Attempt <= 1 {
+				turns++
+			}
 		case agent.EntryTurn:
 			u := payload[agent.TurnEntry](t, e).Usage
 			settle(&u)
@@ -657,7 +659,7 @@ func TestBudgetsRefusedStartRecordsInputs(t *testing.T) {
 			s := newBackend(t, "memstore").open()
 			createLedgerRun(t, s)
 			out, err := agent.NewController(s, registry(t, ledgerType(&execLog{}))).Activate(context.Background(), agent.ActivationInput{
-				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: scripted(ledgerScript),
+				Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: modelClient(scripted(ledgerScript)),
 				Config: json.RawMessage(`{"k":1}`), Budgets: b,
 			})
 			if err != nil || out.Status != store.StatusFailed {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"unicode/utf8"
 
@@ -26,18 +27,22 @@ var errAbort = errors.New("agent: activation ending")
 var errStepLimit = errors.New("agent: step limit reached")
 
 // modelRun runs one model state within an activation (ADR 0008): it drives
-// toolloop.Run with a client decorator that records each attempt and turn
-// before the loop sees it, and tool wrappers that record each call's
+// toolloop.Run with a client decorator that admits each logical call and
+// records its turn or failure before the loop sees it, the model client's
+// attempt layer recording each provider attempt before it is sent
+// (modelRun.attempt, ADR 0014), and tool wrappers that record each call's
 // permission, attempt and result.
 type modelRun struct {
 	// point is the state's wrap-up point (ADR 0010).
 	point WrapUpPoint
 	// params is the state's request without messages.
 	params llms.ChatRequest
-	client llms.ChatClient
-	a      *activation
-	st     *erasedState
-	ms     *erasedModel
+	client *ModelClient
+	// call is the logical model call in flight, nil between calls.
+	call *callState
+	a    *activation
+	st   *erasedState
+	ms   *erasedModel
 	// abort is the activation's ending, decided inside the loop: a
 	// commit that did not land, or the run's end.
 	abort *ending
@@ -474,9 +479,11 @@ func (r *modelRun) decide(ctx context.Context, out *toolloop.Outcome) (e *ending
 	return a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: tool loop ended with %s: %v", r.st.name, out.Kind, out.Err)), true
 }
 
-// recordingClient is the client decorator (ADR 0004, items 6 to 8): it
-// commits each attempt before sending it and its response or failure before
-// returning to the loop.
+// recordingClient is the client decorator (ADR 0004, items 6 to 8, as
+// amended by ADR 0014): it admits each logical call, hands it to the model
+// client, whose attempt layer commits each provider attempt before sending
+// it, and commits the call's response or failure before returning to the
+// loop.
 type recordingClient modelRun
 
 func (c *recordingClient) Model() llms.ModelRef { return c.client.Model() }
@@ -487,27 +494,19 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 		return llms.ChatResponse{}, errAbort
 	}
 	// Results the loop synthesized commit first, with the turn's checkpoint
-	// if they complete it, in the same commit as the attempt unless the
-	// activation stops here.
+	// if they complete it, in the same commit as the first attempt unless
+	// the activation stops here.
 	b := r.a.entries()
 	completes := r.addPending(b)
 	if err := r.stopBeforeAttempt(ctx, b, completes); err != nil {
 		return llms.ChatResponse{}, err
 	}
-	// The budgets admit the attempt, lowering its output cap to what the
-	// token budget leaves, or refuse it and end the run (BUD-1, BUD-3).
-	// What admission charges is applied before the commit: a commit that
-	// does not land ends the activation, and the next charges the attempt
-	// from the record.
-	res, refusal := r.a.admit(&req)
-	if refusal != nil {
+	// The turn budget admits the call, and a token budget lowers its output
+	// cap to what it leaves, or refuses it and ends the run (BUD-1, BUD-3).
+	// The ending carries the pending results.
+	if refusal := r.a.admitTurn(&req, r.client); refusal != nil {
 		r.abort = r.a.refuseBudget(ctx, refusal)
 		return llms.ChatResponse{}, errAbort
-	}
-	r.res = res
-	delta, ddelta, err := r.recordAttempt(ctx, b, completes, &req)
-	if err != nil {
-		return llms.ChatResponse{}, err
 	}
 	// Before the wrap-up, a call still in flight at the wrap-up point is
 	// cut off there (ADR 0010): its turn never lands, so the transcript is
@@ -518,7 +517,19 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 		callCtx, cancel = context.WithDeadlineCause(ctx, at, errWrapUpDue)
 		defer cancel()
 	}
-	resp, err := c.client.Complete(callCtx, req)
+	// Each provider attempt, retries included, is admitted and recorded by
+	// the client's attempt layer (modelRun.attempt, ADR 0014), which finds
+	// this call in the context.
+	r.call = &callState{b: b, completes: completes, req: cloneRequest(&req)}
+	defer func() { r.call = nil }()
+	resp, err := c.client.Complete(context.WithValue(callCtx, attemptKey{}, r), req)
+	if r.abort != nil {
+		return llms.ChatResponse{}, errAbort
+	}
+	call := r.call
+	if call.n == 0 {
+		return llms.ChatResponse{}, r.noAttempt(ctx, callCtx, err)
+	}
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(context.Cause(callCtx), errWrapUpDue) {
 			if ferr := r.recordFailure(ctx, fmt.Errorf("cut off at the wrap-up point: %w", err), nil); ferr == errAbort { //nolint:errorlint // recordFailure returns errAbort itself
@@ -529,7 +540,92 @@ func (c *recordingClient) Complete(ctx context.Context, req llms.ChatRequest) (l
 		}
 		return llms.ChatResponse{}, r.recordFailure(ctx, err, nil)
 	}
-	return r.recordTurn(ctx, &resp, delta, ddelta)
+	return r.recordTurn(ctx, &resp, call.delta, call.ddelta)
+}
+
+// noAttempt ends a call that reached no attempt: the chain refused it before
+// its attempt layer (validation, an open circuit, the rate limiter, the
+// context). The call's pending results commit alone, and the error is the
+// loop's to classify; a wrap-up point reached first (a rate limiter's wait)
+// begins the wrap-up, with no attempt to record a failure for (ADR 0010).
+func (r *modelRun) noAttempt(ctx, callCtx context.Context, err error) error {
+	call := r.call
+	if len(call.b.ops) > 0 && !r.commitTurnEntries(ctx, call.b, call.completes) {
+		return errAbort
+	}
+	switch {
+	case err == nil:
+		r.abort = r.a.fail(ctx, ReasonModelError, fmt.Sprintf("state %q: the model client answered without sending an attempt", r.st.name))
+		return errAbort
+	case ctx.Err() == nil && errors.Is(context.Cause(callCtx), errWrapUpDue):
+		r.wrapUp, r.restart = true, true
+		return errWrapUp
+	}
+	return err
+}
+
+// callState is a logical model call in flight: what its first attempt
+// commits and what every attempt must send.
+type callState struct {
+	b *entries
+	// req is a deep copy of the request the model state built, admitted
+	// by admitTurn: no layer can change it through the request it is
+	// handed.
+	req llms.ChatRequest
+	// entry is the first attempt's entry, which a retry repeats.
+	entry *ModelAttemptEntry
+	// delta and ddelta are the request's messages past the checkpoint's
+	// transcript and their artifacts.
+	delta     []llms.Message
+	ddelta    []string
+	n         int
+	completes bool
+}
+
+// attempt admits and records one provider attempt of the call in flight
+// (ADR 0014): the client's attempt layer calls it inside the retry loop,
+// before the attempt is sent. A retry first charges the attempt it replaces
+// its reservation, since that attempt failed (ADR 0004, item 13). A non-nil
+// error (errAbort, which maestro-llms neither retries nor counts against the
+// circuit) means the attempt is not sent and the activation ends.
+func (r *modelRun) attempt(ctx context.Context, req *llms.ChatRequest) error {
+	call := r.call
+	if r.abort != nil || call == nil {
+		return errAbort
+	}
+	a := r.a
+	// The attempt this one replaces was sent and failed: it is charged
+	// whatever becomes of this one, which is charged nothing unless sent.
+	model := modelRef(r.client.Model())
+	if call.n > 0 {
+		a.used.charge(model, nil, &r.res)
+	}
+	if !reflect.DeepEqual(*req, call.req) {
+		r.abort = a.fail(ctx, ReasonModelError, fmt.Sprintf(
+			"state %q: a model client layer changed the request before it was sent; layers must pass it on unchanged", r.st.name))
+		return errAbort
+	}
+	res, refusal := a.admitAttempt(req, r.client, call.n > 0)
+	if refusal != nil {
+		r.abort = a.refuseBudget(ctx, refusal)
+		return errAbort
+	}
+	r.res = res
+	call.n++
+	if call.n == 1 {
+		return r.recordAttempt(ctx, call)
+	}
+	// A retry repeats the first attempt's entry, whose artifacts are
+	// stored, with its own number and reservation.
+	entry := *call.entry
+	entry.Attempt = call.n
+	entry.Reservation = &res
+	b := a.entries()
+	b.add(a.step1(), EntryModelAttempt, &entry)
+	if !r.land(ctx, b, nil) {
+		return errAbort
+	}
+	return nil
 }
 
 // stopBeforeAttempt stops the loop before a new attempt when the context
@@ -567,21 +663,22 @@ func (r *modelRun) stopBeforeAttempt(ctx context.Context, b *entries, completes 
 	return errWrapUp
 }
 
-// recordAttempt commits the model_attempt entry, with b's pending results
-// and, if they complete the turn, its checkpoint (ADR 0004, items 6 and 8).
-// It returns the request's messages past the checkpoint's transcript and
-// their artifacts.
-func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool, req *llms.ChatRequest) ([]llms.Message, []string, error) {
+// recordAttempt commits the call's first model_attempt entry, with its
+// pending results and, if they complete the turn, its checkpoint (ADR 0004,
+// items 6 and 8), and keeps the request's messages past the checkpoint's
+// transcript and their artifacts in call.
+func (r *modelRun) recordAttempt(ctx context.Context, call *callState) error {
 	a := r.a
+	b, req := call.b, &call.req
 	// The transcript the pending results complete is the request's base.
-	cs := r.pendingCheckpoint(b, completes)
+	cs := r.pendingCheckpoint(b, call.completes)
 	base := r.digests
 	if cs != nil {
 		base = cs.Model.Transcript
 	}
 	if len(req.Messages) < len(base) {
 		r.abort = a.fail(ctx, ReasonStateError, "agent: tool loop sent a shorter transcript than the checkpoint holds")
-		return nil, nil, errAbort
+		return errAbort
 	}
 	delta := req.Messages[len(base):]
 	// The turn counts from this commit on: after the checkpoint the
@@ -590,7 +687,7 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 	a.used.admitTurn(model)
 	entry := ModelAttemptEntry{
 		Model: model, State: r.st.name, Base: len(base), Params: r.paramsDigest,
-		Reservation: &r.res,
+		Reservation: &r.res, Attempt: 1,
 	}
 	if !r.paramsStored {
 		entry.Params = b.rawArtifact(r.paramsRaw)
@@ -613,10 +710,11 @@ func (r *modelRun) recordAttempt(ctx context.Context, b *entries, completes bool
 	}
 	b.add(a.step1()+boolStep(cs != nil), EntryModelAttempt, &entry)
 	if !r.land(ctx, b, cs) {
-		return nil, nil, errAbort
+		return errAbort
 	}
 	r.paramsStored = true
-	return delta, entry.Messages, nil
+	call.entry, call.delta, call.ddelta = &entry, delta, entry.Messages
+	return nil
 }
 
 // recordFailure commits the attempt's model_failure entry and returns the

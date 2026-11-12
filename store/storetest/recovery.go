@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
 	"github.com/SnapdragonPartners/maestro-llms/llms/testllm"
 
 	"github.com/SnapdragonPartners/maestro-agents/agent"
@@ -145,6 +146,17 @@ func recoveryClient() *testllm.FakeChatClient {
 	}
 }
 
+// recoveryModelClient is recoveryClient in a ModelClient, one attempt per
+// call.
+func recoveryModelClient(t testing.TB) *agent.ModelClient {
+	t.Helper()
+	mc, err := agent.NewModelClient(recoveryClient(), agent.ModelClientConfig{Retry: &middleware.RetryConfig{MaxAttempts: 1}})
+	if err != nil {
+		t.Fatalf("NewModelClient: %v", err)
+	}
+	return mc
+}
+
 func recoveryPolicy(_ context.Context, req *agent.PolicyRequest) (agent.Decision, error) {
 	if strings.Contains(string(req.Call.Parameters), "denied") {
 		return agent.Decision{Verdict: agent.VerdictDeny, Reason: "not this item"}, nil
@@ -191,7 +203,7 @@ func recoveryActivate(t testing.TB, s agent.Store, ctrl store.ControlPlane, clk 
 	}
 	c := agent.NewController(s, reg, agent.WithPolicy(recoveryPolicy))
 	return c.Activate(context.Background(), agent.ActivationInput{ //nolint:wrapcheck // the caller checks the error's class
-		Fence: own.Fence(), Scope: store.Scope{Kind: store.ScopeRun, ID: runID}, Namespace: recoveryNS, Client: recoveryClient(),
+		Fence: own.Fence(), Scope: store.Scope{Kind: store.ScopeRun, ID: runID}, Namespace: recoveryNS, Client: recoveryModelClient(t),
 	})
 }
 

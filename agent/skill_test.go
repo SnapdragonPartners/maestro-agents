@@ -292,7 +292,7 @@ func TestReadSkillNotOfferedInWrapUp(t *testing.T) {
 	client := scripted([]llms.ChatResponse{callsResp(tc("c1", "finish", `{}`))})
 	c := agent.NewController(s, registry(t, skilledLedger(skillFS(), "triage")))
 	out, err := c.Activate(context.Background(), agent.ActivationInput{
-		Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: client,
+		Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Client: modelClient(client),
 		Budgets: agent.Budgets{Turns: 2},
 	})
 	// The run ends rejected: it finished without recording its items.

@@ -10,8 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/SnapdragonPartners/maestro-llms/llms"
-
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
@@ -75,11 +73,13 @@ func NewController(s Store, r *Registry, opts ...Option) *Controller {
 // record's tail through the store, so the input never duplicates durable
 // state.
 type ActivationInput struct {
-	// Client is the model client the host built (LLM-1), used by every
-	// model state this activation runs; the route it reports is recorded
-	// with every attempt (LLM-3). A model state reached with no client
-	// fails the run with ReasonModelError.
-	Client llms.ChatClient
+	// Client is the model client the host built with NewModelClient
+	// (LLM-1, ADR 0014), used by every model state this activation runs:
+	// its chain admits and records each provider attempt, retries
+	// included, and the route it reports is recorded with every attempt
+	// (LLM-3). A model state reached with no client fails the run with
+	// ReasonModelError.
+	Client *ModelClient
 	// Scope is the run's scope: kind run, with the run's ID.
 	Scope store.Scope
 	// Fence is the host's claim on the run's instance (ADR 0003, item 8).
@@ -147,7 +147,7 @@ func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome,
 type activation struct {
 	// clockStart is when this activation's clocks started (ADR 0009).
 	clockStart time.Time
-	client     llms.ChatClient
+	client     *ModelClient
 	m          *machine
 	c          *Controller
 	// model is the model state running, if any.

@@ -1,6 +1,6 @@
 # 0004. Execution record and recovery
 
-- **Status:** Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013
+- **Status:** Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0014
 - **Date:** 2026-11-07
 
 ## Context

@@ -1,6 +1,6 @@
 # 0010. Wrap-up and the visible clock
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0014
 - **Date:** 2026-11-10
 
 ## Context

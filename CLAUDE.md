@@ -20,12 +20,12 @@ Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
-confinement, and skills and prompt templates (`agent/`); budget admission
-through `maestro-llms`' limiter, then the intake agent, come next. The requirements are in
+confinement, skills and prompt templates, and the model client with
+attempt-level budget admission (`agent/`); the intake agent comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0013; further design arrives with the code, each piece with its ADR.
+0014; further design arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -62,11 +62,21 @@ Load-bearing decisions so far:
 - Budgets are `ActivationInput.Budgets`, recorded with the run's start
   and fixed for the run; the recording client admits each turn (a logical
   call, counted even if it fails or is interrupted) and its tokens,
-  recording the reservation in `model_attempt`; until `maestro-llms#149`
-  a hard token budget fails closed with `budget_unenforceable`, so token
-  budgets are estimated; the clocks cancel the activation's context;
-  consumption is checkpointed and rebuilt from the tail
-  ([ADR 0009](docs/adr/0009-budgets.md))
+  recording the reservation in `model_attempt`; the clocks cancel the
+  activation's context; consumption is checkpointed and rebuilt from the
+  tail ([ADR 0009](docs/adr/0009-budgets.md))
+- The model client is `*agent.ModelClient`, built only by
+  `agent.NewModelClient` over a `maestro-llms` client, so any other client
+  fails to compile; its chain's order is fixed (host `Outer` layers,
+  validation, retry, timeout, circuit, the runtime's layer driving the
+  host's rate limiter, metrics); that layer admits and records
+  every provider attempt, retries included (numbered; a retry counts no
+  turn and charges the failed attempt its reservation); a hard token
+  budget is admitted on `maestro-llms`' known-safe bound, and a request
+  with none fails with `budget_unenforceable`; a refused attempt's
+  host reservation is rolled back; an outer layer that
+  changes the request fails the run with `model_error`
+  ([ADR 0014](docs/adr/0014-model-client-and-attempt-admission.md))
 - Every model state declares `WrapUp.Tools`, its exits: when a time
   budget's remaining is within the state's reserve, or the turns left
   within its wrap-up turns, the next turns offer only those tools (tool
@@ -169,7 +179,7 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, record entries (ADR 0007-0013)
+agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries (ADR 0007-0014)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
