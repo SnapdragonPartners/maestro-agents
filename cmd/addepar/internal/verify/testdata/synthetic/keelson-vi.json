@@ -1,0 +1,37 @@
+{
+  "statement": "keelson-vi.txt",
+  "record": {
+    "investor": {"text": "Example Holdings IV, LLC", "page": 1},
+    "fund": {"text": "Keelson Partners VI, L.P.", "page": 1},
+    "period": {"end": "2026-03-31", "label": "March 31, 2026", "page": 1},
+    "currency": {"code": "USD"},
+    "precision": "whole",
+    "column": {"label": "QTD", "section": "Limited Partner", "reason": "quarter to date under Limited Partner, not Total Fund", "page": 1},
+    "dash_zero": "the statement prints a dash for no activity",
+    "beginning": {"label": "Partners' capital account, beginning of period", "amount": "512330", "page": 1},
+    "lines": [
+      {"kind": "movement", "label": "Contributions", "amount": "187250", "page": 1},
+      {"kind": "movement", "label": "Distributions", "amount": "0", "page": 1},
+      {"kind": "movement", "label": "Offering costs", "amount": "-231", "page": 1},
+      {"kind": "movement", "label": "Interest income", "amount": "166", "page": 1},
+      {"kind": "movement", "label": "Other income", "amount": "52", "page": 1},
+      {"kind": "movement", "label": "Management fees", "amount": "-12407", "page": 1},
+      {"kind": "movement", "label": "Other partnership expenses", "amount": "-8910", "page": 1},
+      {"kind": "subtotal", "label": "Total net investment income (loss)", "amount": "-21099", "page": 1},
+      {"kind": "movement", "label": "Realized gain (loss)", "amount": "0", "page": 1},
+      {"kind": "movement", "label": "Unrealized gain (loss)", "amount": "0", "page": 1},
+      {"kind": "subtotal", "label": "Total income (loss)", "amount": "-21099", "page": 1}
+    ],
+    "ending": {"label": "Partners' capital account, end of period", "amount": "678250", "page": 1},
+    "fund_total": {"label": "Partners' capital account, end of period", "amount": "317883156", "page": 1}
+  },
+  "expect": {"verdict": "warn", "warnings": ["6/not_stated/currency"]},
+  "answer": "678250",
+  "mutations": [
+    {"name": "total-fund column chosen", "exact": true, "fail": [4],
+     "set": {"beginning.amount": "240118407", "lines.0.amount": "87762031", "lines.2.amount": "-108266", "lines.3.amount": "77804", "lines.4.amount": "24371", "lines.5.amount": "-5815084", "lines.6.amount": "-4176107", "lines.7.amount": "-9889016", "lines.10.amount": "-9889016", "ending.amount": "317883156", "fund_total": null}},
+    {"name": "total-fund section named", "exact": true, "fail": [4], "set": {"column.section": "Total Fund (Including GP)"}},
+    {"name": "print timestamp as the period", "exact": true, "fail": [5], "set": {"period.end": "2026-06-30", "period.label": "06/30/2026 09:15 AM"}},
+    {"name": "fund total not above the value", "exact": true, "fail": [4], "set": {"fund_total.amount": "678250"}}
+  ]
+}

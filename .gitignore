@@ -25,3 +25,9 @@ go.work.sum
 # is not committed is no more shared than a private note.
 .claude/*
 !.claude/skills/
+
+# Machine-local data that must never be committed, such as real client
+# documents used in local acceptance tests (this repository is public). One
+# subdirectory per concern, as in Morris: .local/addepar/ holds the intake
+# agent's real sample statements and their hand-written records.
+.local/

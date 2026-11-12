@@ -1,0 +1,28 @@
+Keelson Partners VI, L.P.
+                                                         CONFIDENTIAL        A. Reviewer
+Partners' Capital Account Statement (unaudited)
+                                                               06/30/2026 09:15 AM
+March 31, 2026
+                                                             Example Holdings IV, LLC
+                                                             Limited Partner                                       Total Fund (Including GP)
+                                              QTD                   YTD             Cumulative              QTD                  YTD           Cumulative
+
+Partners' Capital Account Reconciliation
+
+Partners' capital account, beginning of period  $ 512,330            $ 512,330                  $-      $ 240,118,407        $ 240,118,407                  $-
+  Contributions                                     187,250              187,250            790,000         87,762,031           87,762,031      370,259,535
+  Distributions                                           -                    -                  -                  -                    -                -
+  Offering costs                                      (231)                (231)           (11,904)           (108,266)            (108,266)       (5,579,312)
+  Net investment income (loss):
+    Interest income                                     166                  166              1,392             77,804               77,804          652,410
+    Other income                                         52                   52                241             24,371               24,371          112,957
+    Management fees                                 (12,407)             (12,407)           (61,833)         (5,815,084)          (5,815,084)      (28,980,515)
+    Other partnership expenses                       (8,910)              (8,910)           (34,120)         (4,176,107)          (4,176,107)      (15,991,860)
+Total net investment income (loss)                 (21,099)             (21,099)           (94,320)         (9,889,016)          (9,889,016)      (44,207,008)
+  Realized gain (loss)                                    -                    -                  -                  -                    -                -
+  Unrealized gain (loss)                                  -                    -             (5,526)                 -                    -       (2,590,059)
+Total income (loss)                                 (21,099)             (21,099)           (99,846)         (9,889,016)          (9,889,016)      (46,797,067)
+Partners' capital account, end of period          $ 678,250            $ 678,250            $ 678,250     $ 317,883,156        $ 317,883,156        $ 317,883,156
+
+Partners' Commitment Reconciliation
+Total commitment, end of period                  $ 2,500,000          $ 2,500,000          $ 2,500,000   $ 1,171,800,000      $ 1,171,800,000      $ 1,171,800,000

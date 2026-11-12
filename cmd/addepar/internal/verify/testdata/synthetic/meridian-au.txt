@@ -1,0 +1,14 @@
+                     Meridian Pacific Fund III
+                 Partner Capital Account Statement
+              For the quarter ended 31 March 2026
+          All amounts are in Australian dollars (AUD)
+
+Partner:   Example Holdings IV, LLC
+
+                                         Quarter          Year to Date
+Opening capital balance               6,840,115.20        6,840,115.20
+Capital called                          150,000.00          150,000.00
+Distributions                          (210,450.00)        (210,450.00)
+Fees and expenses                       (41,872.36)         (41,872.36)
+Net change in fair value                171,872.32          171,872.32
+Closing capital balance               6,909,665.16        6,909,665.16

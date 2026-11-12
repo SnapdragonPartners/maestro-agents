@@ -1,0 +1,37 @@
+{
+  "statement": "tributary-3.txt",
+  "record": {
+    "investor": {"text": "Sample Partners VII, LLC", "page": 2},
+    "fund": {"text": "Tributary Fund 3, LP", "page": 2},
+    "period": {"end": "2026-03-31", "label": "Period Ended March 31, 2026", "page": 2},
+    "currency": {"code": "USD"},
+    "precision": "whole",
+    "column": {"label": "Quarter to Date", "reason": "the period-to-date column", "page": 2},
+    "dash_zero": "the statement prints a dash for no activity",
+    "beginning": {"label": "Opening Balance", "amount": "3062582", "page": 2},
+    "lines": [
+      {"kind": "movement", "label": "Contributed capital", "amount": "40000", "page": 2},
+      {"kind": "movement", "label": "Transfer", "amount": "0", "page": 2},
+      {"kind": "movement", "label": "Syndications costs", "amount": "0", "page": 2},
+      {"kind": "movement", "label": "Interest income", "amount": "1300", "page": 2},
+      {"kind": "movement", "label": "Other income", "amount": "18187", "page": 2},
+      {"kind": "movement", "label": "Management fee", "amount": "-24490", "page": 2},
+      {"kind": "movement", "label": "Management fee savings", "amount": "-510", "page": 2},
+      {"kind": "movement", "label": "Professional fees and other expenses", "amount": "-1776", "page": 2},
+      {"kind": "subtotal", "label": "Net investment income/(loss)", "amount": "-7289", "page": 2},
+      {"kind": "movement", "label": "Net realized gain/(loss) on investments", "amount": "-5669", "page": 2},
+      {"kind": "movement", "label": "Net change in unrealized gain/(loss) on investments", "amount": "2948715", "page": 2},
+      {"kind": "movement", "label": "Distributions - Cash", "amount": "0", "page": 2},
+      {"kind": "movement", "label": "Distributions - In-kind", "amount": "0", "page": 2}
+    ],
+    "ending": {"label": "Ending Balance", "amount": "6038338", "page": 2}
+  },
+  "expect": {"verdict": "warn", "warnings": ["2/rounding_difference", "6/not_stated/currency"]},
+  "answer": "6038338",
+  "mutations": [
+    {"name": "cites the cover page", "exact": true, "fail": [1], "set": {"ending.page": 1}},
+    {"name": "subtotal summed as a movement", "exact": true, "fail": [2], "set": {"lines.8.kind": "movement"}},
+    {"name": "roman numeral fund name", "exact": true, "fail": [1], "set": {"fund.text": "Tributary Fund III, LP"}},
+    {"name": "page beyond the document", "exact": true, "fail": [1], "set": {"investor.page": 3}}
+  ]
+}

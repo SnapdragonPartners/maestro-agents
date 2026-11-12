@@ -1,0 +1,41 @@
+                                                                                                          ACCOUNT STATEMENT
+                                                                                                          01/01/2026 - 03/31/2026
+sample7                                   (P00402)
+
+Sample Partners VII, LLC
+100 Sample Street, Suite 1                                                                                CONTACT US
+Anytown, Ohio 00000                                                                                       Investor Relations
+
+Brightwater Ventures Fund II, LP
+Q1 2026
+(Unaudited)
+
+          CAPITAL ACCOUNT SUMMARY                                                     CAPITAL COMMITMENT SUMMARY
+Current Capital Balance              $      3,096,393                      Total Capital Commitment                    $      2,500,000
+                                                                           Less: Activities Affecting Commitment2              (2,250,000)
+                                                                           Remaining Capital Commitment                $        250,000
+
+                                                              CAPITAL ACCOUNT SUMMARY
+                                                                      Quarter-To-Date          Year-To-Date        Since Inception
+Beginning Balance                                                   $       3,104,233    $        3,104,233    $                -
+  Capital Contributions1                                                            -                     -            2,250,000
+  Distributions                                                                     -                     -            (241,500)
+Profit & Loss
+  Realized Gain/(Loss)                                                              -                     -               15,640
+  Unrealized Gain/(Loss)3                                                        1,906                 1,906           1,329,371
+  Syndication Costs                                                                 -                     -               (5,802)
+  Management Fees                                                              (9,375)               (9,375)            (236,770)
+  Income and Expense Allocation                                                  (371)                 (371)             (14,546)
+Total Profit & Loss                                                            (7,840)               (7,840)            1,087,893
+
+Ending Balance                                                      $       3,096,393    $        3,096,393    $        3,096,393
+
+1
+  Capital contributions may include reallocation of capital due to subsequent closings.
+2
+  Activity affecting commitment includes capital contributions and recallable distributions.
+3
+  This amount is net of any accrued carried interest that would have been distributed to the General Partner.
+
+General Partner
+Brightwater Ventures Fund II GP, LLC

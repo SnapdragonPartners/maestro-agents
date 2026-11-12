@@ -1,0 +1,33 @@
+{
+  "statement": "halyard-ii.txt",
+  "record": {
+    "investor": {"text": "Example Holdings IV, LLC", "page": 1},
+    "fund": {"text": "Halyard Growth Fund II, L.P.", "page": 1},
+    "period": {"end": "2026-03-31", "label": "For the period ending March 31, 2026", "page": 1},
+    "currency": {"code": "USD"},
+    "precision": "cents",
+    "column": {"label": "Quarter to Date", "reason": "the period-to-date column; one investor", "page": 1},
+    "beginning": {"label": "Opening Balance", "amount": "604211.40", "page": 1},
+    "lines": [
+      {"kind": "movement", "label": "Capital Contribution", "amount": "125000.00", "page": 1},
+      {"kind": "movement", "label": "Syndication Costs", "amount": "12.08", "page": 1},
+      {"kind": "movement", "label": "Management Fee", "amount": "-15302.17", "page": 1},
+      {"kind": "movement", "label": "Net Other Income/(Loss)", "amount": "-942.61", "page": 1},
+      {"kind": "movement", "label": "Net Realized Gain/(Loss)", "amount": "0.00", "page": 1},
+      {"kind": "movement", "label": "Net Unrealized Gain/(Loss)", "amount": "1781.95", "page": 1}
+    ],
+    "ending": {"label": "Capital Balance, March 31, 2026", "amount": "714760.65", "page": 1}
+  },
+  "expect": {"verdict": "warn", "warnings": ["6/not_stated/currency"]},
+  "answer": "714760.65",
+  "mutations": [
+    {"name": "inception column read, quarter column named", "exact": true, "fail": [1],
+     "set": {"beginning.amount": "0.00", "lines.0.amount": "812500.00", "lines.1.amount": "-2904.66", "lines.2.amount": "-104190.88", "lines.3.amount": "-11054.13", "lines.5.amount": "20410.32"}},
+    {"name": "ending label truncated", "exact": true, "fail": [1], "set": {"ending.label": "Capital Balance, March 31"}},
+    {"name": "a movement left out", "exact": true, "fail": [2], "set": {"lines.5.kind": "subtotal"}},
+    {"name": "a sign flipped", "exact": true, "fail": [1, 2], "set": {"lines.2.amount": "15302.17"}},
+    {"name": "period from a contribution date label", "exact": true, "fail": [5], "set": {"period.label": "Capital Contributions, March 31, 2026"}},
+    {"name": "year to date named where it equals the quarter", "exact": true, "fail": [], "set": {"column.label": "Year to Date"}},
+    {"name": "column label not a header", "exact": true, "fail": [1], "set": {"column.label": "Statement of Partner's Capital"}}
+  ]
+}

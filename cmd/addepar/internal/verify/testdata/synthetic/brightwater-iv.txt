@@ -1,0 +1,41 @@
+                                                                                                          ACCOUNT STATEMENT
+                                                                                                          01/01/2026 - 03/31/2026
+exhold4                                   P00311
+
+Example Holdings IV LLC
+100 Sample Street, Suite 1                                                                                CONTACT US
+Anytown, Ohio 00000                                                                                       Investor Relations
+
+Brightwater Ventures Fund IV, LP
+Q1 2026
+(Unaudited)
+
+          CAPITAL ACCOUNT SUMMARY                                                     CAPITAL COMMITMENT SUMMARY
+Current Capital Balance              $        288,412                      Total Capital Commitment                    $      2,000,000
+                                                                           Less: Activities Affecting Commitment2              (360,000)
+                                                                           Remaining Capital Commitment                $      1,640,000
+
+                                                              CAPITAL ACCOUNT SUMMARY
+                                                                      Quarter-To-Date          Year-To-Date        Since Inception
+Beginning Balance                                                   $         214,906    $          214,906    $                -
+  Capital Contributions1                                                       90,000                90,000              360,000
+  Distributions                                                                     -                     -                    -
+Profit & Loss
+  Realized Gain/(Loss)                                                              -                     -                    -
+  Unrealized Gain/(Loss)3                                                        (870)                 (870)               3,815
+  Syndication Costs                                                             1,044                 1,044               (5,120)
+  Management Fees                                                             (12,503)              (12,503)             (58,211)
+  Income and Expense Allocation                                                (4,165)               (4,165)             (12,072)
+Total Profit & Loss                                                           (16,494)              (16,494)             (71,588)
+
+Ending Balance                                                      $         288,412    $          288,412    $          288,412
+
+1
+  Capital contributions may include reallocation of capital due to subsequent closings.
+2
+  Activity affecting commitment includes capital contributions and recallable distributions.
+3
+  This amount is net of any accrued carried interest that would have been distributed to the General Partner.
+
+General Partner
+Brightwater Ventures Fund IV GP, LLC

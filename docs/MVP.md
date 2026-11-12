@@ -167,13 +167,18 @@ wait:
 
 All of the intake requirements' MVP rows are in scope: I-1 to I-3, E-1 to
 E-6, V-1 with the seven verification checks, R-1 to R-4, X-1, X-2 and N-1
-to N-7. Two depart from that document:
+to N-7. Three depart from that document:
 
 - **N-8 and build step 2 (tools over MCP).** The agent's four tools are
   in-process Go tools. Morris runs the agent compiled in (morris#569), so
   it does not need MCP to reach them; exposing them over MCP is deferred
   (TOOL-6's reverse direction).
 - **Prototype language.** Go, not Python (requirements section 6).
+- **I-3 (copy-restricted PDFs).** Not straight to manual entry: the
+  operator is asked at intake whether to read the text layer; accepting is
+  recorded and the statement is verified as usual, declining sends it to
+  manual entry ([ADR 0015](adr/0015-intake-verifier-exporter-and-test-data.md)).
+  Two of the five samples are copy-restricted.
 
 N-5 asks for data at rest to be encrypted. The file store does not
 encrypt; the MVP relies on the operating system's full-disk encryption,
@@ -198,6 +203,8 @@ an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
 3. **The verifier and exporter**, with no model (the intake requirements'
    build step 1), alongside the slice: the seven checks, CSV and manifest,
    hand-written records for the five samples and the mutation suite.
+   Built ([ADR 0015](adr/0015-intake-verifier-exporter-and-test-data.md));
+   the real samples stay out of the repository, in `.local/addepar/`.
 4. **The extraction agent** on the full library: visual reading once
    LLM-2 and TOOL-11 land, the headless runner and the folder trigger.
 5. **The scoring harness** (TEST-4) against the 3/31/2026 answer key.
