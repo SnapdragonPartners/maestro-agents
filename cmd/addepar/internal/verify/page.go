@@ -249,6 +249,7 @@ func (p *pageText) containsHeader(s string) bool {
 type labelHit struct {
 	line *pageLine
 	run  []token // the cells after the label: amounts, dashes, percentages
+	at   int     // the label's first word's index in the line's words
 }
 
 // findLabel returns every line printing the label, each with its run: the
@@ -283,7 +284,7 @@ func (p *pageText) findLabel(label string) []labelHit {
 				l.toks[after].kind == tokSign || l.toks[after].kind == tokJunk) {
 				run = cellRun(l.toks[after:])
 			}
-			hits = append(hits, labelHit{line: l, run: run})
+			hits = append(hits, labelHit{line: l, run: run, at: idx[at]})
 		}
 	}
 	return hits
@@ -349,6 +350,17 @@ func (l *pageLine) hasCells() bool {
 	for _, t := range l.toks {
 		switch t.kind {
 		case tokAmount, tokDash, tokPct:
+			return true
+		}
+	}
+	return false
+}
+
+// cellAt reports whether the line prints an amount or a dash in the column
+// whose right edge is edge.
+func (l *pageLine) cellAt(edge int) bool {
+	for _, t := range l.toks {
+		if (t.kind == tokAmount || t.kind == tokDash) && abs(t.end-edge) <= columnTolerance {
 			return true
 		}
 	}

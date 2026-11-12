@@ -69,15 +69,21 @@ five to verify.
    share within 4 characters (measured on the samples: within about 3 in a
    column, about 20 between columns); when edges tie (QTD and YTD print the
    same figures in a first quarter), the one under the record's own header
-   wins. The column header nearest that edge must be the record's column
-   label, matched as a whole header on a header row (a line of two or more
-   phrases with no cells; a one-phrase line counts only in a one-column
-   table), so a title or prose that merely contains the label confirms
-   nothing. A column is verified only on the amounts' own page: a column
+   wins. The table is bound from the page: its column header row is the
+   first header row (two or more phrases, no cells; one phrase only in a
+   one-column table) within six lines above its first row with no table
+   row between, and the header nearest the edge on that row must be the
+   record's column label, matched whole. A heading anywhere else on the
+   page, or prose containing the label, confirms nothing. A column is verified only on the amounts' own page: a column
    header, or a roll-forward amount, cited on another page than the ending
-   fails (`column_unverified`). The ending must be the closing balance: its
-   row below the beginning and every movement, its label not an opening
-   balance's (`ending_not_closing`). Names (investor, fund, period label,
+   fails (`column_unverified`). The ending must be the closing balance,
+   established from the printed table rather than from what was submitted:
+   its label not an opening balance's, its row below the beginning and
+   every movement, and no row after it printing a cell in the column
+   before the table ends at the first line with no cells
+   (`ending_not_closing`); and every row between the beginning and the
+   ending that prints a cell in the column must be submitted
+   (`row_not_submitted`). Names (investor, fund, period label,
    currency evidence) are matched keeping every digit; only labels and
    headers drop a glued footnote reference.
 5. **Check 4 is decided from the page, not the record's claim.** The total
@@ -87,7 +93,8 @@ five to verify.
    fund total, the general partner or all partners groups the ending line's
    columns: in order when they divide evenly among its phrases, otherwise
    each column to the nearest phrase; an ending under a fund phrase fails.
-   A one-phrase such heading heads the whole table, which fails
+   Any other such heading above the table (one phrase, or beyond those four
+   lines) leaves the table's ownership unverified, which fails
    (`fund_table`). The record's claimed section plays no part in finding
    the groups. When a total-over-all-partners header is printed, an
    ending that is the largest of the distinct balances on its line fails
@@ -100,8 +107,9 @@ five to verify.
    A record with no roll-forward when the page prints a beginning balance
    fails check 2 (`roll_forward_omitted`) rather than earning check 7's
    warning, so omitting the roll-forward cannot turn an error into a
-   warning. Check 3 finds the ending's copies itself: every other line in
-   the document printing the ending's label must agree, an error on a page
+   warning. Check 3 finds the ending's copies itself: every other
+   occurrence in the document of the ending's label (including one sharing
+   the ending's layout line) must agree, an error on a page
    the record cites or that names the investor, else a warning (it may be
    another investor's statement in the same PDF, E-4). Check 5 accepts a label with a period phrase, a date range, or
    a date standing alone on its line, and rejects a date with a time of

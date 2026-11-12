@@ -180,31 +180,98 @@ func (v *verifier) chooseColumn(col []*columnAmount, ending *columnAmount) {
 	}
 }
 
-// checkClosing establishes that the ending is the period's closing
-// balance: its row is printed below the beginning and every movement, and
-// it is not labeled as an opening balance. Otherwise the opening row could
-// be submitted as the ending with no movements, and the roll-forward would
-// tie trivially.
+// checkClosing establishes from the printed table that the ending is the
+// period's closing balance, whatever the record submitted:
+//
+//   - its label is not an opening balance's;
+//   - its row is below the beginning and every submitted movement;
+//   - every row between the beginning and the ending that prints a cell in
+//     the chosen column was submitted (an omitted movement could otherwise
+//     make an intermediate subtotal look closing);
+//   - no row after it prints a cell in the chosen column before the table
+//     ends, at the first line with no cells at all (a heading, a footnote).
 func (v *verifier) checkClosing(col []*columnAmount, ending *columnAmount) {
+	fail := func(format string, args ...any) {
+		v.add(CheckRollForward, Error, "ending_not_closing", "ending", v.rec.Ending.Page, format, args...)
+	}
 	if beginningLabel.MatchString(foldPunct(v.rec.Ending.Label)) {
-		v.add(CheckRollForward, Error, "ending_not_closing", "ending", v.rec.Ending.Page,
-			"the ending's label %q is an opening balance's", v.rec.Ending.Label)
+		fail("the ending's label %q is an opening balance's", v.rec.Ending.Label)
 		return
 	}
 	if ending.chosen == nil {
 		return
 	}
+	end := ending.chosen.hit.line.index
+	submitted := map[int]bool{end: true}
 	for _, c := range col {
 		if c == ending || c.chosen == nil {
 			continue
 		}
-		if c.chosen.hit.line.index >= ending.chosen.hit.line.index {
-			v.add(CheckRollForward, Error, "ending_not_closing", "ending", v.rec.Ending.Page,
-				"the ending %q is printed at or above %s %q; the closing balance comes after the roll-forward",
+		submitted[c.chosen.hit.line.index] = true
+		if c.chosen.hit.line.index >= end {
+			fail("the ending %q is printed at or above %s %q; the closing balance comes after the roll-forward",
 				v.rec.Ending.Label, c.subject, c.amount.Label)
 			return
 		}
 	}
+	allChosen := true
+	for _, c := range col {
+		allChosen = allChosen && c.chosen != nil
+	}
+	// Coverage is judged only when every submitted amount was found in the
+	// column; otherwise grounding has already failed the record.
+	if v.beginningLine >= 0 && allChosen {
+		if row, ok := v.unsubmittedRow(v.beginningLine, end, submitted); ok {
+			v.add(CheckRollForward, Error, "row_not_submitted", "", v.rec.Ending.Page,
+				"the row %q between the beginning and the ending prints an amount in the column but is not in the record; submit every row (a subtotal as kind \"subtotal\")", row)
+			return
+		}
+	}
+	if row, ok := v.rowAfter(end); ok {
+		fail("the row %q after the ending prints an amount in the same column; the closing balance is the table's last row", row)
+	}
+}
+
+// unsubmittedRow returns the first row strictly between from and to that
+// prints a cell in the chosen column and is not submitted.
+func (v *verifier) unsubmittedRow(from, to int, submitted map[int]bool) (string, bool) {
+	p := v.pages[v.rec.Ending.Page]
+	for li := from + 1; li < to; li++ {
+		if l := &p.lines[li]; l.cellAt(v.edge) && !submitted[li] {
+			return strings.TrimSpace(l.text), true
+		}
+	}
+	return "", false
+}
+
+// rowAfter returns the first row after line end, before the table ends at a
+// line with no cells, that prints a cell in the chosen column.
+func (v *verifier) rowAfter(end int) (string, bool) {
+	p := v.pages[v.rec.Ending.Page]
+	for li := end + 1; li < len(p.lines); li++ {
+		l := &p.lines[li]
+		switch {
+		case strings.TrimSpace(l.text) == "":
+		case l.cellAt(v.edge):
+			return strings.TrimSpace(l.text), true
+		case !l.hasCells():
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// tableTop returns the line of the table's first submitted row at edge:
+// the beginning's, else the given line.
+func (v *verifier) tableTop(col []*columnAmount, edge, line int) int {
+	for _, c := range col {
+		if c.amount == v.rec.Beginning {
+			if b := nearest(c.hits, edge); b != nil && b.hit.line.index < line {
+				return b.hit.line.index
+			}
+		}
+	}
+	return line
 }
 
 // bestEdge returns the seed edge the most column amounts have a candidate
@@ -218,7 +285,7 @@ func (v *verifier) bestEdge(seeds []candidate, col []*columnAmount) (edge int, o
 				n++
 			}
 		}
-		_, header := v.headerAt(s.tok.end, len(columnsOf(s.hit.run)))
+		_, header := v.headerAt(s.tok.end, v.tableTop(col, s.tok.end, s.hit.line.index), len(columnsOf(s.hit.run)))
 		if n > bestN || (n == bestN && header && !bestHeader) {
 			edge, bestN, bestHeader = s.tok.end, n, header
 		}
@@ -239,27 +306,28 @@ func nearest(cs []candidate, edge int) *candidate {
 	return best
 }
 
-// headerAt looks at the header lines that print the record's column label
-// as a whole header (a phrase equal to it, not merely containing it), and
-// reports whether, on one of them, the header nearest edge is that label.
-// When it is on none, nearestText is the header that was nearest instead
-// ("" when no line prints the label as a header). Column headers come in
-// rows, so a line with one phrase (a title) counts only when the table has
-// a single column (cols), where no other column could have been read.
-func (v *verifier) headerAt(edge, cols int) (nearestText string, ok bool) {
+// headerAt finds the table's column header row, the first header row
+// above its first row (top) with no table row between, and reports whether
+// the header nearest edge on it is the record's column label, matched as a
+// whole header (a phrase equal to it). A header row has two or more
+// phrases and no cells; a one-phrase line counts only when the table has a
+// single column (cols). Otherwise nearestText is the header that is
+// nearest instead, or "" when the table has no header row: a heading
+// elsewhere on the page proves nothing about this table.
+func (v *verifier) headerAt(edge, top, cols int) (nearestText string, ok bool) {
 	c := v.rec.Column
 	p := v.pages[c.Page]
 	if p == nil || c.Page != v.rec.Ending.Page {
 		return "", false
 	}
 	want := normWords(c.Label)
-	for li := range p.lines {
+	for li := top - 1; li >= 0 && li >= top-headerWindow; li-- {
 		l := &p.lines[li]
 		if l.hasCells() {
-			continue
+			return "", false // a row of another table: this one has no header row
 		}
 		phs := l.phrases()
-		if (len(phs) < 2 && cols > 1) || !slices.ContainsFunc(phs, func(ph phrase) bool { return slices.Equal(ph.norm, want) }) {
+		if len(phs) == 0 || (len(phs) < 2 && cols > 1) {
 			continue
 		}
 		best := 0
@@ -271,10 +339,14 @@ func (v *verifier) headerAt(edge, cols int) (nearestText string, ok bool) {
 		if slices.Equal(phs[best].norm, want) {
 			return "", true
 		}
-		nearestText = phs[best].text
+		return phs[best].text, false
 	}
-	return nearestText, false
+	return "", false
 }
+
+// headerWindow is how many lines above the table's first row the column
+// header row may be (titles and blank lines between).
+const headerWindow = 6
 
 // checkColumnHeader confirms that the column the amounts sit in is the one
 // the record names: on a header line printing the column label, the header
@@ -292,15 +364,19 @@ func (v *verifier) checkColumnHeader() {
 	if !v.hasEdge || v.ending == nil || v.pages[c.Page] == nil {
 		return // the ending was not grounded: already an error
 	}
-	nearestText, ok := v.headerAt(v.edge, len(columnsOf(v.ending.run)))
+	top := v.ending.line.index
+	if v.beginningLine >= 0 {
+		top = v.beginningLine
+	}
+	nearestText, ok := v.headerAt(v.edge, top, len(columnsOf(v.ending.run)))
 	switch {
 	case ok:
 	case nearestText != "":
 		v.add(CheckGrounding, Error, "column_mismatch", "column", c.Page,
 			"the amounts sit under %q, not under the column the record names, %q", nearestText, c.Label)
-	case v.pages[c.Page].containsText(c.Label):
+	default:
 		v.add(CheckGrounding, Error, "column_not_header", "column", c.Page,
-			"%q is not printed as a column header on page %d; name the header exactly as printed", c.Label, c.Page)
+			"no header row directly above the table names %q; name the column header exactly as printed", c.Label)
 	}
 }
 
@@ -347,8 +423,9 @@ func columnsOf(run []token) []int {
 // all partners. With two or more phrases ("Limited Partner   Total Fund
 // (Including GP)") it maps the ending line's columns onto its phrases: in
 // order when they divide evenly among them, else each to the nearest
-// phrase. With one phrase it heads the whole table, and the table is the
-// fund's (fundTable). The record's claimed section plays no part.
+// phrase. Any other fund heading above the table (one phrase, or beyond the
+// window) leaves its ownership unverified (fundTable), which fails check 4.
+// The record's claimed section plays no part.
 func (v *verifier) findSection() {
 	if v.ending == nil {
 		return
@@ -360,7 +437,7 @@ func (v *verifier) findSection() {
 	}
 	cols := columnsOf(v.ending.run)
 	seen := 0
-	for li := top - 1; li >= 0 && seen < sectionWindow; li-- {
+	for li := top - 1; li >= 0; li-- {
 		l := &p.lines[li]
 		if strings.TrimSpace(l.text) == "" {
 			continue
@@ -369,15 +446,16 @@ func (v *verifier) findSection() {
 		if l.hasCells() || !fundHeader.MatchString(l.text) {
 			continue
 		}
-		phs := l.phrases()
-		if len(phs) < 2 {
-			if v.fundTable == "" {
-				v.fundTable = strings.TrimSpace(l.text)
-			}
-			continue
+		if phs := l.phrases(); len(phs) >= 2 && seen <= sectionWindow {
+			v.section = &sectionHeader{phrases: phs, groupOf: groupColumns(phs, cols)}
+			return
 		}
-		v.section = &sectionHeader{phrases: phs, groupOf: groupColumns(phs, cols)}
-		return
+		// A fund or general-partner heading no partner-group row resolves:
+		// one phrase over the table, or anywhere above it. The table's
+		// ownership is then unverified.
+		if v.fundTable == "" {
+			v.fundTable = strings.TrimSpace(l.text)
+		}
 	}
 }
 
@@ -573,8 +651,8 @@ func (v *verifier) discoverRepeats() {
 func (v *verifier) disagreeingCopy(p *pageText, n int) (token, bool) {
 	r := v.rec
 	for _, h := range p.findLabel(r.Ending.Label) {
-		if v.ending != nil && h.line == v.ending.line {
-			continue
+		if v.ending != nil && h.line == v.ending.line && h.at == v.ending.at {
+			continue // the selected occurrence; check 3 checks its run
 		}
 		for _, t := range h.run {
 			if t.kind != tokAmount {
@@ -626,7 +704,7 @@ func (v *verifier) checkInvestor() {
 	}
 	if v.section == nil && v.fundTable != "" {
 		v.add(CheckInvestor, Error, "fund_table", "ending", r.Ending.Page,
-			"the table is headed %q: its balances are the fund's or a general partner's, not the investor's", v.fundTable)
+			"%q is printed above the table and no partner-group row resolves it: the balances may be the fund's or a general partner's, not the investor's", v.fundTable)
 	}
 	v.checkLargest()
 	if r.FundTotal != nil && r.Ending.Amount.Abs().Cmp(r.FundTotal.Amount.Abs()) >= 0 {

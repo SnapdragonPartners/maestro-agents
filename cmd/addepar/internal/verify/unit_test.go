@@ -237,7 +237,8 @@ func TestColumnLabelOnlyInProse(t *testing.T) {
 	rec := simpleRecord(t)
 	rec.Period.Label = "For the quarter ended March 31, 2026"
 	res := verify.Verify(simpleDoc(page), rec)
-	if !slices.Contains(ids(res, verify.Error), "1/column_not_header/column") {
+	// The table's own header row says QTD; the prose mention confirms nothing.
+	if !slices.Contains(ids(res, verify.Error), "1/column_mismatch/column") {
 		t.Fatalf("%s", describe(&res))
 	}
 	rec.Column.Label = "QTD"
@@ -347,4 +348,41 @@ func TestLabelTailDoesNotGround(t *testing.T) {
 	rec := simpleRecord(t)
 	rec.Lines[0].Amount.Amount = decimal.MustParse("-5000")
 	assertError(t, verify.Verify(simpleDoc(page), rec), "1/amount_not_printed/line 1")
+}
+
+// Codex round 2: the table is bound from the page.
+
+func TestIntermediateSubtotalAsEnding(t *testing.T) {
+	page := strings.Replace(simplePage, "Fees                               (101)\n",
+		"Fees                               (101)\nCapital before gains            104,899\n", 1)
+	rec := simpleRecord(t)
+	rec.Lines = rec.Lines[:2]
+	rec.Ending = statement.Amount{Label: "Capital before gains", Amount: decimal.MustParse("104899"), Page: 1}
+	assertError(t, verify.Verify(simpleDoc(usd(page)), rec), "2/ending_not_closing/ending")
+}
+
+func TestOmittedRow(t *testing.T) {
+	rec := simpleRecord(t)
+	rec.Lines = append(rec.Lines[:1], rec.Lines[2:]...) // drop Fees
+	rec.Ending.Amount = decimal.MustParse("107000")
+	page := strings.Replace(simplePage, "106,899", "107,000", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), rec), "2/row_not_submitted")
+}
+
+func TestFundHeadingBeyondWindow(t *testing.T) {
+	page := strings.Replace(simplePage, "                              Quarter\n",
+		"                    Total Fund (Including GP)\n            Unaudited\n            Statement\n            Detail\n                              Quarter\n", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "4/fund_table/ending")
+}
+
+func TestSideBySideEndingCopies(t *testing.T) {
+	page := strings.Replace(simplePage, "Ending Balance                  106,899\n",
+		"Ending Balance                  106,899        Ending Balance     999,999\n", 1)
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "3/ending_disagrees/page 1")
+}
+
+func TestHeaderBoundToTable(t *testing.T) {
+	page := strings.Replace(simplePage, "                              Quarter\n", "                                YTD\n", 1)
+	page += "\n                              Quarter\n"
+	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "1/column_mismatch/column")
 }
