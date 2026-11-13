@@ -134,7 +134,8 @@ five to verify.
    coefficient and a scale) keeps the precision printed; amounts are JSON
    strings, and a JSON number is refused (N-4).
 9. **The exporter is the last gate.** It refuses a record with no named
-   approver, a review action that does not record who, when and why, an
+   approver, a review action that does not record its kind, who, when and
+   why (or an acceptance that names no warning), an
    approval older than a later review action, a verification
    error (in its findings, its verdict or any check's status), an unaccepted warning, or a text cell beginning with a formula
    character. Rows sort by owner, asset, date and currency, so the same

@@ -465,6 +465,8 @@ func TestCheckNames(t *testing.T) {
 		}
 		seen[name] = true
 	}
+	// The intake requirements define seven checks; adding one changes them,
+	// so this pin fails on purpose and is updated with the requirements.
 	if verify.CheckCount != 7 || verify.CheckName(verify.CheckCount+1) != "check_8" {
 		t.Fatalf("CheckCount = %d", verify.CheckCount)
 	}

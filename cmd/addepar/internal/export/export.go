@@ -215,7 +215,7 @@ func gateVerified(r *Record) []string {
 	}
 	accepted := map[string]bool{}
 	for _, a := range r.Reviews {
-		if a.Kind == AcceptWarning && strings.TrimSpace(a.By) != "" && !a.At.IsZero() && strings.TrimSpace(a.Reason) != "" {
+		if a.Kind == AcceptWarning && reviewFault(a) == "" {
 			accepted[a.Finding] = true
 		}
 	}
@@ -234,14 +234,23 @@ func gateVerified(r *Record) []string {
 func gateReviews(r *Record) []string {
 	var out []string
 	for i, a := range r.Reviews {
-		switch {
-		case strings.TrimSpace(a.By) == "", a.At.IsZero(), strings.TrimSpace(a.Reason) == "", a.Kind == "":
-			out = append(out, fmt.Sprintf("review action %d does not record its kind, who, when and why", i+1))
-		case a.Kind == AcceptWarning && strings.TrimSpace(a.Finding) == "":
-			out = append(out, fmt.Sprintf("review action %d accepts no named warning", i+1))
+		if fault := reviewFault(a); fault != "" {
+			out = append(out, fmt.Sprintf("review action %d %s", i+1, fault))
 		}
 	}
 	return out
+}
+
+// reviewFault is the one rule for a complete review action: "" when it
+// records its kind, who, when and why, and an acceptance names its warning.
+func reviewFault(a ReviewAction) string { //nolint:gocritic // hugeParam: called per action, rarely
+	switch {
+	case strings.TrimSpace(a.By) == "", a.At.IsZero(), strings.TrimSpace(a.Reason) == "", a.Kind == "":
+		return "does not record its kind, who, when and why"
+	case a.Kind == AcceptWarning && strings.TrimSpace(a.Finding) == "":
+		return "accepts no named warning"
+	}
+	return ""
 }
 
 // gateOutcome checks the recorded verdict and check statuses.

@@ -39,7 +39,8 @@ const (
 	CheckCurrency
 	CheckPartial
 	// checkEnd follows the last check; a check added before it raises
-	// CheckCount with it.
+	// CheckCount with it (and must update TestCheckNames, which pins the
+	// intake requirements' seven checks on purpose).
 	checkEnd
 )
 
