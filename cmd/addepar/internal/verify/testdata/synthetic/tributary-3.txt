@@ -1,0 +1,44 @@
+                                                                                  1 Sample Plaza
+                                                                                    Anytown, CA 00000
+                                                                                               tributary.example
+
+                             DOCUMENT CONTAINS
+                                CONFIDENTIAL
+                   PROPRIETARY OR TRADE SECRET INFORMATION
+                  Financial information specific to the fund and/or the investor
+
+INVESTORID#X207                                                                        X207
+<<<page>>>
+                                                        Tributary Fund 3, LP
+                                                Statement of Partner's Capital Account
+                                                     Period Ended March 31, 2026
+                                                      (Estimated and Unaudited)
+                                                 Investment Summary as of 03/31/2026
+
+Limited Partner:                                            Sample Partners VII, LLC
+Committed Capital:                                    $               4,000,000
+Percentage of Partnership:                                                1.40%
+Capital Called:                                       $               3,260,000
+Uncalled Commitment:                                  $                 740,000
+Amount Over/(Under) Paid                              $                     -
+
+                                              Capital Account since inception to 03/31/2026
+                                                              Quarter to Date                 Year to Date                   Inception to Date
+Opening Balance                                       $              3,062,582      $               3,062,582    $                          -
+   Contributed capital                                ##                 40,000     ##                40,000     ##                  3,260,000
+   Transfer                                                                   0                            0     ##                          0
+   Syndications costs                                                        -                            -      ##                       (611)
+   Interest income                                    ##                   1,300    ##                  1,300    ##                     28,762
+   Other income                                       ##                  18,187    ##                 18,187    ##                     54,294
+   Management fee                                     ##                 (24,490)   ##                (24,490)   ##                   (583,929)
+   Management fee savings                             ##                    (510)   ##                   (510)   ##                    (12,166)
+   Professional fees and other expenses               ##                  (1,776)   ##                 (1,776)   ##                    (38,298)
+         Net investment income/(loss)                 ##                  (7,289)   ##                 (7,289)   ##                   (551,337)
+   Net realized gain/(loss) on investments             ##                (5,669)    ##                (5,669)    ##                    224,770
+   Net change in unrealized gain/(loss) on investments ##             2,948,715     ##             2,948,715     ##                  4,437,342
+   Distributions - Cash                                                      -                            -      ##                   (444,600)
+   Distributions - In-kind                                                   -                            -      ##                   (887,226)
+Ending Balance                                        $               6,038,338     $              6,038,338     $                   6,038,338
+
+INVESTORID#X207
+   Totals may not foot due to rounding.

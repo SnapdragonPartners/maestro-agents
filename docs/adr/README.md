@@ -49,3 +49,4 @@ template.
 | [0012](0012-namespace-confinement.md) | Namespace confinement | Accepted |
 | [0013](0013-skills-and-prompt-templates.md) | Skills and prompt templates | Accepted |
 | [0014](0014-model-client-and-attempt-admission.md) | The model client and attempt-level admission | Accepted |
+| [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Accepted |

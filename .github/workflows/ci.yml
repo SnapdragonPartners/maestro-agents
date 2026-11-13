@@ -55,6 +55,12 @@ jobs:
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@${{ env.GOLANGCI_VERSION }}
           go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
 
+      # The intake agent's document service runs Poppler's pdftotext and
+      # pdfinfo; its PDF tests skip without them locally, and fail here
+      # (ADDEPAR_REQUIRE_POPPLER) so CI never skips them silently.
+      - name: Install Poppler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+
       - name: Download dependencies
         run: go mod download
 
@@ -71,4 +77,6 @@ jobs:
         run: make vuln
 
       - name: Test
+        env:
+          ADDEPAR_REQUIRE_POPPLER: "1"
         run: make test

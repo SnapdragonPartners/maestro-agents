@@ -1,0 +1,25 @@
+{
+  "statement": "meridian-au.txt",
+  "record": {
+    "investor": {"text": "Example Holdings IV, LLC", "page": 1},
+    "fund": {"text": "Meridian Pacific Fund III", "page": 1},
+    "period": {"end": "2026-03-31", "label": "For the quarter ended 31 March 2026", "page": 1},
+    "currency": {"code": "AUD", "evidence": "All amounts are in Australian dollars (AUD)", "page": 1},
+    "precision": "cents",
+    "column": {"label": "Quarter", "reason": "the quarter column", "page": 1},
+    "beginning": {"label": "Opening capital balance", "amount": "6840115.20", "page": 1},
+    "lines": [
+      {"kind": "movement", "label": "Capital called", "amount": "150000.00", "page": 1},
+      {"kind": "movement", "label": "Distributions", "amount": "-210450.00", "page": 1},
+      {"kind": "movement", "label": "Fees and expenses", "amount": "-41872.36", "page": 1},
+      {"kind": "movement", "label": "Net change in fair value", "amount": "171872.32", "page": 1}
+    ],
+    "ending": {"label": "Closing capital balance", "amount": "6909665.16", "page": 1}
+  },
+  "expect": {"verdict": "pass", "warnings": []},
+  "answer": "6909665.16",
+  "mutations": [
+    {"name": "USD claimed over AUD evidence", "exact": true, "fail": [6], "set": {"currency.code": "USD"}},
+    {"name": "USD claimed with no evidence", "exact": true, "fail": [6], "set": {"currency": {"code": "USD"}}}
+  ]
+}

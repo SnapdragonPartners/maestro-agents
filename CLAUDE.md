@@ -21,11 +21,14 @@ the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
 confinement, skills and prompt templates, and the model client with
-attempt-level budget admission (`agent/`); the intake agent comes next. The requirements are in
+attempt-level budget admission (`agent/`). The intake agent,
+`cmd/addepar`, has begun with its verifier and exporter (no model, no
+store yet; ADR 0015); the standalone host comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0014; further design arrives with the code, each piece with its ADR.
+0014, the intake agent's own design ADR 0015 onward; further design
+arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -113,6 +116,16 @@ Load-bearing decisions so far:
   prompt) and whose identity follows their content; `Env.Render`
   renders a template
   ([ADR 0013](docs/adr/0013-skills-and-prompt-templates.md))
+- The intake agent (`cmd/addepar`) verifies every record in code against
+  the PDF's layout-mode text (`maestro-cms`' pdftotext, Poppler): the seven
+  checks, with check 4 decided from the page's column headers, never the
+  record's claim; a copy-restricted PDF is read only under an operator's
+  recorded acceptance, asked at intake; the exporter refuses anything not
+  approved, verified and accepted, and writes deterministic CSV bytes with
+  an evidence manifest. Real statements are client data and never
+  committed: they live in the gitignored `.local/addepar/`; committed tests
+  use synthetic statements
+  ([ADR 0015](docs/adr/0015-intake-verifier-exporter-and-test-data.md))
 
 ### Related repositories
 
@@ -121,7 +134,7 @@ Sibling checkouts live next to this one (`../<name>`):
 | Repository | Relationship |
 |---|---|
 | `maestro-llms` | Dependency: provider-neutral chat, embeddings, tool loop, limiter |
-| `maestro-cms` | Possible dependency: content ingestion, chunking, embedding, retrieval |
+| `maestro-cms` | Dependency: the intake agent's PDF text layer (`pdftotext` layout mode); content ingestion, chunking, embedding and retrieval as needed |
 | `buggrit` | Source of elements to incorporate; also reviews this repo's PRs |
 | `maestro` | Source of elements to incorporate; an orchestrator that manages agents |
 | `morris` | Its planned orchestration layer will manage agents; this workflow follows Morris's |
@@ -186,7 +199,10 @@ store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5 and TEST-6 included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
-cmd/<agent>/         # (planned) Standalone agent executables
+cmd/addepar/         # The capital-statement intake agent (ADR 0015): `verify` command; internal/ holds
+                     #   decimal, document (hash, pdfinfo, layout text), statement (the record),
+                     #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs)
+.local/              # Gitignored machine-local data; .local/addepar/ holds the real sample statements
 docs/requirements.md # Library requirements (input to the design ADRs)
 docs/MVP.md          # MVP scope: what the MVP builds, what is deferred
 docs/adr/            # Architecture Decision Records
@@ -200,8 +216,8 @@ API takes shape; update this section in the PR that adds them.
 ## Makefile Targets
 
 - `make build` — Compile all packages, and build each `cmd/<agent>` to `bin/<agent>`
-- `make test` — Unit tests with the race detector and coverage (no network, no keys)
-- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites)
+- `make test` — Unit tests with the race detector and coverage (no network, no keys; the intake agent's PDF tests need Poppler's `pdftotext` and `pdfinfo` and skip without them, except in CI, which sets `ADDEPAR_REQUIRE_POPPLER`)
+- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites; the intake agent's real-sample tests read `.local/addepar/`)
 - `make lint` — `go vet` + `golangci-lint run` (read-only; also checks formatting and imports)
 - `make vuln` — `govulncheck ./...`
 - `make test-coverage` — HTML coverage report in `coverage/`

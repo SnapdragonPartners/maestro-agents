@@ -1,0 +1,35 @@
+{
+  "statement": "brightwater-iv.txt",
+  "copy_restricted": true,
+  "override": {"by": "test operator", "at": "2026-11-12T09:00:00Z", "reason": "our own statement, read for verification only"},
+  "record": {
+    "investor": {"text": "Example Holdings IV LLC", "page": 1},
+    "fund": {"text": "Brightwater Ventures Fund IV, LP", "page": 1},
+    "period": {"end": "2026-03-31", "label": "01/01/2026 - 03/31/2026", "page": 1},
+    "currency": {"code": "USD"},
+    "precision": "whole",
+    "column": {"label": "Quarter-To-Date", "reason": "the period-to-date column", "page": 1},
+    "dash_zero": "the administrator prints a dash for no activity in every column",
+    "beginning": {"label": "Beginning Balance", "amount": "214906", "page": 1},
+    "lines": [
+      {"kind": "movement", "label": "Capital Contributions", "amount": "90000", "page": 1},
+      {"kind": "movement", "label": "Distributions", "amount": "0", "page": 1},
+      {"kind": "movement", "label": "Realized Gain/(Loss)", "amount": "0", "page": 1},
+      {"kind": "movement", "label": "Unrealized Gain/(Loss)", "amount": "-870", "page": 1},
+      {"kind": "movement", "label": "Syndication Costs", "amount": "1044", "page": 1},
+      {"kind": "movement", "label": "Management Fees", "amount": "-12503", "page": 1},
+      {"kind": "movement", "label": "Income and Expense Allocation", "amount": "-4165", "page": 1},
+      {"kind": "subtotal", "label": "Total Profit & Loss", "amount": "-16494", "page": 1}
+    ],
+    "ending": {"label": "Ending Balance", "amount": "288412", "page": 1},
+    "repeats": [{"label": "Current Capital Balance", "amount": "288412", "page": 1}]
+  },
+  "expect": {"verdict": "warn", "warnings": ["6/not_stated/currency"]},
+  "answer": "288412",
+  "mutations": [
+    {"name": "dash read as zero without the convention", "exact": true, "fail": [1], "set": {"dash_zero": null}},
+    {"name": "summary box disagrees", "exact": true, "fail": [1, 3], "set": {"repeats.0.amount": "288421"}},
+    {"name": "subtotal summed as a movement", "exact": true, "fail": [2], "set": {"lines.7.kind": "movement"}},
+    {"name": "commitment taken as the ending", "fail": [1, 2, 3], "set": {"ending.label": "Total Capital Commitment", "ending.amount": "2000000"}}
+  ]
+}

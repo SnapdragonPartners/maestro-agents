@@ -1,0 +1,22 @@
+{
+  "statement": "halyard-ii-inconsistent.txt",
+  "record": {
+    "investor": {"text": "Example Holdings IV, LLC", "page": 1},
+    "fund": {"text": "Halyard Growth Fund II, L.P.", "page": 1},
+    "period": {"end": "2026-03-31", "label": "For the period ending March 31, 2026", "page": 1},
+    "currency": {"code": "USD"},
+    "precision": "cents",
+    "column": {"label": "Quarter to Date", "reason": "the period-to-date column; one investor", "page": 1},
+    "beginning": {"label": "Opening Balance", "amount": "604211.40", "page": 1},
+    "lines": [
+      {"kind": "movement", "label": "Capital Contribution", "amount": "125000.00", "page": 1},
+      {"kind": "movement", "label": "Syndication Costs", "amount": "12.08", "page": 1},
+      {"kind": "movement", "label": "Management Fee", "amount": "-15302.17", "page": 1},
+      {"kind": "movement", "label": "Net Other Income/(Loss)", "amount": "-942.61", "page": 1},
+      {"kind": "movement", "label": "Net Realized Gain/(Loss)", "amount": "0.00", "page": 1},
+      {"kind": "movement", "label": "Net Unrealized Gain/(Loss)", "amount": "1781.95", "page": 1}
+    ],
+    "ending": {"label": "Capital Balance, March 31, 2026", "amount": "714760.65", "page": 1}
+  },
+  "expect": {"verdict": "fail", "warnings": ["6/not_stated/currency"], "errors": ["3/ending_disagrees/ending"]}
+}
