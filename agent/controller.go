@@ -37,6 +37,9 @@ type Controller struct {
 	creds    CredentialProvider
 	logger   *slog.Logger
 	retries  int
+	// telemetryTimeout bounds each Sink call: TelemetryTimeout, shortened
+	// only by tests.
+	telemetryTimeout time.Duration
 }
 
 // Option configures a Controller.
@@ -80,7 +83,7 @@ func WithLogger(l *slog.Logger) Option {
 func NewController(s Store, r *Registry, opts ...Option) *Controller {
 	c := &Controller{
 		store: s, registry: r, retries: DefaultConflictRetries, policy: AllowAll,
-		creds: noCredentials, logger: slog.New(slog.DiscardHandler),
+		creds: noCredentials, logger: slog.New(slog.DiscardHandler), telemetryTimeout: TelemetryTimeout,
 	}
 	for _, o := range opts {
 		o(c)

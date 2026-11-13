@@ -24,7 +24,8 @@ type RunContext struct {
 
 // CredentialProvider returns the credential a tool names, for the run
 // context's principal, when the tool executes (TOOL-8, HOST-5). The runtime
-// never records or logs what it returns.
+// never records or logs what it returns. Tools of every run the controller
+// serves call it concurrently, so it must be safe for concurrent use.
 type CredentialProvider func(ctx context.Context, rc *RunContext, name string) (Secret, error)
 
 // ErrNoCredential is returned for a credential the host does not provide,

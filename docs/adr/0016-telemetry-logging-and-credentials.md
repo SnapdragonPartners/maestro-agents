@@ -34,6 +34,30 @@ needs three host seams the library does not have yet:
 The MVP needs no delivery guarantees by kind (DEL-2, deferred), and no
 compaction events (LOOP-5, deferred).
 
+It amends, item by item:
+
+- ADR 0003 item 12 (what `ActivationInput` carries): by item 12, it also
+  carries the run's principal.
+- ADR 0004 item 2 (what `run_started` holds): by item 12, it also records
+  the run's principal.
+- ADR 0006 item 10 (telemetry storage is not in the store interface): by
+  item 7, it arrives as the separate, optional `store.Telemetry`
+  interface, not as an addition to `store.Store`.
+- ADR 0006 item 11 (what `storetest` runs): by item 9, it also checks the
+  `store.Telemetry` contract, for a store that implements it.
+- ADR 0007 item 4 (what the activation input carries): by item 12, the
+  run's principal too.
+- ADR 0007 item 8 (the checkpoint's contents): by item 12, the run's
+  principal too.
+- ADR 0007 item 13 (what `agent.Env` exposes): by items 11 and 12, also
+  the host's logger (`Env.Logger`) and the run context
+  (`Env.RunContext`).
+- ADR 0008 item 3 (what a `Call` carries): by items 12 and 13, also the
+  run context (`Call.RunContext`) and a way to ask for a credential
+  (`Call.Credential`).
+- ADR 0008 item 5 (the policy hook's request): by item 12, it also
+  carries the run context (`PolicyRequest.Run`).
+
 ## Decision
 
 ### Telemetry events
@@ -82,21 +106,32 @@ compaction events (LOOP-5, deferred).
    clears `Detail` before an event leaves. `WithRedactor` installs the
    host's `Redactor`, which receives each full event and edits it in
    place; what it leaves is emitted (HOST-2). So the default fails
-   closed: telemetry carries only IDs, names, counts and codes.
+   closed: telemetry carries only IDs, names, counts and codes. One
+   controller serves many instances concurrently, so the redactor may be
+   called concurrently and must be safe for concurrent use.
 4. **The sink is the host's.** `agent.Sink` has one method,
    `Emit(ctx, []Event) error`, which receives one commit's events per
    call, in sequence order. `WithTelemetry` sets it, and with no sink
-   nothing is emitted. Emission is synchronous, so a sink sees each run's
-   events in order. Its context ends after `TelemetryTimeout` (5 s) and
-   is not cancelled with the activation, so a shutdown still emits the
-   final commit's events. A sink that needs more time buffers on its own.
+   nothing is emitted. Emission is synchronous, so within one activation
+   a sink sees the run's events in order. Across activations it may not:
+   an activation's final commit releases ownership (ADR 0003, item 10)
+   before its events are emitted, so the next owner, in this process or
+   another, can emit later events while that last batch is still in the
+   sink. No fence orders two owners' emissions, so a sink that needs a
+   run's events in order sorts them by sequence; identities make that
+   possible, as they make deduplication possible. `Emit` is called
+   concurrently, for different runs and across a handoff for the same
+   run, so a sink must be safe for concurrent use. Its context ends
+   after `TelemetryTimeout` (5 s) and is not cancelled with the
+   activation, so a shutdown still emits the final commit's events. A
+   sink that needs more time buffers on its own.
 5. **A sink's failure never fails the run.** An error from `Emit`, or a
    panic in it or in the redactor, is logged at warn level with the run,
    the sequence range and the failure's class (`sink_error`,
    `sink_timeout`, `sink_panic`, `redactor_panic`), never the error's text
    or the panic's value, which may quote what the redactor was meant to
-   remove; a panicking redactor's batch is dropped. The activation continues (MODE-7: a failing optional sink
-   is a warning). Whether a sink is required, and failing before the run
+   remove; a panicking redactor's batch is dropped. The activation
+   continues (MODE-7: a failing optional sink is a warning). Whether a sink is required, and failing before the run
    starts if it is, is the host's decision (MODE-7, in the standalone
    host).
 6. **Delivery is best effort.** Two gaps are accepted:
@@ -178,17 +213,20 @@ compaction events (LOOP-5, deferred).
 13. **A tool asks for a credential when it executes.**
     `Call.Credential(ctx, name)` calls the host's `CredentialProvider`
     (set with `WithCredentials`) with the call's run context and the
-    credential's name, and returns a `Secret`. Without a provider every
+    credential's name, and returns a `Secret`. Tools of many runs call it
+    concurrently, so a provider must be safe for concurrent use. Without
+    a provider every
     request fails with `ErrNoCredential`, which the tool handles like any
     failure (as a tool error the model receives, or an error that fails
     the run). The runtime never records or logs a credential.
 14. **`Secret` resists accidental disclosure.** Its value is reached only
     through `Reveal`, and is held behind a pointer, so where `fmt` bypasses
     the methods below (a `Secret` in an unexported struct field, which it
-    prints by reflection) it prints an address, never the value. Its `String`, `GoString`, `Format`, `LogValue` and
-    `MarshalJSON` all render `[redacted]`, so a secret passed by mistake
-    to a log, a format verb or a JSON result (which the execution record
-    stores) does not leak its value. A tool that puts `Reveal()` into a
+    prints by reflection) it prints an address, never the value. Its
+    `String`, `GoString`, `Format`, `LogValue`, `MarshalJSON` and
+    `MarshalText` all render `[redacted]`, so a secret passed by mistake
+    to a log, a format verb, a text encoding or a JSON result (which the
+    execution record stores) does not leak its value. A tool that puts `Reveal()` into a
     result has disclosed it, and the record keeps it: that is the tool's
     defect.
 
@@ -227,9 +265,12 @@ compaction events (LOOP-5, deferred).
 - [docs/requirements.md](../requirements.md): HOST-1, HOST-2, HOST-5,
   TOOL-8, REC-1 to REC-3, STORE-1, DEL-2, MODE-7, LOOP-4, LOOP-5
 - [ADR 0003](0003-run-model-identities-and-activation-results.md), items
-  1 and 14
-- [ADR 0004](0004-execution-record-and-recovery.md), item 15
+  1, 10, 12 and 14
+- [ADR 0004](0004-execution-record-and-recovery.md), items 2 and 15
 - [ADR 0005](0005-storage-one-fenced-commit.md), items 13 and 14
-- [ADR 0006](0006-store-interface.md), item 10
+- [ADR 0006](0006-store-interface.md), items 10 and 11
+- [ADR 0007](0007-agent-types-and-the-run-controller.md), items 4, 8 and
+  13
+- [ADR 0008](0008-model-states.md), items 3 and 5
 - [ADR 0012](0012-namespace-confinement.md): the namespace, which the
   principal follows

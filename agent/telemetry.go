@@ -90,16 +90,26 @@ type Event struct {
 
 // Sink receives telemetry (HOST-1, ADR 0016 item 4). Emit is called once
 // per commit with that commit's events in sequence order, synchronously,
-// with a context that ends after TelemetryTimeout. An error or a panic is
-// logged as a warning and never fails the run (MODE-7); a sink that needs
-// longer buffers on its own.
+// with a context that ends after TelemetryTimeout and is not cancelled with
+// the activation. An error or a panic is logged as a warning and never
+// fails the run (MODE-7); a sink that needs longer buffers on its own.
+//
+// Emit is called concurrently: for different runs, since one controller
+// serves many instances, and for one run across an ownership handoff. An
+// implementation must be safe for concurrent use. Within one activation a
+// run's batches arrive in order; across activations they may not (an
+// activation's final commit releases ownership before its events are
+// emitted), so a sink that needs a run's events in order sorts them by
+// Seq.
 type Sink interface {
 	Emit(ctx context.Context, events []Event) error
 }
 
 // Redactor edits each event before it leaves the run (HOST-2, ADR 0016
 // item 3). It receives the full event, Detail included; what it leaves is
-// emitted. Without one, Detail is cleared.
+// emitted. Without one, Detail is cleared. It is called concurrently, from
+// every activation the controller runs, and must be safe for concurrent
+// use.
 type Redactor func(*Event)
 
 // WithTelemetry sets the telemetry sink. Nil, the default, emits nothing.
@@ -129,7 +139,7 @@ func (a *activation) emit(ctx context.Context, ops []store.Op) {
 	if len(evs) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(durable(ctx), TelemetryTimeout)
+	ctx, cancel := context.WithTimeout(durable(ctx), a.c.telemetryTimeout)
 	defer cancel()
 	if failure := a.deliver(ctx, evs); failure != "" {
 		// The failure is logged by class only: a sink's error or a

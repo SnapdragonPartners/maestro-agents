@@ -117,7 +117,8 @@ PR that defines it:
     blocks it indefinitely, so the window cannot fail a correct store.
     **The suite does not run TEST-5 yet**, which ADR 0005 item 6 assigns
     to it: it runs the operations' semantics, TEST-6's two interleavings
-    and a reopen check. TEST-5 stops an activation at a durable boundary
+    and a reopen check (and, by ADR 0016, the `store.Telemetry` contract
+    for a store that implements it). TEST-5 stops an activation at a durable boundary
     and continues it in a new one, so it needs the execution record's
     runtime, and joins the suite with that runtime.
     **A reopen keeps owners and epochs and never extends a lease**; the
@@ -154,7 +155,9 @@ PR that defines it:
   grows with every key ever written; at the file store's scale this is
   acceptable, and retention tooling comes after the MVP.
 - Telemetry storage, and with it the telemetry record of STORE-1, arrives
-  with the telemetry sink, as an addition to this interface.
+  with the telemetry sink as the separate, optional `store.Telemetry`
+  interface (ADR 0016, item 7), not as an addition to this one; `storetest`
+  checks its contract for a store that implements it.
 
 ## References
 
