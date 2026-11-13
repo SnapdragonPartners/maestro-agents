@@ -62,7 +62,11 @@ type RunStarted struct {
 	// Namespace is the run's object-store namespace (STORE-2, ADR 0012);
 	// empty in the start of a run refused for a namespace that is not
 	// valid UTF-8, which the record cannot hold as passed.
-	Namespace string          `json:"namespace"`
+	Namespace string `json:"namespace"`
+	// Principal is the run's principal (TOOL-8, ADR 0016 item 12); empty
+	// for the host's own authority, and in the start of a run refused for
+	// a principal that is not valid UTF-8.
+	Principal string          `json:"principal,omitempty"`
 	Trigger   json.RawMessage `json:"trigger,omitempty"`
 	Clock
 }
@@ -261,7 +265,9 @@ type checkpointState struct {
 	State        string         `json:"state"`
 	Config       string         `json:"config,omitempty"`
 	// Namespace is the run's object-store namespace (ADR 0012).
-	Namespace string          `json:"namespace"`
+	Namespace string `json:"namespace"`
+	// Principal is the run's principal (ADR 0016, item 12).
+	Principal string          `json:"principal,omitempty"`
 	Data      json.RawMessage `json:"data"`
 	Step      uint64          `json:"step"`
 }

@@ -1,6 +1,6 @@
 # 0006. The store interface
 
-- **Status:** Amended by ADR-0008
+- **Status:** Amended by ADR-0008, ADR-0016
 - **Date:** 2026-11-08
 
 ## Context
@@ -97,7 +97,9 @@ PR that defines it:
    empty, so the two survive every JSON round trip.
 10. **Telemetry storage is not in this interface yet.** Telemetry is
    written by the telemetry sink, not through `Commit` (ADR 0005, item
-   13), and joins with that sink.
+   13), and joins with that sink. (ADR 0016 adds it as the separate,
+   optional `store.Telemetry` interface, which both reference stores
+   implement.)
 
 ### Tests
 

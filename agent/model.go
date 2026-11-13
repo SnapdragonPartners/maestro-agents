@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 	"unicode/utf8"
 
@@ -194,6 +195,27 @@ type Call[D any] struct {
 	WrapUp bool
 }
 
+// RunContext returns the call's run context (TOOL-8, ADR 0016 item 12).
+func (c *Call[D]) RunContext() RunContext { return c.Env.rc }
+
+// Credential asks the host's credential provider for the named credential,
+// for the call's run context, when the tool executes (TOOL-8, ADR 0016
+// item 13). Without a provider it fails with ErrNoCredential. The runtime
+// never records or logs the secret; a tool that puts its value in a result
+// discloses it to the execution record.
+func (c *Call[D]) Credential(ctx context.Context, name string) (Secret, error) {
+	creds := c.Env.creds
+	if creds == nil {
+		creds = noCredentials
+	}
+	rc := c.Env.rc
+	s, err := creds(ctx, &rc, name)
+	if err != nil {
+		return Secret{}, fmt.Errorf("agent: credential %q: %w", name, err)
+	}
+	return s, nil
+}
+
 // Result is a tool's result: what the model receives and, optionally, a
 // transition and object operations.
 type Result[D any] struct {
@@ -274,7 +296,10 @@ type PolicyRequest struct {
 	Identity string
 	Effect   Effect
 	Call     llms.ToolCall
-	Action   ActionID
+	// Run is the call's run context, the key the policy shares with the
+	// credential provider (HOST-5, ADR 0016 item 12).
+	Run    RunContext
+	Action ActionID
 }
 
 // Decision is the policy hook's answer.

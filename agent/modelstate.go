@@ -1076,7 +1076,7 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 	err := guard(func() (err error) {
 		d, err = a.c.policy(ctx, &PolicyRequest{
 			Instance: a.run.Instance, AgentType: a.m.name, State: r.st.name, Tool: call.Name, Identity: tool.identity,
-			Effect: tool.effect, Call: cloneCalls([]llms.ToolCall{*call})[0], Action: action,
+			Effect: tool.effect, Call: cloneCalls([]llms.ToolCall{*call})[0], Action: action, Run: a.runContext(),
 		})
 		return err
 	})

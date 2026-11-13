@@ -38,9 +38,9 @@ template.
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-serial-execution-within-an-agent-instance.md) | Serial execution within an agent instance | Accepted |
 | [0003](0003-run-model-identities-and-activation-results.md) | Run model: identities, stored status and activation results | Amended by ADR-0007, ADR-0012 |
-| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0014 |
+| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016 |
 | [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Amended by ADR-0006, ADR-0012 |
-| [0006](0006-store-interface.md) | The store interface | Amended by ADR-0008 |
+| [0006](0006-store-interface.md) | The store interface | Amended by ADR-0008, ADR-0016 |
 | [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013 |
 | [0008](0008-model-states.md) | Model states | Amended by ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014 |
 | [0009](0009-budgets.md) | Budgets | Amended by ADR-0010, ADR-0011, ADR-0014 |
@@ -50,3 +50,4 @@ template.
 | [0013](0013-skills-and-prompt-templates.md) | Skills and prompt templates | Accepted |
 | [0014](0014-model-client-and-attempt-admission.md) | The model client and attempt-level admission | Accepted |
 | [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Accepted |
+| [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Accepted |

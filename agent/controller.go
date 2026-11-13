@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 	"unicode/utf8"
 
@@ -31,6 +32,10 @@ type Controller struct {
 	store    Store
 	registry *Registry
 	policy   Policy
+	sink     Sink
+	redact   Redactor
+	creds    CredentialProvider
+	logger   *slog.Logger
 	retries  int
 }
 
@@ -58,10 +63,25 @@ func WithPolicy(p Policy) Option {
 	}
 }
 
+// WithLogger sets the logger the runtime, agent types and tools log
+// through (HOST-2, ADR 0016 items 10 and 11). Nil, the default, logs
+// nothing. The runtime's lines carry IDs, names, codes and counts only.
+func WithLogger(l *slog.Logger) Option {
+	return func(c *Controller) {
+		if l == nil {
+			l = slog.New(slog.DiscardHandler)
+		}
+		c.logger = l
+	}
+}
+
 // NewController returns a controller that runs the registry's agent types
 // against s.
 func NewController(s Store, r *Registry, opts ...Option) *Controller {
-	c := &Controller{store: s, registry: r, retries: DefaultConflictRetries, policy: AllowAll}
+	c := &Controller{
+		store: s, registry: r, retries: DefaultConflictRetries, policy: AllowAll,
+		creds: noCredentials, logger: slog.New(slog.DiscardHandler),
+	}
 	for _, o := range opts {
 		o(c)
 	}
@@ -96,6 +116,13 @@ type ActivationInput struct {
 	// is not valid UTF-8, or with one the store refuses, fails with
 	// ReasonConfigError.
 	Namespace string
+	// Principal is the host's opaque name for whose authority the run acts
+	// under (TOOL-8, ADR 0016 item 12), carried in every tool call's run
+	// context. It is recorded when the run starts and fixed for the run: a
+	// later activation ignores this field. Empty means the host's own
+	// authority; one that is not valid UTF-8 fails the start with
+	// ReasonConfigError.
+	Principal string
 	// Budgets are the run's budgets (BUD-1, ADR 0009), recorded when the
 	// run starts and fixed for the run: a later activation ignores this
 	// field. A zero token, turn or active-time budget takes the agent
@@ -124,8 +151,10 @@ type ActivationInput struct {
 func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome, error) { //nolint:gocritic // hugeParam: the input is passed by value, as ADR 0003 item 12 shows
 	a, err := c.begin(ctx, &in)
 	if err != nil {
+		c.logger.Error("agent: activation refused", "run", in.Scope.ID, "instance", in.Fence.Instance, "error", err)
 		return Outcome{}, err
 	}
+	c.logger.Info("agent: activation started", "run", a.run.ID, "instance", a.run.Instance, "agent_type", a.run.AgentType, "epoch", a.fence.Epoch)
 	ctx, stop := a.clocks(ctx)
 	defer stop()
 	e := a.start(ctx, in.Config)
@@ -139,6 +168,7 @@ func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome,
 			e = a.step(ctx)
 		}
 	}
+	a.logEnd(e)
 	return e.out, e.err
 }
 
@@ -163,6 +193,9 @@ type activation struct {
 	// namespace is the run's object-store namespace (ADR 0012): the
 	// host's until the run's start lands, then the recorded one.
 	namespace string
+	// principal is the run's principal (ADR 0016, item 12), fixed when
+	// the run started.
+	principal string
 	run       store.Run
 	cs        checkpointState
 	// budgets are the run's budgets; used is what it has consumed of them
@@ -228,7 +261,7 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 	}
 	a := &activation{
 		c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1, client: in.Client, maxSteps: max(in.MaxSteps, 0),
-		namespace: in.Namespace,
+		namespace: in.Namespace, principal: in.Principal,
 		// A run not yet started takes the agent type's defaults for the
 		// budgets the host leaves unset (ADR 0011, item 7), here, before
 		// the activation's clocks are installed from them; a started run
@@ -331,6 +364,7 @@ func (a *activation) restore(ctx context.Context, c *store.Checkpoint) error {
 		return refuse("run %q checkpoint %d records no namespace (ADR 0012)", a.run.ID, c.Seq)
 	}
 	a.namespace = a.cs.Namespace
+	a.principal = a.cs.Principal
 	if a.cs.Config != "" {
 		_, cfg, err := a.c.store.Artifact(durable(ctx), a.cs.Config)
 		if err != nil {
@@ -351,7 +385,12 @@ func (a *activation) env() *Env {
 	if a.model != nil {
 		point = &a.model.point
 	}
-	return &Env{reader: a.c.store, templates: a.m.templates, namespace: a.namespace, config: a.config, run: a.run, state: state, step: a.step1(), budget: a.budgetStatus(point)}
+	return &Env{
+		reader: a.c.store, templates: a.m.templates, namespace: a.namespace, config: a.config, run: a.run, state: state,
+		step: a.step1(), budget: a.budgetStatus(point),
+		logger: a.c.logger.With("run", a.run.ID, "instance", a.run.Instance, "state", state),
+		creds:  a.c.creds, rc: a.runContext(),
+	}
 }
 
 // step1 is the current step: the checkpoint's next step, or 1 before the
@@ -365,6 +404,7 @@ func (a *activation) commit(ctx context.Context, ops []store.Op, next uint64) er
 		return err //nolint:wrapcheck // the caller classifies the store's error (ADR 0005, item 3)
 	}
 	a.nextEntry = next
+	a.emit(ctx, ops)
 	return nil
 }
 
@@ -481,6 +521,7 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	}
 	a.start1 = start
 	start.entry.Namespace = recordable(a.namespace)
+	start.entry.Principal = recordable(a.principal)
 	// The run's inputs are prepared before anything can refuse them, so a
 	// start that fails records them (REC-1). a.budgets already holds the
 	// agent type's defaults (begin).
@@ -497,7 +538,7 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 		start.entry.Config = hex.EncodeToString(sum[:])
 		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
 	}
-	if e := a.checkNamespace(ctx); e != nil {
+	if e := a.checkHostInputs(ctx); e != nil {
 		return e
 	}
 	if !a.m.triggers[a.run.TriggerKind] {
@@ -535,7 +576,7 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	}
 	cs := checkpointState{
 		AgentType: a.m.name, AgentVersion: a.m.version, State: a.m.initial, Data: data, Step: 1, Config: start.entry.Config,
-		Budgets: budgets, Namespace: a.namespace,
+		Budgets: budgets, Namespace: a.namespace, Principal: a.principal,
 	}
 	b := a.entries()
 	start.add(b)
@@ -551,13 +592,16 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	return nil
 }
 
-// checkNamespace checks the run's namespace before its start (ADR 0012,
-// item 5): a namespace that is missing or that the store refuses fails the
-// run with config_error, the host's configuration to fix; a store failure
-// ends the activation with an error. It returns nil if the namespace is
+// checkHostInputs checks the run's namespace and principal before its
+// start (ADR 0012 item 5, ADR 0016 item 12): a namespace that is missing
+// or that the store refuses, or a principal that is not valid UTF-8, fails
+// the run with config_error, the host's configuration to fix; a store
+// failure ends the activation with an error. It returns nil if both are
 // usable.
-func (a *activation) checkNamespace(ctx context.Context) *ending {
+func (a *activation) checkHostInputs(ctx context.Context) *ending {
 	switch {
+	case !utf8.ValidString(a.principal):
+		return a.fail(ctx, ReasonConfigError, "principal is not valid UTF-8 (ADR 0016)")
 	case a.namespace == "":
 		return a.fail(ctx, ReasonConfigError, "the host assigned no object-store namespace (STORE-2, ADR 0012)")
 	case !utf8.ValidString(a.namespace):
@@ -854,4 +898,16 @@ func guard(fn func() error) (err error) {
 		}
 	}()
 	return fn()
+}
+
+// logEnd logs the activation's end (ADR 0016, item 10): the outcome's
+// status and reason code, never its detail.
+func (a *activation) logEnd(e *ending) {
+	if e.err != nil {
+		a.c.logger.Error("agent: activation ended without a confirmed outcome",
+			"run", a.run.ID, "instance", a.run.Instance, "error", e.err)
+		return
+	}
+	a.c.logger.Info("agent: activation ended", "run", a.run.ID, "instance", a.run.Instance,
+		"status", string(e.out.Status), "reason", e.out.Reason.Code, "steps", e.out.Steps)
 }
