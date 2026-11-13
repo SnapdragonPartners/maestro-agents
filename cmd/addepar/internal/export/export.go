@@ -188,6 +188,7 @@ func gate(r *Record) []string {
 	if err := r.Record.Validate(); err != nil {
 		return append(out, err.Error())
 	}
+	out = append(out, gateReviews(r)...)
 	out = append(out, gateVerified(r)...)
 	out = append(out, gateApproved(r)...)
 	for _, cell := range textCells(r) {
@@ -214,13 +215,30 @@ func gateVerified(r *Record) []string {
 	}
 	accepted := map[string]bool{}
 	for _, a := range r.Reviews {
-		if a.Kind == AcceptWarning && strings.TrimSpace(a.By) != "" {
+		if a.Kind == AcceptWarning && strings.TrimSpace(a.By) != "" && !a.At.IsZero() && strings.TrimSpace(a.Reason) != "" {
 			accepted[a.Finding] = true
 		}
 	}
 	for _, f := range r.Result.Findings(verify.Warning) {
 		if !accepted[f.ID()] {
 			out = append(out, fmt.Sprintf("warning %s not accepted", f.ID()))
+		}
+	}
+	return out
+}
+
+// gateReviews refuses a review action that does not record who, when and
+// why, as an override must (document.Override.Validate): one with no time
+// cannot be ordered against the approval (R-4), and one with no reason
+// leaves the manifest with no evidence. An acceptance must name its warning.
+func gateReviews(r *Record) []string {
+	var out []string
+	for i, a := range r.Reviews {
+		switch {
+		case strings.TrimSpace(a.By) == "", a.At.IsZero(), strings.TrimSpace(a.Reason) == "", a.Kind == "":
+			out = append(out, fmt.Sprintf("review action %d does not record its kind, who, when and why", i+1))
+		case a.Kind == AcceptWarning && strings.TrimSpace(a.Finding) == "":
+			out = append(out, fmt.Sprintf("review action %d accepts no named warning", i+1))
 		}
 	}
 	return out

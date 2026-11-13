@@ -158,6 +158,21 @@ func TestBuildRefuses(t *testing.T) {
 			r.Reviews = []export.ReviewAction{{Kind: export.AcceptWarning, Finding: "2/rounding_difference", By: "operator one", At: t0.Add(-time.Minute), Reason: "ok"}}
 		}, want: "not accepted"},
 		{name: "never verified", edit: func(r *export.Record) { r.Result = verify.Result{} }, want: "never verified"},
+		// A review action records who, when and why (buggrit f-bf7a02).
+		{name: "acceptance with no time", edit: func(r *export.Record) {
+			r.Result = withFinding(verify.Warning, 6, "not_stated", "currency")
+			r.Reviews = []export.ReviewAction{{Kind: export.AcceptWarning, Finding: "6/not_stated/currency", By: "operator one", Reason: "ok"}}
+		}, want: "who, when and why"},
+		{name: "acceptance with no reason", edit: func(r *export.Record) {
+			r.Result = withFinding(verify.Warning, 6, "not_stated", "currency")
+			r.Reviews = []export.ReviewAction{{Kind: export.AcceptWarning, Finding: "6/not_stated/currency", By: "operator one", At: t0.Add(-time.Minute), Reason: " "}}
+		}, want: "who, when and why"},
+		{name: "acceptance naming no warning", edit: func(r *export.Record) {
+			r.Reviews = []export.ReviewAction{{Kind: export.AcceptWarning, By: "operator one", At: t0.Add(-time.Minute), Reason: "ok"}}
+		}, want: "accepts no named warning"},
+		{name: "review action with no kind", edit: func(r *export.Record) {
+			r.Reviews = []export.ReviewAction{{By: "operator one", At: t0.Add(-time.Minute), Reason: "ok"}}
+		}, want: "who, when and why"},
 		// The gate reads the recorded outcome, not only the findings (buggrit f-80eb4d).
 		{name: "verdict fail with no findings", edit: func(r *export.Record) { r.Result.Verdict = verify.Fail }, want: `verdict is "fail"`},
 		{name: "verdict missing", edit: func(r *export.Record) { r.Result.Verdict = "" }, want: `verdict is ""`},

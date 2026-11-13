@@ -453,3 +453,19 @@ func TestFundHeadingBesideNonGroupPhrase(t *testing.T) {
 		"            Total Fund (Including GP)          USD\n                              Quarter\n", 1)
 	assertError(t, verify.Verify(simpleDoc(usd(page)), simpleRecord(t)), "4/fund_table/ending")
 }
+
+// TestCheckNames requires a name for every check, so a check added without
+// one fails here instead of printing as check_N (buggrit f-6157a9).
+func TestCheckNames(t *testing.T) {
+	seen := map[string]bool{}
+	for n := 1; n <= verify.CheckCount; n++ {
+		name := verify.CheckName(n)
+		if strings.HasPrefix(name, "check_") || seen[name] {
+			t.Errorf("check %d has no distinct name: %q", n, name)
+		}
+		seen[name] = true
+	}
+	if verify.CheckCount != 7 || verify.CheckName(verify.CheckCount+1) != "check_8" {
+		t.Fatalf("CheckCount = %d", verify.CheckCount)
+	}
+}

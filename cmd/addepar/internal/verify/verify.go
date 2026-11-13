@@ -38,11 +38,16 @@ const (
 	CheckPeriod
 	CheckCurrency
 	CheckPartial
-	// CheckCount is the number of checks; a Result holds each once, in order.
-	CheckCount = CheckPartial
+	// checkEnd follows the last check; a check added before it raises
+	// CheckCount with it.
+	checkEnd
 )
 
-// CheckName returns a check's name.
+// CheckCount is the number of checks; a Result holds each once, in order.
+const CheckCount = checkEnd - 1
+
+// CheckName returns a check's name. TestCheckNames requires a name for every
+// check up to CheckCount.
 func CheckName(n int) string {
 	switch n {
 	case CheckGrounding:
