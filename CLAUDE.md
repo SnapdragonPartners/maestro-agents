@@ -134,7 +134,7 @@ Sibling checkouts live next to this one (`../<name>`):
 | Repository | Relationship |
 |---|---|
 | `maestro-llms` | Dependency: provider-neutral chat, embeddings, tool loop, limiter |
-| `maestro-cms` | Possible dependency: content ingestion, chunking, embedding, retrieval |
+| `maestro-cms` | Dependency: the intake agent's PDF text layer (`pdftotext` layout mode); content ingestion, chunking, embedding and retrieval as needed |
 | `buggrit` | Source of elements to incorporate; also reviews this repo's PRs |
 | `maestro` | Source of elements to incorporate; an orchestrator that manages agents |
 | `morris` | Its planned orchestration layer will manage agents; this workflow follows Morris's |

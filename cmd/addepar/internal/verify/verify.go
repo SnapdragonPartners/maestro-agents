@@ -38,7 +38,8 @@ const (
 	CheckPeriod
 	CheckCurrency
 	CheckPartial
-	checkCount = CheckPartial
+	// CheckCount is the number of checks; a Result holds each once, in order.
+	CheckCount = CheckPartial
 )
 
 // CheckName returns a check's name.
@@ -155,7 +156,7 @@ func Verify(doc *document.Document, rec *statement.Record) Result {
 	v := newVerifier(doc, rec)
 	if err := rec.Validate(); err != nil {
 		v.add(CheckGrounding, Error, "invalid_record", "", 0, "%v", err)
-		for n := CheckRollForward; n <= checkCount; n++ {
+		for n := CheckRollForward; n <= CheckCount; n++ {
 			v.skipped[n] = true
 		}
 		return v.result()
@@ -225,8 +226,8 @@ func (v *verifier) add(check int, sev Severity, code, subject string, page int, 
 }
 
 func (v *verifier) result() Result {
-	r := Result{Verdict: Pass, Checks: make([]CheckResult, 0, checkCount)}
-	for n := 1; n <= checkCount; n++ {
+	r := Result{Verdict: Pass, Checks: make([]CheckResult, 0, CheckCount)}
+	for n := 1; n <= CheckCount; n++ {
 		c := CheckResult{Check: n, Name: CheckName(n), Status: Pass, Findings: v.findings[n]}
 		for _, f := range c.Findings {
 			switch {

@@ -158,6 +158,15 @@ func TestBuildRefuses(t *testing.T) {
 			r.Reviews = []export.ReviewAction{{Kind: export.AcceptWarning, Finding: "2/rounding_difference", By: "operator one", At: t0.Add(-time.Minute), Reason: "ok"}}
 		}, want: "not accepted"},
 		{name: "never verified", edit: func(r *export.Record) { r.Result = verify.Result{} }, want: "never verified"},
+		// The gate reads the recorded outcome, not only the findings (buggrit f-80eb4d).
+		{name: "verdict fail with no findings", edit: func(r *export.Record) { r.Result.Verdict = verify.Fail }, want: `verdict is "fail"`},
+		{name: "verdict missing", edit: func(r *export.Record) { r.Result.Verdict = "" }, want: `verdict is ""`},
+		{name: "check failed with no findings", edit: func(r *export.Record) { r.Result.Checks[3].Status = verify.Fail }, want: `check 4`},
+		{name: "check skipped", edit: func(r *export.Record) { r.Result.Checks[0].Status = verify.Skipped }, want: `is "skipped"`},
+		{name: "a check missing", edit: func(r *export.Record) { r.Result.Checks = r.Result.Checks[:6] }, want: "holds 6 checks"},
+		{name: "checks out of order", edit: func(r *export.Record) {
+			r.Result.Checks[0], r.Result.Checks[1] = r.Result.Checks[1], r.Result.Checks[0]
+		}, want: "out of place"},
 		{name: "formula in a name", edit: func(r *export.Record) { r.Record.Investor.Text = "=HYPERLINK(\"x\")" }, want: "formula"},
 		{name: "formula in an entered name", edit: func(r *export.Record) { r.Asset = &export.Entity{Name: "@SUM(A1)"} }, want: "formula"},
 		{name: "no ID", edit: func(r *export.Record) { r.ID = "" }, want: "no ID"},

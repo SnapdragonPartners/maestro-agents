@@ -169,12 +169,13 @@ func Load(ctx context.Context, name string, data []byte, opts Options) (*Documen
 	if text == nil {
 		text = pdftotext.New(pdftotext.WithLayout())
 	}
+	sum := Hash(data)
 	inf, err := info.Probe(ctx, data)
 	if err != nil {
-		return nil, fmt.Errorf("document: probe %s: %w", Hash(data)[:12], err)
+		return nil, fmt.Errorf("document: probe %s: %w", sum[:12], err)
 	}
 	doc := &Document{
-		SHA256:      Hash(data),
+		SHA256:      sum,
 		Name:        name,
 		PageCount:   inf.Pages,
 		Restriction: inf.Restriction,

@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // currencyNames maps how statements state a currency, in code or in words,
@@ -13,6 +14,9 @@ type currencyName struct {
 	re   *regexp.Regexp
 	code string
 }
+
+// currencyTable compiles the table once; it is read-only afterwards.
+var currencyTable = sync.OnceValue(currencyNames) //nolint:gochecknoglobals // compiled once, never written
 
 func currencyNames() []currencyName {
 	words := []struct{ pattern, code string }{

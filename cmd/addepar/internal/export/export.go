@@ -199,13 +199,16 @@ func gate(r *Record) []string {
 }
 
 // gateVerified requires a verification with no error and every warning
-// accepted by a named person.
+// accepted by a named person. It reads the recorded outcome as well as the
+// findings: a result whose verdict or any check's status is not pass or warn,
+// or that does not hold each of the seven checks once in order, is refused
+// even when its findings are empty.
 func gateVerified(r *Record) []string {
 	if len(r.Result.Checks) == 0 {
 		return []string{"was never verified"}
 	}
+	out := gateOutcome(&r.Result)
 	errs := r.Result.Findings(verify.Error)
-	out := make([]string, 0, len(errs))
 	for _, f := range errs {
 		out = append(out, fmt.Sprintf("verification error %s", f.ID()))
 	}
@@ -218,6 +221,26 @@ func gateVerified(r *Record) []string {
 	for _, f := range r.Result.Findings(verify.Warning) {
 		if !accepted[f.ID()] {
 			out = append(out, fmt.Sprintf("warning %s not accepted", f.ID()))
+		}
+	}
+	return out
+}
+
+// gateOutcome checks the recorded verdict and check statuses.
+func gateOutcome(res *verify.Result) []string {
+	var out []string
+	if res.Verdict != verify.Pass && res.Verdict != verify.Warn {
+		out = append(out, fmt.Sprintf("verification verdict is %q", res.Verdict))
+	}
+	if len(res.Checks) != verify.CheckCount {
+		return append(out, fmt.Sprintf("verification holds %d checks, not %d", len(res.Checks), verify.CheckCount))
+	}
+	for i, c := range res.Checks {
+		if c.Check != i+1 {
+			out = append(out, fmt.Sprintf("verification check %d is out of place", c.Check))
+		}
+		if c.Status != verify.Pass && c.Status != verify.Warn {
+			out = append(out, fmt.Sprintf("check %d %s is %q", c.Check, c.Name, c.Status))
 		}
 	}
 	return out

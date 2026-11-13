@@ -197,7 +197,7 @@ an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
 2. **The vertical slice**, steps 1 to 5 of the requirements' delivery plan
    (section 6), on the file store and the PDF's text layer (`pdftotext
    -layout`, which keeps each label beside its numbers, through
-   `maestro-cms`' layout option from #25, which the slice waits on): extract, verify,
+   `maestro-cms`' layout option from #25, in v0.9.0): extract, verify,
    commit, crash, continue, no duplicate (steps 1 to 4), then both TEST-6
    interleavings (step 5).
 3. **The verifier and exporter**, with no model (the intake requirements'

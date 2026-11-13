@@ -913,7 +913,7 @@ func otherDate(line string, want time.Time) (time.Time, bool) {
 
 func (v *verifier) checkCurrency() {
 	r := v.rec
-	names := currencyNames()
+	names := currencyTable()
 	var stated []string
 	seen := map[string]bool{}
 	for _, pg := range v.doc.Pages {

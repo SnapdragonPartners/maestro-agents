@@ -31,7 +31,8 @@ var ErrPdfinfoUnavailable = errors.New("document: pdfinfo not found")
 var ErrInfoOutput = errors.New("document: unreadable pdfinfo output")
 
 // Pdfinfo probes a PDF with Poppler's pdfinfo, the PDF on stdin. maestro-cms
-// runs pdfinfo too but does not report encryption, so the probe is here.
+// runs pdfinfo too but does not report encryption, so the probe is here. The
+// zero value is usable: Probe applies the defaults.
 type Pdfinfo struct {
 	// Binary is the executable, looked up on PATH; default "pdfinfo".
 	Binary string
@@ -39,19 +40,32 @@ type Pdfinfo struct {
 	Timeout time.Duration
 }
 
+// The probe's defaults.
+const (
+	defaultPdfinfo        = "pdfinfo"
+	defaultPdfinfoTimeout = 30 * time.Second
+)
+
 // NewPdfinfo returns the default probe.
-func NewPdfinfo() *Pdfinfo { return &Pdfinfo{Binary: "pdfinfo", Timeout: 30 * time.Second} }
+func NewPdfinfo() *Pdfinfo { return &Pdfinfo{Binary: defaultPdfinfo, Timeout: defaultPdfinfoTimeout} }
 
 // maxInfoOutput caps pdfinfo's stdout; its report is a few hundred bytes.
 const maxInfoOutput = 64 << 10
 
 // Probe runs pdfinfo and parses its report.
 func (p *Pdfinfo) Probe(ctx context.Context, data []byte) (Info, error) {
-	bin, err := exec.LookPath(p.Binary)
-	if err != nil {
-		return Info{}, fmt.Errorf("%w: %s", ErrPdfinfoUnavailable, p.Binary)
+	name, timeout := p.Binary, p.Timeout
+	if name == "" {
+		name = defaultPdfinfo
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.Timeout)
+	if timeout <= 0 {
+		timeout = defaultPdfinfoTimeout
+	}
+	bin, err := exec.LookPath(name)
+	if err != nil {
+		return Info{}, fmt.Errorf("%w: %s", ErrPdfinfoUnavailable, name)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// The binary is fixed configuration and the arguments are constant; the
 	// PDF goes to stdin, never onto the command line.
@@ -85,7 +99,7 @@ func ParseInfo(out string) (Info, error) {
 		switch key {
 		case "Pages":
 			n, err := strconv.Atoi(val)
-			if err != nil || n < 0 {
+			if err != nil || n < 1 { // a PDF has at least one page
 				return Info{}, fmt.Errorf("%w: pages %q", ErrInfoOutput, val)
 			}
 			inf.Pages, sawPages = n, true

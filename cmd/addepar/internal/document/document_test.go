@@ -3,6 +3,8 @@ package document_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +37,7 @@ func TestParseInfo(t *testing.T) {
 			}
 		})
 	}
-	for _, bad := range []string{"", "Pages: 1\n", "Encrypted: no\n", "Pages: x\nEncrypted: no", "Pages: 1\nEncrypted: maybe"} {
+	for _, bad := range []string{"", "Pages: 1\n", "Encrypted: no\n", "Pages: x\nEncrypted: no", "Pages: 0\nEncrypted: no", "Pages: -1\nEncrypted: no", "Pages: 1\nEncrypted: maybe"} {
 		if _, err := document.ParseInfo(bad); !errors.Is(err, document.ErrInfoOutput) {
 			t.Errorf("ParseInfo(%q) err = %v", bad, err)
 		}
@@ -147,5 +149,25 @@ func TestPdfinfoUnavailable(t *testing.T) {
 	_, err := document.Load(context.Background(), "x.pdf", []byte("%PDF"), document.Options{Info: p})
 	if !errors.Is(err, document.ErrPdfinfoUnavailable) {
 		t.Fatalf("Load err = %v", err)
+	}
+}
+
+// TestPdfinfoZeroValue pins the documented defaults: a zero Pdfinfo looks up
+// "pdfinfo" on PATH and runs it with the default timeout, not an expired one.
+func TestPdfinfoZeroValue(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncat >/dev/null\nprintf 'Pages: 1\\nEncrypted: no\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "pdfinfo"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	inf, err := (&document.Pdfinfo{}).Probe(context.Background(), []byte("%PDF"))
+	if err != nil || inf.Pages != 1 || inf.Restriction.Encrypted {
+		t.Fatalf("zero-value probe: %+v %v", inf, err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	_, err = (&document.Pdfinfo{}).Probe(context.Background(), []byte("%PDF"))
+	if !errors.Is(err, document.ErrPdfinfoUnavailable) || !strings.Contains(err.Error(), "pdfinfo") {
+		t.Fatalf("missing binary: %v", err)
 	}
 }

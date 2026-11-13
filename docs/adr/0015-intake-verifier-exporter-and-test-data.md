@@ -135,7 +135,7 @@ five to verify.
    strings, and a JSON number is refused (N-4).
 9. **The exporter is the last gate.** It refuses a record with no named
    approver, an approval older than a later review action, a verification
-   error, an unaccepted warning, or a text cell beginning with a formula
+   error (in its findings, its verdict or any check's status), an unaccepted warning, or a text cell beginning with a formula
    character. Rows sort by owner, asset, date and currency, so the same
    records give the same CSV bytes in any order (N-3). CSV: the template's
    19 columns, a header row, CRLF line ends (RFC 4180), UTF-8 without BOM,
