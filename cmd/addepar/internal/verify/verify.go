@@ -39,8 +39,9 @@ const (
 	CheckCurrency
 	CheckPartial
 	// checkEnd follows the last check; a check added before it raises
-	// CheckCount with it (and must update TestCheckNames, which pins the
-	// intake requirements' seven checks on purpose).
+	// CheckCount with it. A new check also needs a name (CheckName), a call
+	// in Verify through run (a check that did not run fails as not_run), and
+	// TestCheckNames' pin of the intake requirements' seven checks updated.
 	checkEnd
 )
 
@@ -161,6 +162,7 @@ func (r *Result) Failed() []int {
 func Verify(doc *document.Document, rec *statement.Record) Result {
 	v := newVerifier(doc, rec)
 	if err := rec.Validate(); err != nil {
+		v.ran[CheckGrounding] = true
 		v.add(CheckGrounding, Error, "invalid_record", "", 0, "%v", err)
 		for n := CheckRollForward; n <= CheckCount; n++ {
 			v.skipped[n] = true
@@ -168,21 +170,22 @@ func Verify(doc *document.Document, rec *statement.Record) Result {
 		return v.result()
 	}
 	if !v.textReadable() {
-		v.checkRollForward()
-		v.checkPartial()
+		v.ran[CheckGrounding] = true // textReadable recorded its error
+		v.run(CheckRollForward, v.checkRollForward)
+		v.run(CheckPartial, v.checkPartial)
 		for _, n := range []int{CheckConsistency, CheckInvestor, CheckPeriod, CheckCurrency} {
 			v.skipped[n] = true
 		}
 		return v.result()
 	}
-	v.checkGrounding()
+	v.run(CheckGrounding, v.checkGrounding)
 	v.findSection()
-	v.checkRollForward()
-	v.checkConsistency()
-	v.checkInvestor()
-	v.checkPeriod()
-	v.checkCurrency()
-	v.checkPartial()
+	v.run(CheckRollForward, v.checkRollForward)
+	v.run(CheckConsistency, v.checkConsistency)
+	v.run(CheckInvestor, v.checkInvestor)
+	v.run(CheckPeriod, v.checkPeriod)
+	v.run(CheckCurrency, v.checkCurrency)
+	v.run(CheckPartial, v.checkPartial)
 	return v.result()
 }
 
@@ -192,6 +195,7 @@ type verifier struct {
 	pages    map[int]*pageText
 	findings map[int][]Finding
 	skipped  map[int]bool
+	ran      map[int]bool
 	// The ending balance as printed, once grounded.
 	ending *labelHit
 	endTok *token
@@ -216,8 +220,17 @@ func newVerifier(doc *document.Document, rec *statement.Record) *verifier {
 		pages:         map[int]*pageText{},
 		findings:      map[int][]Finding{},
 		skipped:       map[int]bool{},
+		ran:           map[int]bool{},
 		beginningLine: -1,
 	}
+}
+
+// run runs check n and records that it ran. result fails any check that
+// neither ran nor was skipped, so a check declared but never wired into
+// Verify cannot report a pass (fail closed, ADR 0015 point 3).
+func (v *verifier) run(n int, check func()) {
+	v.ran[n] = true
+	check()
 }
 
 func (v *verifier) add(check int, sev Severity, code, subject string, page int, format string, args ...any) {
@@ -234,6 +247,9 @@ func (v *verifier) add(check int, sev Severity, code, subject string, page int, 
 func (v *verifier) result() Result {
 	r := Result{Verdict: Pass, Checks: make([]CheckResult, 0, CheckCount)}
 	for n := 1; n <= CheckCount; n++ {
+		if !v.ran[n] && !v.skipped[n] {
+			v.add(n, Error, "not_run", "", 0, "check %d (%s) did not run", n, CheckName(n))
+		}
 		c := CheckResult{Check: n, Name: CheckName(n), Status: Pass, Findings: v.findings[n]}
 		for _, f := range c.Findings {
 			switch {

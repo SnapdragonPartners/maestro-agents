@@ -161,3 +161,23 @@ func TestCurrencies(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckNotRunFails pins fail-closed for an unwired check: a check that
+// neither ran nor was skipped fails as not_run instead of reporting a pass
+// (buggrit, PR #14 pass 4).
+func TestCheckNotRunFails(t *testing.T) {
+	v := newVerifier(nil, nil)
+	for n := 1; n < CheckCount; n++ {
+		v.ran[n] = true
+	}
+	r := v.result()
+	last := r.Checks[CheckCount-1]
+	if r.Verdict != Fail || last.Status != Fail || len(last.Findings) != 1 || last.Findings[0].Code != "not_run" {
+		t.Fatalf("unrun check: verdict %s, %+v", r.Verdict, last)
+	}
+	for _, c := range r.Checks[:CheckCount-1] {
+		if c.Status != Pass {
+			t.Fatalf("check %d: %s", c.Check, c.Status)
+		}
+	}
+}
