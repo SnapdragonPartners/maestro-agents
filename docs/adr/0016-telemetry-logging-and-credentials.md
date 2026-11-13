@@ -91,8 +91,11 @@ compaction events (LOOP-5, deferred).
    is not cancelled with the activation, so a shutdown still emits the
    final commit's events. A sink that needs more time buffers on its own.
 5. **A sink's failure never fails the run.** An error from `Emit`, or a
-   panic in it, is logged at warn level with the run and the sequence
-   range, and the activation continues (MODE-7: a failing optional sink
+   panic in it or in the redactor, is logged at warn level with the run,
+   the sequence range and the failure's class (`sink_error`,
+   `sink_timeout`, `sink_panic`, `redactor_panic`), never the error's text
+   or the panic's value, which may quote what the redactor was meant to
+   remove; a panicking redactor's batch is dropped. The activation continues (MODE-7: a failing optional sink
    is a warning). Whether a sink is required, and failing before the run
    starts if it is, is the host's decision (MODE-7, in the standalone
    host).
@@ -142,12 +145,17 @@ compaction events (LOOP-5, deferred).
     info level for ordinary events:
     - an activation's start, with run, instance and epoch;
     - its end, with status and reason code;
-    - a store failure or lost ownership, at error level;
-    - a sink's failure, at warn level.
+    - an activation that ends with an error (a refusal, a store failure,
+      lost ownership), at error level, with the error's class only
+      (`ownership_lost`, `store_failure`, `not_activatable`, `other`);
+    - a sink's failure, at warn level, with its class (item 5).
 
     The runtime's log lines carry IDs, names, codes and counts, never an
-    outcome's detail, tool arguments or results, configuration or model
-    content.
+    outcome's detail, an error's or a panic's text (either may quote
+    content: a store failure can name an object key), tool arguments or
+    results, configuration or model content. The host has every error
+    itself, from `Activate`'s return or from its own sink, and logs it
+    under its own policy.
 11. **Agent code logs through `Env.Logger()`.** It is the host's logger
     with the run, instance and state as attributes, so one host policy
     (level, handler, redaction) governs every log line. What an agent
@@ -175,7 +183,9 @@ compaction events (LOOP-5, deferred).
     failure (as a tool error the model receives, or an error that fails
     the run). The runtime never records or logs a credential.
 14. **`Secret` resists accidental disclosure.** Its value is reached only
-    through `Reveal`. Its `String`, `GoString`, `Format`, `LogValue` and
+    through `Reveal`, and is held behind a pointer, so where `fmt` bypasses
+    the methods below (a `Secret` in an unexported struct field, which it
+    prints by reflection) it prints an address, never the value. Its `String`, `GoString`, `Format`, `LogValue` and
     `MarshalJSON` all render `[redacted]`, so a secret passed by mistake
     to a log, a format verb or a JSON result (which the execution record
     stores) does not leak its value. A tool that puts `Reveal()` into a

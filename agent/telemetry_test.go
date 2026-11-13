@@ -246,8 +246,82 @@ func TestTelemetryFailureNeverFailsTheRun(t *testing.T) {
 	sink := &recSink{}
 	runLeak(t, agent.WithTelemetry(sink), agent.WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))),
 		agent.WithRedactor(func(*agent.Event) { panic("redactor exploded") }))
-	if len(sink.events()) != 0 || !strings.Contains(logs.String(), "telemetry not delivered") {
+	if len(sink.events()) != 0 || !strings.Contains(logs.String(), "redactor_panic") {
 		t.Fatalf("events %d, logs %s", len(sink.events()), logs.String())
+	}
+}
+
+// TestTelemetryFailureLogsNoContent checks ADR 0016 items 5 and 10: a
+// failure is logged by class, never by its text, which may quote content.
+func TestTelemetryFailureLogsNoContent(t *testing.T) {
+	cases := map[string]struct {
+		opts  []agent.Option
+		class string
+	}{
+		"redactor panics with content": {
+			opts:  []agent.Option{agent.WithTelemetry(&recSink{}), agent.WithRedactor(func(ev *agent.Event) { panic("LEAK " + ev.Detail) })},
+			class: "redactor_panic",
+		},
+		"sink errs with content": {
+			opts:  []agent.Option{agent.WithTelemetry(contentSink{err: errors.New("LEAK-SINK")})},
+			class: "sink_error",
+		},
+		"sink panics with content": {
+			opts:  []agent.Option{agent.WithTelemetry(contentSink{panics: true})},
+			class: "sink_panic",
+		},
+		"sink times out": {
+			opts:  []agent.Option{agent.WithTelemetry(contentSink{err: fmt.Errorf("LEAK-SINK: %w", context.DeadlineExceeded)})},
+			class: "sink_timeout",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			runLeak(t, append(c.opts, agent.WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))))...)
+			if !strings.Contains(logs.String(), `"failure":"`+c.class+`"`) {
+				t.Fatalf("no %s warning: %s", c.class, logs.String())
+			}
+			if strings.Contains(logs.String(), "LEAK") {
+				t.Fatalf("log leaks failure text: %s", logs.String())
+			}
+		})
+	}
+}
+
+// contentSink fails with content-bearing text.
+type contentSink struct {
+	err    error
+	panics bool
+}
+
+func (s contentSink) Emit(context.Context, []agent.Event) error {
+	if s.panics {
+		panic("LEAK-PANIC")
+	}
+	return s.err
+}
+
+// leakyStore fails reads of the execution record with content-bearing
+// text.
+type leakyStore struct{ store.Store }
+
+func (leakyStore) Entries(context.Context, string, uint64) ([]store.Entry, error) {
+	return nil, errors.New("LEAK-STORE key statement-amount-12345")
+}
+
+func TestActivationErrorLogsNoContent(t *testing.T) {
+	var logs bytes.Buffer
+	mem := memstore.New()
+	var execs execLog
+	c := agent.NewController(leakyStore{mem}, registry(t, ledgerType(&execs)), agent.WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))))
+	createLeakRun(t, mem)
+	_, err := activateLeak(c, claim(t, mem), 0)
+	if !errors.Is(err, agent.ErrStoreFailure) || !strings.Contains(err.Error(), "LEAK-STORE") {
+		t.Fatalf("Activate = %v; the host gets the full error", err)
+	}
+	if !strings.Contains(logs.String(), `"error_class":"store_failure"`) || strings.Contains(logs.String(), "LEAK") {
+		t.Fatalf("log = %s", logs.String())
 	}
 }
 
@@ -344,9 +418,27 @@ func TestSecretNeverRenders(t *testing.T) {
 		fmt.Sprint(s), fmt.Sprintf("%v %+v %#v %s %q %x %d", s, s, s, s, s, s, s),
 		fmt.Sprintf("%v", struct{ S agent.Secret }{s}), fmt.Sprintf("%+v", &s), string(j), logs.String(),
 	}
+	// fmt prints an unexported field by reflection, bypassing the
+	// methods; slog's text handler does the same for a struct value.
+	type wrapper struct {
+		s     agent.Secret
+		inner struct{ s agent.Secret }
+	}
+	w := wrapper{s: s}
+	w.inner.s = s
+	logs.Reset()
+	slog.New(slog.NewTextHandler(&logs, nil)).Info("x", "w", w, "pw", &w)
+	slog.New(slog.NewJSONHandler(&logs, nil)).Info("x", "w", w)
+	outputs = append(outputs,
+		fmt.Sprintf("%v %+v %#v", w, w, w), fmt.Sprintf("%v %+v %#v", &w, &w, &w),
+		fmt.Sprintf("%+v", []any{w, map[string]wrapper{"k": w}}), logs.String())
 	for _, o := range outputs {
 		if strings.Contains(o, "hunter2") {
 			t.Fatalf("secret rendered: %s", o)
 		}
+	}
+	var zero agent.Secret
+	if zero.Reveal() != "" || !zero.IsZero() {
+		t.Fatal("zero Secret not empty")
 	}
 }

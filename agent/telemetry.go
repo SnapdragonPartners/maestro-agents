@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -130,19 +131,49 @@ func (a *activation) emit(ctx context.Context, ops []store.Op) {
 	}
 	ctx, cancel := context.WithTimeout(durable(ctx), TelemetryTimeout)
 	defer cancel()
-	err := guard(func() error {
-		for i := range evs {
-			if a.c.redact == nil {
-				evs[i].Detail = ""
-				continue
-			}
-			a.c.redact(&evs[i])
-		}
-		return a.c.sink.Emit(ctx, evs)
-	})
-	if err != nil {
+	if failure := a.deliver(ctx, evs); failure != "" {
+		// The failure is logged by class only: a sink's error or a
+		// panic's value may quote what the redactor was meant to remove
+		// (ADR 0016, item 10).
 		a.c.logger.Warn("agent: telemetry not delivered",
-			"run", a.run.ID, "instance", a.run.Instance, "first_seq", evs[0].Seq, "last_seq", evs[len(evs)-1].Seq, "error", err)
+			"run", a.run.ID, "instance", a.run.Instance, "first_seq", evs[0].Seq, "last_seq", evs[len(evs)-1].Seq, "failure", failure)
+	}
+}
+
+// Telemetry failure classes, the only thing logged of a failure (ADR 0016,
+// item 5).
+const (
+	telemetryRedactorPanic = "redactor_panic"
+	telemetrySinkPanic     = "sink_panic"
+	telemetrySinkTimeout   = "sink_timeout"
+	telemetrySinkError     = "sink_error"
+)
+
+// deliver redacts the events and emits them, returning the failure's class,
+// or empty on success.
+func (a *activation) deliver(ctx context.Context, evs []Event) (failure string) {
+	stage := telemetryRedactorPanic
+	defer func() {
+		if recover() != nil {
+			failure = stage
+		}
+	}()
+	for i := range evs {
+		if a.c.redact == nil {
+			evs[i].Detail = ""
+			continue
+		}
+		a.c.redact(&evs[i])
+	}
+	stage = telemetrySinkPanic
+	err := a.c.sink.Emit(ctx, evs)
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, context.DeadlineExceeded):
+		return telemetrySinkTimeout
+	default:
+		return telemetrySinkError
 	}
 }
 

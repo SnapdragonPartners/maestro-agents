@@ -151,7 +151,7 @@ type ActivationInput struct {
 func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome, error) { //nolint:gocritic // hugeParam: the input is passed by value, as ADR 0003 item 12 shows
 	a, err := c.begin(ctx, &in)
 	if err != nil {
-		c.logger.Error("agent: activation refused", "run", in.Scope.ID, "instance", in.Fence.Instance, "error", err)
+		c.logger.Error("agent: activation refused", "run", in.Scope.ID, "instance", in.Fence.Instance, "error_class", errClass(err))
 		return Outcome{}, err
 	}
 	c.logger.Info("agent: activation started", "run", a.run.ID, "instance", a.run.Instance, "agent_type", a.run.AgentType, "epoch", a.fence.Epoch)
@@ -905,9 +905,26 @@ func guard(fn func() error) (err error) {
 func (a *activation) logEnd(e *ending) {
 	if e.err != nil {
 		a.c.logger.Error("agent: activation ended without a confirmed outcome",
-			"run", a.run.ID, "instance", a.run.Instance, "error", e.err)
+			"run", a.run.ID, "instance", a.run.Instance, "error_class", errClass(e.err))
 		return
 	}
 	a.c.logger.Info("agent: activation ended", "run", a.run.ID, "instance", a.run.Instance,
 		"status", string(e.out.Status), "reason", e.out.Reason.Code, "steps", e.out.Steps)
+}
+
+// errClass classifies an activation's error for the log (ADR 0016, item
+// 10). The error itself may quote content (a store failure can name an
+// object key, a refusal a record's field), so only its class is logged; the
+// host has the error from Activate and logs it under its own policy.
+func errClass(err error) string {
+	switch {
+	case errors.Is(err, ErrOwnershipLost):
+		return "ownership_lost"
+	case errors.Is(err, ErrStoreFailure):
+		return "store_failure"
+	case errors.Is(err, ErrNotActivatable):
+		return "not_activatable"
+	default:
+		return "other"
+	}
 }

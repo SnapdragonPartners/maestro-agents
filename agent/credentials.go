@@ -51,20 +51,29 @@ const redacted = "[redacted]"
 
 // Secret holds a credential (ADR 0016, item 14). Its value is reached only
 // through Reveal: printing, formatting, logging or encoding it as JSON
-// renders "[redacted]".
+// renders "[redacted]". The value sits behind a pointer, so even where fmt
+// bypasses these methods (a Secret in an unexported struct field, printed
+// by reflection) it prints an address, never the value.
 type Secret struct {
-	value string
+	p *secretValue
 }
 
+type secretValue struct{ v string }
+
 // NewSecret wraps a credential's value.
-func NewSecret(value string) Secret { return Secret{value: value} }
+func NewSecret(value string) Secret { return Secret{p: &secretValue{v: value}} }
 
 // Reveal returns the credential's value. A tool passes it to the
 // destination and nowhere else: a tool result is recorded.
-func (s Secret) Reveal() string { return s.value }
+func (s Secret) Reveal() string {
+	if s.p == nil {
+		return ""
+	}
+	return s.p.v
+}
 
 // IsZero reports whether the secret is empty.
-func (s Secret) IsZero() bool { return s.value == "" }
+func (s Secret) IsZero() bool { return s.Reveal() == "" }
 
 // String implements fmt.Stringer.
 func (Secret) String() string { return redacted }
