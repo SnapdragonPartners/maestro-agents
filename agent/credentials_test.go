@@ -254,3 +254,15 @@ func TestCodeStateGetsNoCredential(t *testing.T) {
 		t.Fatalf("provider called %v, code state got %v", called, got)
 	}
 }
+
+// TestCallWithoutEnv checks that a Call the runtime did not make, even a
+// zero one, refuses credentials rather than panicking.
+func TestCallWithoutEnv(t *testing.T) {
+	c := &agent.Call[ledgerData]{}
+	if _, err := c.Credential(context.Background(), "api"); !errors.Is(err, agent.ErrNoCredential) {
+		t.Fatalf("Credential = %v, want ErrNoCredential", err)
+	}
+	if rc := c.RunContext(); rc != (agent.RunContext{}) {
+		t.Fatalf("RunContext = %+v", rc)
+	}
+}

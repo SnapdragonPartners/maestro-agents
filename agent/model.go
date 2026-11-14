@@ -201,7 +201,13 @@ type Call[D any] struct {
 }
 
 // RunContext returns the call's run context (TOOL-8, ADR 0016 item 12).
-func (c *Call[D]) RunContext() RunContext { return c.Env.rc }
+// A Call with no Env has the zero run context.
+func (c *Call[D]) RunContext() RunContext {
+	if c.Env == nil {
+		return RunContext{}
+	}
+	return c.Env.rc
+}
 
 // Credential asks the host's credential provider for the named credential,
 // for the call's run context, when the tool executes (TOOL-8, ADR 0016
@@ -215,7 +221,7 @@ func (c *Call[D]) Credential(ctx context.Context, name string) (Secret, error) {
 	if creds == nil {
 		creds = noCredentials
 	}
-	rc := c.Env.rc
+	rc := c.RunContext()
 	s, err := creds(ctx, &rc, name)
 	if err != nil {
 		return Secret{}, fmt.Errorf("agent: credential %q: %w", name, err)
