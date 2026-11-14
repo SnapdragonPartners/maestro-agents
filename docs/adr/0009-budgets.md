@@ -1,6 +1,6 @@
 # 0009. Budgets
 
-- **Status:** Amended by ADR-0010, ADR-0011, ADR-0014
+- **Status:** Amended by ADR-0010, ADR-0011, ADR-0014, ADR-0016
 - **Date:** 2026-11-10
 
 ## Context

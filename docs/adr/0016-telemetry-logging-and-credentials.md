@@ -64,6 +64,12 @@ It amends, item by item:
   (`Call.Credential`).
 - ADR 0008 item 5 (the policy hook's request): by item 12, it also
   carries the run context (`PolicyRequest.Run`).
+- ADR 0008's consequence listing credentials and the run context (TOOL-8)
+  and telemetry events (HOST-1) as not yet built: items 1 to 6 and 12 to
+  14 build them.
+- ADR 0009's consequence listing usage telemetry (HOST-1) as not yet
+  built: items 1 and 2 build it, as `turn` and `model_failure` events
+  carrying usage, and `outcome` events carrying consumption.
 - ADR 0011 item 8 (what fails a run with `config_error`): by item 12, a
   principal that is not valid UTF-8 too.
 
@@ -224,10 +230,13 @@ It amends, item by item:
 13. **A tool asks for a credential when it executes.**
     `Call.Credential(ctx, name)` calls the host's `CredentialProvider`
     (set with `WithCredentials`) with the call's run context and the
-    credential's name, and returns a `Secret`. Tools of many runs call it
-    concurrently, so a provider must be safe for concurrent use. Without
-    a provider every
-    request fails with `ErrNoCredential`, which the tool handles like any
+    credential's name, and returns a `Secret`. An `atomic_local` tool
+    receives no provider (ADR 0005, item 9, which this ADR keeps): its
+    every request fails with `ErrNoCredential` without reaching the host's
+    provider, so it still has no effect beyond its operations. Tools of
+    many runs call it concurrently, so a provider must be safe for
+    concurrent use. Without a provider every request fails with
+    `ErrNoCredential`, which the tool handles like any
     failure (as a tool error the model receives, or an error that fails
     the run). The runtime never records or logs a credential.
 14. **`Secret` resists accidental disclosure.** Its value is reached only
@@ -278,11 +287,13 @@ It amends, item by item:
 - [ADR 0003](0003-run-model-identities-and-activation-results.md), items
   1, 10, 12 and 14
 - [ADR 0004](0004-execution-record-and-recovery.md), items 2 and 15
-- [ADR 0005](0005-storage-one-fenced-commit.md), items 13 and 14
+- [ADR 0005](0005-storage-one-fenced-commit.md), items 9 (an
+  `atomic_local` tool receives no credential provider), 13 and 14
 - [ADR 0006](0006-store-interface.md), items 10 and 11
 - [ADR 0007](0007-agent-types-and-the-run-controller.md), items 4, 6, 8
   and 13
+- [ADR 0008](0008-model-states.md), items 3 and 5, consequences
+- [ADR 0009](0009-budgets.md), consequences
 - [ADR 0011](0011-manifests.md), item 8
-- [ADR 0008](0008-model-states.md), items 3 and 5
 - [ADR 0012](0012-namespace-confinement.md): the namespace, which the
   principal follows

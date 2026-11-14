@@ -43,7 +43,7 @@ template.
 | [0006](0006-store-interface.md) | The store interface | Amended by ADR-0008, ADR-0016 |
 | [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0016 |
 | [0008](0008-model-states.md) | Model states | Amended by ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016 |
-| [0009](0009-budgets.md) | Budgets | Amended by ADR-0010, ADR-0011, ADR-0014 |
+| [0009](0009-budgets.md) | Budgets | Amended by ADR-0010, ADR-0011, ADR-0014, ADR-0016 |
 | [0010](0010-wrap-up-and-the-visible-clock.md) | Wrap-up and the visible clock | Amended by ADR-0014 |
 | [0011](0011-manifests.md) | Manifests | Amended by ADR-0012, ADR-0013, ADR-0016 |
 | [0012](0012-namespace-confinement.md) | Namespace confinement | Accepted |

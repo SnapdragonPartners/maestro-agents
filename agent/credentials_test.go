@@ -36,11 +36,18 @@ type credLog struct {
 // credential and reports what it got, rendered with fmt (which must not
 // show it).
 func credType(log *credLog) *agent.Type[ledgerData] {
+	return credTypeAs(log, agent.EffectRead, "")
+}
+
+// credTypeAs is credType with fetch declared with the given effect and
+// write contract.
+func credTypeAs(log *credLog, effect agent.Effect, contract agent.WriteContract) *agent.Type[ledgerData] {
 	var execs execLog
 	tools := ledgerTools(&execs)
 	tools = append(tools, agent.Tool[ledgerData]{
 		Definition: llms.ToolDefinition{Name: "fetch", InputSchema: json.RawMessage(`{"type":"object"}`)},
-		Effect:     agent.EffectRead,
+		Effect:     effect,
+		Contract:   contract,
 		Execute: func(ctx context.Context, c *agent.Call[ledgerData]) (agent.Result[ledgerData], error) {
 			log.mu.Lock()
 			log.tool = append(log.tool, c.RunContext())
@@ -182,5 +189,31 @@ func TestInvalidPrincipalIsAConfigError(t *testing.T) {
 	}
 	if !started {
 		t.Fatal("the refused start did not record run_started")
+	}
+}
+
+// TestAtomicLocalToolGetsNoCredential checks ADR 0005 item 9: an
+// atomic-local tool receives no credential provider, even when the host
+// set one; its request fails without reaching the provider.
+func TestAtomicLocalToolGetsNoCredential(t *testing.T) {
+	log := &credLog{}
+	s := memstore.New()
+	provider := func(_ context.Context, rc *agent.RunContext, _ string) (agent.Secret, error) {
+		log.mu.Lock()
+		defer log.mu.Unlock()
+		log.provider = append(log.provider, *rc)
+		return agent.NewSecret("s3cret-value"), nil
+	}
+	c := agent.NewController(s, registry(t, credTypeAs(log, agent.EffectWrite, agent.ContractAtomicLocal)), agent.WithCredentials(provider))
+	createLedgerRun(t, s)
+	credActivate(c, s, t, "alice", 0)
+	if len(log.provider) != 0 {
+		t.Fatalf("provider called for an atomic_local tool: %+v", log.provider)
+	}
+	if len(log.results) != 1 || log.results[0] != "no credential" {
+		t.Fatalf("tool results = %v", log.results)
+	}
+	if len(log.tool) != 1 || log.tool[0].Principal != "alice" {
+		t.Fatalf("run context = %+v", log.tool)
 	}
 }

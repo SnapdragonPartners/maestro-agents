@@ -36,6 +36,10 @@ func noCredentials(_ context.Context, _ *RunContext, name string) (Secret, error
 	return Secret{}, fmt.Errorf("%w: %q (no credential provider)", ErrNoCredential, name)
 }
 
+func atomicLocalNoCredentials(_ context.Context, _ *RunContext, name string) (Secret, error) {
+	return Secret{}, fmt.Errorf("%w: %q (an atomic_local tool receives no credential provider, ADR 0005 item 9)", ErrNoCredential, name)
+}
+
 // WithCredentials sets the credential provider (TOOL-8). Nil, the default,
 // provides none: every request fails with ErrNoCredential.
 func WithCredentials(p CredentialProvider) Option {
