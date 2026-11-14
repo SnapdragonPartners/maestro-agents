@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/internal/jsonschema"
+	"github.com/SnapdragonPartners/maestro-agents/internal/storecore"
 )
 
 // maxConfigBytes bounds a configuration or secrets file.
@@ -203,9 +203,9 @@ func LoadConfig(path string) (*Config, error) {
 
 // readBounded reads a file of at most limit bytes.
 func readBounded(path string, limit int64) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the operator names the file
+	f, err := openRegular(path, false)
 	if err != nil {
-		return nil, err //nolint:wrapcheck // the PathError names the file
+		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 	data, err := readLimited(f, limit)
@@ -235,6 +235,8 @@ func (c *Config) Validate(p *Program) error {
 	}
 	if c.Namespace == "" {
 		add("namespace is required")
+	} else if err := storecore.CheckNamespace(c.Namespace); err != nil {
+		add("namespace: %v", err)
 	}
 	if m.Name != "" {
 		errs = append(errs, c.validateAgainst(&m)...)

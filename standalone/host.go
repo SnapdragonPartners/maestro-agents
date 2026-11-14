@@ -117,7 +117,13 @@ func (h *host) activate(ctx context.Context, run *store.Run) *result {
 		Budgets:   h.cfg.Budgets.budgets(h.now()),
 	})
 	cancel(nil)
-	<-beat
+	if fatal := <-beat; fatal != nil {
+		// The store must be reopened: whatever the activation returned,
+		// the host stops (ADR 0017, item 10).
+		r := h.afterError(dctx, run, fatal, nil)
+		r.Fatal = true
+		return r
+	}
 	if err != nil {
 		return h.afterError(dctx, run, err, &fence)
 	}
@@ -151,11 +157,13 @@ func (h *host) afterError(ctx context.Context, run *store.Run, err error, fence 
 }
 
 // startHeartbeat renews the claim's lease until ctx ends. Its channel
-// closes when it has stopped.
-func (h *host) startHeartbeat(ctx context.Context, cancel context.CancelCauseFunc, f store.Fence) <-chan struct{} {
-	done := make(chan struct{})
+// delivers one value when it has stopped: the store.ErrUnusable that
+// stopped it, after cancelling the activation (ADR 0017, item 10), or nil.
+func (h *host) startHeartbeat(ctx context.Context, cancel context.CancelCauseFunc, f store.Fence) <-chan error {
+	done := make(chan error, 1)
 	go func() {
-		defer close(done)
+		var fatal error
+		defer func() { done <- fatal }()
 		t := time.NewTicker(h.heartbeat)
 		defer t.Stop()
 		for {
@@ -173,6 +181,11 @@ func (h *host) startHeartbeat(ctx context.Context, cancel context.CancelCauseFun
 				}
 				h.logger.Error("standalone: ownership lost at heartbeat", "instance", f.Instance)
 				cancel(errHeartbeatLost)
+				return
+			case errors.Is(err, store.ErrUnusable):
+				h.logger.Error("standalone: the store must be reopened", "instance", f.Instance)
+				fatal = fmt.Errorf("heartbeat: %w", err)
+				cancel(fatal)
 				return
 			default:
 				h.logger.Warn("standalone: heartbeat failed", "instance", f.Instance, "error_class", errorClass(err))

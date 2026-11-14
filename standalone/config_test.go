@@ -167,9 +167,10 @@ func TestValidate(t *testing.T) {
 		edit func(*Config)
 		want string
 	}{
-		"no agent type": {func(c *Config) { c.AgentType = "" }, "agent_type is required"},
-		"unregistered":  {func(c *Config) { c.AgentType = "nope" }, `"nope" is not registered`},
-		"no namespace":  {func(c *Config) { c.Namespace = "" }, "namespace is required"},
+		"no agent type":      {func(c *Config) { c.AgentType = "" }, "agent_type is required"},
+		"unregistered":       {func(c *Config) { c.AgentType = "nope" }, `"nope" is not registered`},
+		"no namespace":       {func(c *Config) { c.Namespace = "" }, "namespace is required"},
+		"namespace too long": {func(c *Config) { c.Namespace = strings.Repeat("N", 81) }, "namespace: "},
 		"undeclared trigger": {func(c *Config) {
 			c.AgentType = "modeled"
 			c.Trigger = TriggerConfig{Kind: agent.TriggerFolder, Dir: "/x"}

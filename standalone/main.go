@@ -343,10 +343,33 @@ type report struct {
 	Activated bool `json:"activated"`
 }
 
+// recordedOutcome fills a terminal run's report from the outcome entry
+// its last activation recorded (ADR 0017, item 13): running an input again
+// reports what its run committed, detail and consumption included.
+func (h *host) recordedOutcome(ctx context.Context, rep *report) {
+	es, err := h.st.Entries(ctx, rep.Run, 0)
+	if err != nil {
+		rep.Error = "cannot read the run's recorded outcome: " + errorClass(err)
+		return
+	}
+	for i := len(es) - 1; i >= 0; i-- {
+		if es[i].Kind != agent.EntryOutcome {
+			continue
+		}
+		var out agent.OutcomeEntry
+		if err := json.Unmarshal(es[i].Payload, &out); err != nil {
+			rep.Error = "the run's recorded outcome does not decode"
+			return
+		}
+		rep.Detail, rep.Consumed = out.Detail, out.Consumed
+		return
+	}
+}
+
 // oneShot makes the input's run, activates it if it is runnable, and
 // prints its outcome (ADR 0017, items 13 and 15).
 func (h *host) oneShot(ctx context.Context, path string, stdout, stderr io.Writer) int {
-	in, err := hashInput(path, h.maxInput)
+	in, err := hashInput(path, h.maxInput, false)
 	if err != nil {
 		say(stderr, "run: input %s: %v\n", path, err)
 		return ExitUsage
@@ -375,6 +398,8 @@ func (h *host) oneShot(ctx context.Context, path string, stdout, stderr io.Write
 		}
 	case store.StatusWaiting:
 		rep.Error = "the run is waiting for input, which this host cannot deliver"
+	default:
+		h.recordedOutcome(dctx, &rep)
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")

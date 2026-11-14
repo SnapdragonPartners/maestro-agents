@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"runtime"
 	"slices"
 	"sort"
@@ -60,7 +59,8 @@ func loadCredentials(c *CredentialsConfig, principal string, getenv func(string)
 // readSecretsFile reads a secrets file: a JSON object from name to value,
 // decoded strictly, that only its owner can access.
 func readSecretsFile(path string) (map[string]string, error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the operator names the file
+	// A link is followed: mounted secrets are often links to a file.
+	f, err := openRegular(path, false)
 	if err != nil {
 		return nil, fmt.Errorf("secrets file: %w", err)
 	}
@@ -68,9 +68,6 @@ func readSecretsFile(path string) (map[string]string, error) {
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("secrets file: %w", err)
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("secrets file %s is not a regular file", path)
 	}
 	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("secrets file %s is accessible by its group or others (mode %04o); make it owner-only (chmod 600)", path, fi.Mode().Perm())
@@ -93,7 +90,7 @@ func readSecretsFile(path string) (map[string]string, error) {
 
 // readLimited reads r to its end, refusing more than limit bytes.
 func readLimited(r io.Reader, limit int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	data, err := io.ReadAll(io.LimitReader(r, plusOne(limit)))
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller names the file
 	}

@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -101,7 +103,7 @@ func TestHashInputAndRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "statement.pdf")
 	writeFile(t, path, "hello")
-	in, err := hashInput(path, 1024)
+	in, err := hashInput(path, 1024, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,19 +126,76 @@ func TestHashInputAndRead(t *testing.T) {
 	if _, err := ft.Read(); !errors.Is(err, ErrInputChanged) {
 		t.Fatalf("grown: %v", err)
 	}
-	if _, err := hashInput(path, 5); !errors.Is(err, errTooLarge) {
+	if _, err := hashInput(path, 5, false); !errors.Is(err, errTooLarge) {
 		t.Fatalf("over the limit: %v", err)
 	}
-	if _, err := hashInput(dir, 1024); err == nil {
+	if _, err := hashInput(dir, 1024, false); err == nil {
 		t.Fatal("hashed a directory")
 	}
-	if _, err := hashInput(filepath.Join(dir, "absent"), 1024); err == nil {
+	if _, err := hashInput(filepath.Join(dir, "absent"), 1024, false); err == nil {
 		t.Fatal("hashed a missing file")
 	}
 	for _, bad := range []string{`{}`, `{"path":"/x","sha256":"ab","size":1}`, `nope`} {
 		if _, err := ParseFileTrigger(json.RawMessage(bad)); err == nil {
 			t.Errorf("parsed %s", bad)
 		}
+	}
+}
+
+// TestInputAdmission covers the findings of Codex round 1 on 651edbc: a
+// symbolic link in a watched folder is refused rather than followed, a
+// FIFO is refused without blocking, and the largest max_input_bytes does
+// not overflow (ADR 0017, items 11 and 16).
+func TestInputAdmission(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	writeFile(t, outside, "elsewhere")
+	link := filepath.Join(dir, "ready.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hashInput(link, 1024, true); err == nil {
+		t.Fatal("followed a symbolic link out of a watched folder")
+	}
+	if in, err := hashInput(link, 1024, false); err != nil || in.trigger.Size != 9 {
+		t.Fatalf("an operator's -input link: %+v, %v", in, err)
+	}
+
+	fifo := filepath.Join(dir, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 3)
+	go func() {
+		_, err := hashInput(fifo, 1024, false)
+		done <- err
+		_, err = readSecretsFile(fifo)
+		done <- err
+		_, err = LoadConfig(fifo)
+		done <- err
+	}()
+	for range 3 {
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("FIFO: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("blocked opening a FIFO")
+		}
+	}
+
+	path := filepath.Join(dir, "in.txt")
+	writeFile(t, path, "hello")
+	in, err := hashInput(path, math.MaxInt64, false)
+	if err != nil || in.trigger.Size != 5 || in.trigger.SHA256 != "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("max limit: %+v, %v", in, err)
+	}
+	if b, err := readLimited(strings.NewReader("abc"), math.MaxInt64); err != nil || string(b) != "abc" {
+		t.Fatalf("readLimited at the max: %q, %v", b, err)
+	}
+	if b, err := (FileTrigger{Path: path, SHA256: in.trigger.SHA256, Size: 5}).Read(); err != nil || string(b) != "hello" {
+		t.Fatalf("Read: %q, %v", b, err)
 	}
 }
 

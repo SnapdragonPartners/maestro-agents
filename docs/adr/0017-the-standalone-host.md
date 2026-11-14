@@ -107,7 +107,11 @@ It amends no earlier ADR.
    kind is one the host builds (`one_shot` or `folder`) and the type's
    manifest declares (ADR 0011, item 5); the instance configuration
    validates against the manifest's schema, with the validator the
-   registry uses (`internal/jsonschema`); the namespace is set; budgets
+   registry uses (`internal/jsonschema`); the namespace is set and one the
+   reference stores can hold (`storecore.CheckNamespace`: valid UTF-8,
+   within a path component once encoded), since a namespace the store
+   refuses fails every run with `config_error`, and a failed run is never
+   run again (item 13); budgets
    are non-negative and an estimated token budget sets a limit; a type
    with a model state has a model route, whose provider the program
    offers and whose credential the configuration declares; the store,
@@ -136,7 +140,9 @@ It amends no earlier ADR.
 10. **A store the file store has poisoned stops the host** (ADR 0005, item
     14): an operation returning `store.ErrUnusable` ends the process with
     exit 1, after the other activations have stopped, leaving the restart
-    to the supervisor. Any other store failure is retried (item 17).
+    to the supervisor. A heartbeat that gets it cancels its activation
+    and reports it, so the host stops even while every slot is busy and
+    nothing else touches the store. Any other store failure is retried (item 17).
 
 ### Triggers, instances and runs
 
@@ -146,8 +152,13 @@ It amends no earlier ADR.
     trigger's payload is a `standalone.FileTrigger`: the file's absolute
     path, base name, size and SHA-256. An agent type reads the input with
     `FileTrigger.Read`, which refuses a file whose size or hash no longer
-    matches: the file is left in place, so it can change after the host
-    hashed it, and a run must process the bytes its identity names.
+    matches. Every input, configuration and secrets file is opened
+    non-blocking and its kind checked on the open descriptor, so a FIFO or
+    device is refused rather than hung on; and the one byte past a size
+    limit that shows a file exceeds it saturates at the largest limit
+    rather than overflowing. The trigger's file is re-read because the
+    file is left in place, so it can change after the host hashed it, and
+    a run must process the bytes its identity names.
 12. **Every trigger becomes a run at once**: `EnqueueTrigger`, then
     `CreateRun`, then `RemoveTrigger`. Each is idempotent on the trigger's
     identity (ADR 0006, item 8), so a crash between any two is repaired by
@@ -162,7 +173,9 @@ It amends no earlier ADR.
     not, which choosing that store accepts (MODE-4).
 13. **A run is processed once.** The same bytes name the same run, so
     running a file again, after its run succeeded or failed, reports that
-    run's outcome and does not run it again. Re-running an input
+    run's outcome, read from the outcome entry its last activation
+    recorded (detail and consumption included), and does not run it
+    again. Re-running an input
     deliberately (after a transient `model_error`, say) needs a new trigger
     identity, which this host does not offer: that is a control plane's
     job, deferred with longer-lived instances. A runnable run, left by a
@@ -196,7 +209,9 @@ It amends no earlier ADR.
     latency is nothing to a statement's processing. It considers regular
     files directly in the folder whose names match the pattern; it skips
     subdirectories, symbolic links (a link could point anywhere outside the
-    folder the operator chose) and names starting with `.` (editors' and
+    folder the operator chose; a file swapped for a link after the scan is
+    refused when it is opened, with `O_NOFOLLOW`; an operator's `-input`
+    and a secrets file may be links) and names starting with `.` (editors' and
     copiers' temporary files). A file triggers only once its size and
     modification time are unchanged across two consecutive scans, so a
     file still being copied in is not hashed half-written; a file whose

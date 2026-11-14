@@ -198,8 +198,17 @@ func TestOneShotInputChanged(t *testing.T) {
 	writeFile(t, input, "original")
 	o := runProgram(context.Background(), p, "run", "-config", path, "-input", input)
 	rep := o.report(t)
-	if o.code != ExitIncomplete || rep.Status != store.StatusFailed || rep.Reason.Code != agent.ReasonStateError || pr.readErrs != 1 {
+	if o.code != ExitIncomplete || rep.Status != store.StatusFailed || rep.Reason.Code != agent.ReasonStateError || pr.readErrs != 1 || rep.Detail == "" {
 		t.Fatalf("exit %d %+v", o.code, rep)
+	}
+
+	// Running the input again reports the recorded outcome, detail and
+	// consumption included, without running it (Codex round 1 on 651edbc).
+	writeFile(t, input, "original")
+	o = runProgram(context.Background(), p, "run", "-config", path, "-input", input)
+	again := o.report(t)
+	if o.code != ExitIncomplete || again.Activated || again.Detail != rep.Detail || again.Consumed == nil || again.Status != store.StatusFailed {
+		t.Fatalf("again: exit %d %+v, first %+v", o.code, again, rep)
 	}
 }
 
@@ -601,7 +610,18 @@ type faultyStore struct {
 	mu             sync.Mutex
 	claimFailures  int  // Claim calls to fail with a generic error
 	claimableFatal bool // Claimable returns store.ErrUnusable
+	heartbeatFatal bool // Heartbeat returns store.ErrUnusable
 	claims         int
+}
+
+func (f *faultyStore) Heartbeat(ctx context.Context, fence store.Fence, lease time.Duration) (store.Ownership, error) {
+	f.mu.Lock()
+	fatal := f.heartbeatFatal
+	f.mu.Unlock()
+	if fatal {
+		return store.Ownership{}, fmt.Errorf("poisoned: %w", store.ErrUnusable)
+	}
+	return f.Store.Heartbeat(ctx, fence, lease) //nolint:wrapcheck // a test double
 }
 
 func (f *faultyStore) Claim(ctx context.Context, instance, owner string, lease time.Duration) (store.Ownership, error) {
@@ -666,6 +686,33 @@ func TestWatchRetriesAfterAFailure(t *testing.T) {
 	defer st.mu.Unlock()
 	if st.claims != 2 {
 		t.Fatalf("%d claims", st.claims)
+	}
+}
+
+// TestWatchStopsWhenAHeartbeatFindsTheStoreUnusable: the heartbeat
+// cancels its activation and the watch stops with exit 1, even with every
+// slot busy so that dispatch never lists Claimable (Codex round 1 on
+// 651edbc; ADR 0017, item 10).
+func TestWatchStopsWhenAHeartbeatFindsTheStoreUnusable(t *testing.T) {
+	pr := newProbe()
+	inbox := t.TempDir()
+	st := &faultyStore{Store: memstore.New()}
+	h := watchHost(t, pr, st, inbox)
+	h.heartbeat = 20 * time.Millisecond
+	writeFile(t, filepath.Join(inbox, "a.txt"), "block until shutdown")
+	done := make(chan int)
+	go func() { done <- h.watch(context.Background()) }()
+	waitFor(t, pr.started, 1)
+	st.mu.Lock()
+	st.heartbeatFatal = true
+	st.mu.Unlock()
+	select {
+	case code := <-done:
+		if code != ExitIncomplete {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the watch kept going after a heartbeat found the store unusable")
 	}
 }
 

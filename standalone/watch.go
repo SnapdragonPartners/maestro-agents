@@ -158,7 +158,7 @@ func (w *watcher) scanOnce(ctx context.Context) {
 			return
 		}
 		st := w.scan.files[name]
-		in, err := hashInput(filepath.Join(w.scan.dir, name), w.maxInput)
+		in, err := hashInput(filepath.Join(w.scan.dir, name), w.maxInput, true)
 		if err != nil {
 			if errors.Is(err, errTooLarge) || errors.Is(err, fs.ErrNotExist) {
 				st.done = true

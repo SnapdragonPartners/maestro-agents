@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"math"
 	"path/filepath"
 	"unicode/utf8"
 )
@@ -49,12 +49,12 @@ func ParseFileTrigger(raw json.RawMessage) (FileTrigger, error) {
 // files in place, so a file can change after its trigger, and a run
 // processes the bytes its identity names.
 func (t FileTrigger) Read() ([]byte, error) { //nolint:gocritic // hugeParam: a small value, read once per run
-	f, err := os.Open(t.Path)
+	f, err := openRegular(t.Path, false)
 	if err != nil {
 		return nil, fmt.Errorf("standalone: read input: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, t.Size+1))
+	data, err := io.ReadAll(io.LimitReader(f, plusOne(t.Size)))
 	if err != nil {
 		return nil, fmt.Errorf("standalone: read input: %w", err)
 	}
@@ -63,6 +63,16 @@ func (t FileTrigger) Read() ([]byte, error) { //nolint:gocritic // hugeParam: a 
 		return nil, ErrInputChanged
 	}
 	return data, nil
+}
+
+// plusOne is n+1, saturating: the one byte past a limit that shows a
+// file exceeds it. At math.MaxInt64 no file can exceed the limit, and n+1
+// would wrap to a negative limit that reads nothing (ADR 0017, item 11).
+func plusOne(n int64) int64 {
+	if n == math.MaxInt64 {
+		return n
+	}
+	return n + 1
 }
 
 // ID prefixes (ADR 0017, item 11).
@@ -83,8 +93,9 @@ type input struct {
 var errTooLarge = errors.New("larger than max_input_bytes")
 
 // hashInput reads and hashes an input file of at most limit bytes. It
-// refuses anything but a regular file.
-func hashInput(path string, limit int64) (*input, error) {
+// refuses anything but a regular file, never blocking on a FIFO, and with
+// noFollow a symbolic link (a watched folder's file, ADR 0017 item 16).
+func hashInput(path string, limit int64, noFollow bool) (*input, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller names the input
@@ -94,20 +105,13 @@ func hashInput(path string, limit int64) (*input, error) {
 		// another file.
 		return nil, errors.New("its path is not valid UTF-8")
 	}
-	f, err := os.Open(abs) //nolint:gosec // G304: the operator's input
+	f, err := openRegular(abs, noFollow)
 	if err != nil {
-		return nil, err //nolint:wrapcheck // the PathError names the file
+		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err //nolint:wrapcheck // the PathError names the file
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, errors.New("not a regular file")
-	}
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(f, limit+1))
+	n, err := io.Copy(h, io.LimitReader(f, plusOne(limit)))
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the PathError names the file
 	}
