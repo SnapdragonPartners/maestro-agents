@@ -181,22 +181,28 @@ func (e *Engine) Entries(ctx context.Context, run string, after uint64) ([]store
 		return nil, err
 	}
 	defer e.mu.RUnlock()
-	seqs, err := e.seqs(recordDir(enc))
+	return readSeqDir[store.Entry](e, recordDir(enc), after)
+}
+
+// readSeqDir reads the sequence-named files in dir with sequence numbers
+// greater than after, in order. The caller holds mu for reading.
+func readSeqDir[T any](e *Engine, dir string, after uint64) ([]T, error) {
+	seqs, err := e.seqs(dir)
 	if err != nil {
 		return nil, err
 	}
-	var out []store.Entry
+	var out []T
 	for _, n := range seqs {
 		if n <= after {
 			continue
 		}
-		var en store.Entry
-		found, err := readJSON(e.b, recordDir(enc)+"/"+seqName(n), &en)
+		var v T
+		found, err := readJSON(e.b, dir+"/"+seqName(n), &v)
 		if err != nil {
 			return nil, err
 		}
 		if found {
-			out = append(out, en)
+			out = append(out, v)
 		}
 	}
 	return out, nil

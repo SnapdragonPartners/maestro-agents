@@ -4,7 +4,8 @@
 // TEST-6's two stale-owner interleavings through the store's pause hook,
 // and TEST-5: an agent's activation stopped at every durable boundary and
 // continued by a new one, with no effect duplicated and no work lost
-// (ADR 0008).
+// (ADR 0008). A store that also implements [store.Telemetry] has it
+// checked too (ADR 0016).
 //
 // A host store that claims HOST-6 runs the same suite as the reference
 // stores:
@@ -65,6 +66,7 @@ func Run(t *testing.T, h Harness) {
 	t.Run("StaleOwnerBeforeCommit", func(t *testing.T) { staleOwnerBeforeCommit(t, h) })
 	t.Run("StaleOwnerInsideCommit", func(t *testing.T) { staleOwnerInsideCommit(t, h) })
 	t.Run("CrashRecovery", func(t *testing.T) { crashRecovery(t, h) })
+	t.Run("Telemetry", func(t *testing.T) { testTelemetry(t, h) })
 	t.Run("Durability", func(t *testing.T) {
 		if h.Reopen == nil {
 			t.Skip("store is not durable: Harness.Reopen is nil")

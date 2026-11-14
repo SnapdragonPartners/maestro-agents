@@ -199,3 +199,19 @@ type Claimable struct {
 	Instance string `json:"instance"`
 	Run      string `json:"run"`
 }
+
+// Event is a telemetry event as a store keeps it (STORE-1, HOST-1, ADR
+// 0016): an observation of a run, never state. Its identity is (Run, Seq),
+// and a store keeps the first event written with an identity.
+type Event struct {
+	At  time.Time `json:"at"`
+	Run string    `json:"run"`
+	// Kind is the event's kind; the runtime uses the kind of the
+	// execution-record entry the event projects.
+	Kind string `json:"kind"`
+	// Payload is the event, in its emitter's format.
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// Seq orders a run's events from 1; the runtime uses the sequence of
+	// the entry the event projects.
+	Seq uint64 `json:"seq"`
+}

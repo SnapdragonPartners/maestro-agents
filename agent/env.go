@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"text/template"
 
 	"github.com/SnapdragonPartners/maestro-agents/store"
@@ -23,6 +24,8 @@ type Env struct {
 	config    json.RawMessage
 	run       store.Run
 	templates *template.Template
+	logger    *slog.Logger
+	rc        RunContext
 	budget    BudgetStatus
 	step      uint64
 }
@@ -40,6 +43,20 @@ func (e *Env) Budget() BudgetStatus {
 	}
 	return s
 }
+
+// Logger returns the host's logger (HOST-2, ADR 0016 item 11), with the
+// run, instance and state as attributes. Agent code logs through it, so one
+// host policy governs every line; what its own lines carry is the agent
+// type's responsibility.
+func (e *Env) Logger() *slog.Logger {
+	if e.logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return e.logger
+}
+
+// RunContext returns the run's context (TOOL-8, ADR 0016 item 12).
+func (e *Env) RunContext() RunContext { return e.rc }
 
 // RunID returns the run's ID.
 func (e *Env) RunID() string { return e.run.ID }

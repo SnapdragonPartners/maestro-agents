@@ -290,7 +290,7 @@ func readSkill(granted []*skill) *erasedTool {
 		effect: EffectRead,
 	}
 	et.identity = toolIdentity(&et.def, EffectRead, "", "skills:"+hex.EncodeToString(ids.Sum(nil)))
-	et.exec = func(_ context.Context, _ *Env, _ json.RawMessage, call llms.ToolCall, _ ActionID, _ string, _ bool) (erasedResult, error) {
+	et.exec = func(_ context.Context, _ *Env, _ CredentialProvider, _ json.RawMessage, call llms.ToolCall, _ ActionID, _ string, _ bool) (erasedResult, error) {
 		return readSkillResult(byName, names, call.Parameters), nil
 	}
 	return et
