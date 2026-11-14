@@ -1076,7 +1076,7 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 	err := guard(func() (err error) {
 		d, err = a.c.policy(ctx, &PolicyRequest{
 			Instance: a.run.Instance, AgentType: a.m.name, State: r.st.name, Tool: call.Name, Identity: tool.identity,
-			Effect: tool.effect, Call: cloneCalls([]llms.ToolCall{*call})[0], Action: action,
+			Effect: tool.effect, Call: cloneCalls([]llms.ToolCall{*call})[0], Action: action, Run: a.runContext(),
 		})
 		return err
 	})
@@ -1132,7 +1132,7 @@ func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *Attempt
 	for attempt := 0; ; attempt++ {
 		var res erasedResult
 		err := guard(func() (err error) {
-			res, err = tool.exec(ctx, a.env(), a.cs.Data, cloneCalls([]llms.ToolCall{call})[0], at.Action, at.Key, t.wrapUp)
+			res, err = tool.exec(ctx, a.env(), a.c.creds, a.cs.Data, cloneCalls([]llms.ToolCall{call})[0], at.Action, at.Key, t.wrapUp)
 			return err
 		})
 		// A read's or an atomic local transaction's result after the

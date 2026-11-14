@@ -124,6 +124,25 @@ type Reader interface {
 	ListObjects(ctx context.Context, namespace, prefix string) ([]ObjectInfo, error)
 }
 
+// Telemetry is the optional telemetry storage a store may offer (STORE-1,
+// ADR 0016). It is not part of [Store]: telemetry is written by the host's
+// telemetry sink, not through Commit, and is never fenced, because it is an
+// observation, not state (HOST-1, REC-2). Both reference stores implement
+// it; a host finds it by type assertion.
+type Telemetry interface {
+	// AppendEvents stores events idempotently on (Run, Seq): an event
+	// already stored is kept as it was, and repeating it is not an
+	// error. Events are validated before any is written: a run that is
+	// not a valid ID, a zero Seq, a kind that is not valid UTF-8 or a
+	// payload that is not valid JSON returns [ErrInvalid] and writes
+	// nothing.
+	AppendEvents(ctx context.Context, events []Event) error
+
+	// Events returns the run's events with sequence numbers greater than
+	// after, in order.
+	Events(ctx context.Context, run string, after uint64) ([]Event, error)
+}
+
 // PausePoint names one of TEST-6's two pause points inside a commit
 // (ADR 0005, item 6).
 type PausePoint int

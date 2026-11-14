@@ -20,14 +20,15 @@ Current state: **MVP, step 2 (the vertical slice)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
-confinement, skills and prompt templates, and the model client with
-attempt-level budget admission (`agent/`). The intake agent,
+confinement, skills and prompt templates, the model client with
+attempt-level budget admission, and the host seams for telemetry,
+logging and credentials (`agent/`). The intake agent,
 `cmd/addepar`, has begun with its verifier and exporter (no model, no
 store yet; ADR 0015); the standalone host comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0014, the intake agent's own design ADR 0015 onward; further design
+0014 and 0016, the intake agent's own design ADR 0015; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -116,6 +117,18 @@ Load-bearing decisions so far:
   prompt) and whose identity follows their content; `Env.Render`
   renders a template
   ([ADR 0013](docs/adr/0013-skills-and-prompt-templates.md))
+- Telemetry events (`agent.Event`, HOST-1) each project one committed
+  execution-record entry, keyed by (run, entry sequence), emitted to the
+  host's `Sink` after the commit; they carry IDs, names, counts and codes,
+  never content, and free text (`Detail`) leaves only through the host's
+  `Redactor`; a sink's failure is a logged warning, never a failed run;
+  `store.Telemetry` is an optional store interface both reference stores
+  implement (`agent.StoreSink`); the runtime, agent types (`Env.Logger`)
+  and tools log through one injected `*slog.Logger`; a tool asks for a
+  credential with `Call.Credential`, from the host's `CredentialProvider`
+  keyed by the run context (`RunContext`, with the principal fixed at the
+  run's start), as a `Secret` that never renders its value
+  ([ADR 0016](docs/adr/0016-telemetry-logging-and-credentials.md))
 - The intake agent (`cmd/addepar`) verifies every record in code against
   the PDF's layout-mode text (`maestro-cms`' pdftotext, Poppler): the seven
   checks, with check 4 decided from the page's column headers, never the
@@ -192,11 +205,11 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries (ADR 0007-0014)
+agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials (ADR 0007-0014, 0016)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
-store/storetest/     # Store conformance suite, TEST-5 and TEST-6 included
+store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
 cmd/addepar/         # The capital-statement intake agent (ADR 0015): `verify` command; internal/ holds
