@@ -51,3 +51,4 @@ template.
 | [0014](0014-model-client-and-attempt-admission.md) | The model client and attempt-level admission | Accepted |
 | [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Accepted |
 | [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Accepted |
+| [0017](0017-the-standalone-host.md) | The standalone host | Accepted |
