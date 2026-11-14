@@ -25,7 +25,6 @@ type Env struct {
 	run       store.Run
 	templates *template.Template
 	logger    *slog.Logger
-	creds     CredentialProvider
 	rc        RunContext
 	budget    BudgetStatus
 	step      uint64

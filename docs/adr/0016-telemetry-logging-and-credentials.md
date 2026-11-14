@@ -230,7 +230,10 @@ It amends, item by item:
 13. **A tool asks for a credential when it executes.**
     `Call.Credential(ctx, name)` calls the host's `CredentialProvider`
     (set with `WithCredentials`) with the call's run context and the
-    credential's name, and returns a `Secret`. An `atomic_local` tool
+    credential's name, and returns a `Secret`. The provider travels on
+    the `Call` the runtime makes for a tool it executes, never on `Env`,
+    so a code state, or any `Call` built outside the runtime, has none.
+    An `atomic_local` tool
     receives no provider (ADR 0005, item 9, which this ADR keeps): its
     every request fails with `ErrNoCredential` without reaching the host's
     provider, so it still has no effect beyond its operations. Tools of

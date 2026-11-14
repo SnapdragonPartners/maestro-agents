@@ -183,6 +183,11 @@ type Call[D any] struct {
 	// Env exposes the run and reads of its namespace. An atomic local
 	// transaction reads through it and writes only through Result.Ops.
 	Env *Env
+	// creds is the credential provider the runtime gave this call: the
+	// host's for a tool it executes, none for an atomic-local tool. A Call
+	// built anywhere else (by a code state, say) has none, so authority
+	// reaches only the tools the runtime runs (ADR 0016, item 13).
+	creds CredentialProvider
 	// IdempotencyKey is a write call's idempotency key (TOOL-5), stable
 	// across every issue of the call; a read's is empty.
 	IdempotencyKey string
@@ -202,11 +207,11 @@ func (c *Call[D]) RunContext() RunContext { return c.Env.rc }
 // for the call's run context, when the tool executes (TOOL-8, ADR 0016
 // item 13). Without a provider it fails with ErrNoCredential, and so it
 // always does for an atomic-local tool, which receives no credential
-// provider (ADR 0005, item 9). The runtime never records or logs the
-// secret; a tool that puts its value in a result
-// discloses it to the execution record.
+// provider (ADR 0005, item 9), and for a Call the runtime did not make.
+// The runtime never records or logs the secret; a tool that puts its value
+// in a result discloses it to the execution record.
 func (c *Call[D]) Credential(ctx context.Context, name string) (Secret, error) {
-	creds := c.Env.creds
+	creds := c.creds
 	if creds == nil {
 		creds = noCredentials
 	}
@@ -402,7 +407,7 @@ func (m *erasedModel) definitions() []llms.ToolDefinition {
 }
 
 type erasedTool struct {
-	exec     func(ctx context.Context, env *Env, data json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error)
+	exec     func(ctx context.Context, env *Env, creds CredentialProvider, data json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error)
 	effect   Effect
 	contract WriteContract
 	identity string
@@ -480,7 +485,7 @@ func eraseModel[D any](ms *ModelState[D], typeVersion string, skills []*skill) *
 		}
 		et.identity = toolIdentity(&et.def, t.Effect, t.Contract, version)
 		atomicLocal := t.Contract == ContractAtomicLocal
-		et.exec = func(ctx context.Context, env *Env, raw json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error) {
+		et.exec = func(ctx context.Context, env *Env, creds CredentialProvider, raw json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error) {
 			d, err := decodeData[D](raw)
 			if err != nil {
 				return erasedResult{}, err
@@ -488,11 +493,9 @@ func eraseModel[D any](ms *ModelState[D], typeVersion string, skills []*skill) *
 			if atomicLocal {
 				// An atomic-local tool receives no credential provider (ADR
 				// 0005, item 9): it has no effect beyond its operations.
-				e := *env
-				e.creds = atomicLocalNoCredentials
-				env = &e
+				creds = atomicLocalNoCredentials
 			}
-			res, err := exec(ctx, &Call[D]{Env: env, Data: d, ToolCall: call, Action: action, IdempotencyKey: key, WrapUp: wrapUp})
+			res, err := exec(ctx, &Call[D]{Env: env, creds: creds, Data: d, ToolCall: call, Action: action, IdempotencyKey: key, WrapUp: wrapUp})
 			if err != nil {
 				return erasedResult{}, err
 			}

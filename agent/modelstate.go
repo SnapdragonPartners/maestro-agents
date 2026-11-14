@@ -1132,7 +1132,7 @@ func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *Attempt
 	for attempt := 0; ; attempt++ {
 		var res erasedResult
 		err := guard(func() (err error) {
-			res, err = tool.exec(ctx, a.env(), a.cs.Data, cloneCalls([]llms.ToolCall{call})[0], at.Action, at.Key, t.wrapUp)
+			res, err = tool.exec(ctx, a.env(), a.c.creds, a.cs.Data, cloneCalls([]llms.ToolCall{call})[0], at.Action, at.Key, t.wrapUp)
 			return err
 		})
 		// A read's or an atomic local transaction's result after the

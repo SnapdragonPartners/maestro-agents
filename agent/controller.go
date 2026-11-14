@@ -392,7 +392,7 @@ func (a *activation) env() *Env {
 		reader: a.c.store, templates: a.m.templates, namespace: a.namespace, config: a.config, run: a.run, state: state,
 		step: a.step1(), budget: a.budgetStatus(point),
 		logger: a.c.logger.With("run", a.run.ID, "instance", a.run.Instance, "state", state),
-		creds:  a.c.creds, rc: a.runContext(),
+		rc:     a.runContext(),
 	}
 }
 

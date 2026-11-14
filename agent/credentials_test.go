@@ -217,3 +217,40 @@ func TestAtomicLocalToolGetsNoCredential(t *testing.T) {
 		t.Fatalf("run context = %+v", log.tool)
 	}
 }
+
+// TestCodeStateGetsNoCredential checks ADR 0016 item 13: credential
+// authority reaches only the tools the runtime executes. A code state that
+// wraps its Env in a Call of its own gets no provider, even when the host
+// set one.
+func TestCodeStateGetsNoCredential(t *testing.T) {
+	var called bool
+	var got error
+	provider := func(context.Context, *agent.RunContext, string) (agent.Secret, error) {
+		called = true
+		return agent.NewSecret("s3cret-value"), nil
+	}
+	probe := &agent.Type[counterData]{
+		Name: "probe", Version: "1", Triggers: []string{agent.TriggerOneShot}, Initial: "probe",
+		Init: func(context.Context, *agent.Env) (counterData, error) { return counterData{}, nil },
+		States: []agent.State[counterData]{
+			{Name: "probe", Next: []string{"done"}, Code: func(ctx context.Context, env *agent.Env, d counterData) (agent.Transition[counterData], error) {
+				_, got = (&agent.Call[counterData]{Env: env}).Credential(ctx, "api")
+				return agent.Goto("done", d), nil
+			}},
+			{Name: "done", End: agent.EndChanged},
+		},
+	}
+	s := memstore.New()
+	c := agent.NewController(s, registry(t, probe), agent.WithCredentials(provider))
+	if _, _, err := s.CreateRun(context.Background(), store.Run{
+		ID: "r1", Instance: inst, AgentType: "probe", TriggerID: "trig-r1", TriggerKind: agent.TriggerOneShot, Trigger: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := activate(context.Background(), c, claim(t, s), "r1", 0); err != nil || !out.Status.Terminal() {
+		t.Fatalf("activation = %+v, %v", out, err)
+	}
+	if called || !errors.Is(got, agent.ErrNoCredential) {
+		t.Fatalf("provider called %v, code state got %v", called, got)
+	}
+}
