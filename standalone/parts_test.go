@@ -262,6 +262,29 @@ func TestOpenSink(t *testing.T) {
 	if _, _, err := openSink(&TelemetryConfig{Sink: SinkJSONL, Path: filepath.Join(t.TempDir(), "no", "dir")}, st); err == nil {
 		t.Fatal("an unopenable path")
 	}
+	// A FIFO with no reader is refused at once, not hung on (Codex round
+	// 2 on 04e40e4), and so is a directory.
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := openSink(&TelemetryConfig{Sink: SinkJSONL, Path: fifo}, st)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("opened a FIFO")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked opening a FIFO")
+	}
+	if _, _, err := openSink(&TelemetryConfig{Sink: SinkJSONL, Path: dir}, st); err == nil {
+		t.Fatal("opened a directory")
+	}
 }
 
 // noTelemetry hides a store's store.Telemetry.

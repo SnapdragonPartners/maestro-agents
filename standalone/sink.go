@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 
 	"github.com/SnapdragonPartners/maestro-agents/agent"
@@ -26,9 +25,9 @@ type jsonlSink struct {
 
 // openJSONL opens path for appending, creating it owner-only.
 func openJSONL(path string) (*jsonlSink, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600) //nolint:gosec // G304: the operator names the file
+	f, err := openAppend(path)
 	if err != nil {
-		return nil, err //nolint:wrapcheck // the PathError names the file
+		return nil, err
 	}
 	return &jsonlSink{w: f}, nil
 }

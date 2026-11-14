@@ -256,7 +256,8 @@ It amends no earlier ADR.
 20. **Telemetry and logs** (HOST-1, HOST-2, MODE-7). `telemetry.sink` is
     `none` (the default), `store` (the store's `store.Telemetry`, through
     `agent.StoreSink`) or `jsonl` (one JSON event per line, appended to
-    `telemetry.path`, created owner-only). `telemetry.required` decides
+    `telemetry.path`, created owner-only, opened non-blocking and refused
+    unless it is a regular file, so a FIFO cannot hang the start). `telemetry.required` decides
     what a sink that cannot be set up does: a required one fails `run`
     before any run starts (exit 2); an optional one is a warning, and the
     host runs without telemetry. A sink that fails while running is
