@@ -97,9 +97,7 @@ PR that defines it:
    empty, so the two survive every JSON round trip.
 10. **Telemetry storage is not in this interface yet.** Telemetry is
    written by the telemetry sink, not through `Commit` (ADR 0005, item
-   13), and joins with that sink. (ADR 0016 adds it as the separate,
-   optional `store.Telemetry` interface, which both reference stores
-   implement.)
+   13), and joins with that sink.
 
 ### Tests
 
@@ -119,9 +117,7 @@ PR that defines it:
     to it: it runs the operations' semantics, TEST-6's two interleavings
     and a reopen check. TEST-5 stops an activation at a durable boundary
     and continues it in a new one, so it needs the execution record's
-    runtime, and joins the suite with that runtime. (It has since joined:
-    ADR 0008, item 20, adds it as `CrashRecovery`. ADR 0016 adds the
-    `store.Telemetry` contract, for a store that implements it.)
+    runtime, and joins the suite with that runtime.
     **A reopen keeps owners and epochs and never extends a lease**; the
     suite accepts a store that drops every lease on reopen, as the file
     store does (ADR 0005, item 16, tested in the file store's own tests),
@@ -156,9 +152,7 @@ PR that defines it:
   grows with every key ever written; at the file store's scale this is
   acceptable, and retention tooling comes after the MVP.
 - Telemetry storage, and with it the telemetry record of STORE-1, arrives
-  with the telemetry sink as the separate, optional `store.Telemetry`
-  interface (ADR 0016, item 7), not as an addition to this one; `storetest`
-  checks its contract for a store that implements it.
+  with the telemetry sink, as an addition to this interface.
 
 ## References
 

@@ -45,18 +45,27 @@ It amends, item by item:
   interface, not as an addition to `store.Store`.
 - ADR 0006 item 11 (what `storetest` runs): by item 9, it also checks the
   `store.Telemetry` contract, for a store that implements it.
+- ADR 0006's consequence that telemetry storage arrives "as an addition
+  to this interface": by item 7, it arrives as a separate one.
 - ADR 0007 item 4 (what the activation input carries): by item 12, the
   run's principal too.
+- ADR 0007 item 6 (what ends a run before its start commit lands): by
+  item 12, a principal that is not valid UTF-8 ends it too, with
+  `config_error`, and the ending records the start.
 - ADR 0007 item 8 (the checkpoint's contents): by item 12, the run's
   principal too.
 - ADR 0007 item 13 (what `agent.Env` exposes): by items 11 and 12, also
   the host's logger (`Env.Logger`) and the run context
   (`Env.RunContext`).
+- ADR 0007's consequence listing telemetry events (HOST-1) as not yet
+  built: items 1 to 6 build them.
 - ADR 0008 item 3 (what a `Call` carries): by items 12 and 13, also the
   run context (`Call.RunContext`) and a way to ask for a credential
   (`Call.Credential`).
 - ADR 0008 item 5 (the policy hook's request): by item 12, it also
   carries the run context (`PolicyRequest.Run`).
+- ADR 0011 item 8 (what fails a run with `config_error`): by item 12, a
+  principal that is not valid UTF-8 too.
 
 ## Decision
 
@@ -206,7 +215,9 @@ It amends, item by item:
     authority the run acts under (an operator, a service account). Like
     the namespace, it is recorded in `run_started` and the checkpoint and
     fixed for the run, so a later activation ignores the field. A
-    principal that is not valid UTF-8 fails the start with `config_error`.
+    principal that is not valid UTF-8 fails the start with `config_error`,
+    and, like any terminal ending before the start lands, that ending
+    records the start (ADR 0007, item 6).
     An empty principal is allowed: such a run acts under the host's own
     authority. The policy hook receives the run context in
     `PolicyRequest.Run` (HOST-5).
@@ -269,8 +280,9 @@ It amends, item by item:
 - [ADR 0004](0004-execution-record-and-recovery.md), items 2 and 15
 - [ADR 0005](0005-storage-one-fenced-commit.md), items 13 and 14
 - [ADR 0006](0006-store-interface.md), items 10 and 11
-- [ADR 0007](0007-agent-types-and-the-run-controller.md), items 4, 8 and
-  13
+- [ADR 0007](0007-agent-types-and-the-run-controller.md), items 4, 6, 8
+  and 13
+- [ADR 0011](0011-manifests.md), item 8
 - [ADR 0008](0008-model-states.md), items 3 and 5
 - [ADR 0012](0012-namespace-confinement.md): the namespace, which the
   principal follows

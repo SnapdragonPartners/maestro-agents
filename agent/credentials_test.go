@@ -174,4 +174,13 @@ func TestInvalidPrincipalIsAConfigError(t *testing.T) {
 	if len(log.tool) != 0 {
 		t.Fatal("a tool ran under an invalid principal")
 	}
+	// The refused start is recorded, as every terminal ending before the
+	// start lands is (ADR 0007, item 6).
+	started := false
+	for _, e := range entries(t, s, "r1") {
+		started = started || e.Kind == agent.EntryRunStarted
+	}
+	if !started {
+		t.Fatal("the refused start did not record run_started")
+	}
 }

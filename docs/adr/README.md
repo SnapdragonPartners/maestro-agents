@@ -45,7 +45,7 @@ template.
 | [0008](0008-model-states.md) | Model states | Amended by ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016 |
 | [0009](0009-budgets.md) | Budgets | Amended by ADR-0010, ADR-0011, ADR-0014 |
 | [0010](0010-wrap-up-and-the-visible-clock.md) | Wrap-up and the visible clock | Amended by ADR-0014 |
-| [0011](0011-manifests.md) | Manifests | Amended by ADR-0012, ADR-0013 |
+| [0011](0011-manifests.md) | Manifests | Amended by ADR-0012, ADR-0013, ADR-0016 |
 | [0012](0012-namespace-confinement.md) | Namespace confinement | Accepted |
 | [0013](0013-skills-and-prompt-templates.md) | Skills and prompt templates | Accepted |
 | [0014](0014-model-client-and-attempt-admission.md) | The model client and attempt-level admission | Accepted |

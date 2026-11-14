@@ -181,11 +181,7 @@ results, ADR 0004 items 6 to 10) build on this API in the next PR.
   write-ahead turn; budgets and their consumption (`Outcome.Consumed`);
   manifests, tool grants and the namespaces a state may touch (MAN-1,
   MAN-2); telemetry events (HOST-1); TEST-5 in `storetest`, which needs
-  model states to have effects worth testing (ADR 0006, item 11). (Each
-  has since been settled: model states by ADR 0008, and TEST-5 by its
-  item 20; budgets by ADR 0009; manifests by ADR 0011; the namespace, one
-  per run rather than per state, by ADR 0012; telemetry events by ADR
-  0016.)
+  model states to have effects worth testing (ADR 0006, item 11).
   Heartbeats remain the host's (HOST-4): a long activation's host extends
   the lease while it runs.
 
