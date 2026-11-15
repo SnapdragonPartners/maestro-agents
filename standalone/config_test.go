@@ -187,10 +187,17 @@ func TestValidate(t *testing.T) {
 		"negative deadline":  {func(c *Config) { c.Budgets.DeadlineAfter = -1 }, "budgets.deadline_after"},
 		"model state, none":  {func(c *Config) { c.AgentType = "modeled" }, "has a model state"},
 		"no provider":        {func(c *Config) { c.Model = &ModelConfig{Name: "m"} }, "model.provider is required"},
-		"unknown provider":   {func(c *Config) { c.Model = &ModelConfig{Provider: "acme", Name: "m"} }, `"acme" is not one this program offers (fake)`},
-		"no model name":      {func(c *Config) { c.Model = &ModelConfig{Provider: "fake"} }, "model.name is required"},
-		"undeclared cred":    {func(c *Config) { c.Model = &ModelConfig{Provider: "fake", Name: "m", Credential: "k"} }, `model.credential "k" is not declared`},
-		"negative timeout":   {func(c *Config) { c.Model = &ModelConfig{Provider: "fake", Name: "m", Timeout: -1} }, "model.timeout"},
+		"unknown provider": {func(c *Config) { c.Model = &ModelConfig{Provider: "acme", Name: "m"} },
+			`"acme" is not one this program offers (anthropic, fake, google, ollama, openai, openaicompat)`},
+		"ollama with a key": {func(c *Config) {
+			c.Model = &ModelConfig{Provider: "ollama", Name: "m", Credential: "k"}
+			c.Credentials.Env = map[string]string{"k": "K"}
+		}, `provider "ollama" takes no API key`},
+		"openaicompat, no url": {func(c *Config) { c.Model = &ModelConfig{Provider: "openaicompat", Name: "m"} },
+			`model.base_url is required for provider "openaicompat"`},
+		"no model name":    {func(c *Config) { c.Model = &ModelConfig{Provider: "fake"} }, "model.name is required"},
+		"undeclared cred":  {func(c *Config) { c.Model = &ModelConfig{Provider: "fake", Name: "m", Credential: "k"} }, `model.credential "k" is not declared`},
+		"negative timeout": {func(c *Config) { c.Model = &ModelConfig{Provider: "fake", Name: "m", Timeout: -1} }, "model.timeout"},
 		"negative rate": {func(c *Config) {
 			c.Model = &ModelConfig{Provider: "fake", Name: "m", RateLimit: &RateLimitConfig{TokensPerMinute: -1, MaxConcurrency: -1, MaxWait: -1}}
 		}, "max_wait"},

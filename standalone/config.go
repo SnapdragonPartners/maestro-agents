@@ -83,7 +83,8 @@ type BudgetsConfig struct {
 // ModelConfig is the model route (LLM-3) and its client's tuning.
 type ModelConfig struct {
 	RateLimit *RateLimitConfig `json:"rate_limit,omitempty"`
-	// Provider names a provider the program offers (Program.Providers).
+	// Provider names a maestro-llms provider ID, or one the program adds
+	// (Program.Providers).
 	Provider string `json:"provider"`
 	// Name is the provider's model name.
 	Name string `json:"name"`
@@ -318,6 +319,26 @@ func (b *BudgetsConfig) budgets(now time.Time) agent.Budgets {
 	return out
 }
 
+// validateProvider checks the route's provider (ADR 0017, item 2): built
+// in or added by the program, and for a built-in one, the options
+// providers.New would refuse that the configuration alone shows.
+func (mc *ModelConfig) validateProvider(p *Program) error {
+	id := llms.ProviderID(mc.Provider)
+	switch {
+	case mc.Provider == "":
+		return errors.New("model.provider is required")
+	case p.provider(id) == nil:
+		return fmt.Errorf("model.provider %q is not one this program offers (%s)", mc.Provider, strings.Join(p.providerNames(), ", "))
+	case p.Providers[id] != nil:
+		return nil // the program's own builder decides what its route needs
+	case id == llms.ProviderOllama && mc.Credential != "":
+		return fmt.Errorf("model.credential: provider %q takes no API key", mc.Provider)
+	case id == llms.ProviderOpenAICompat && mc.BaseURL == "":
+		return fmt.Errorf("model.base_url is required for provider %q", mc.Provider)
+	}
+	return nil
+}
+
 func (c *Config) validateModel(p *Program, m *agent.Manifest) []error {
 	var errs []error
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
@@ -331,11 +352,8 @@ func (c *Config) validateModel(p *Program, m *agent.Manifest) []error {
 		}
 		return errs
 	}
-	switch {
-	case mc.Provider == "":
-		add("model.provider is required")
-	case p.Providers[llms.ProviderID(mc.Provider)] == nil:
-		add("model.provider %q is not one this program offers (%s)", mc.Provider, strings.Join(p.providerNames(), ", "))
+	if err := mc.validateProvider(p); err != nil {
+		errs = append(errs, err)
 	}
 	if mc.Name == "" {
 		add("model.name is required")

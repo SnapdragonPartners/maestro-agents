@@ -142,9 +142,10 @@ Load-bearing decisions so far:
   use synthetic statements
   ([ADR 0015](docs/adr/0015-intake-verifier-exporter-and-test-data.md))
 - The standalone host is the package `standalone`: an agent's `main`
-  passes `standalone.Main` a `Program` (registry, model providers, which
-  the executable supplies so the package imports no provider SDK, and
-  optional policy and redactor); `run` and `config validate` read one
+  passes `standalone.Main` a `Program` (registry, and optional extra model
+  providers, policy and redactor); the configuration names the model
+  provider, any `maestro-llms` provider ID, built with `providers.New`
+  (never inferred from the model name); `run` and `config validate` read one
   strictly decoded JSON configuration (exact keys, no repeats), validated
   in full before anything runs; one instance and one run per input file,
   both `sha256-<hex>` of its bytes, so a file is processed once per store

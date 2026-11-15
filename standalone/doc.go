@@ -2,20 +2,20 @@
 // the small program, shipped with the library, that runs an agent type from
 // a declarative JSON configuration.
 //
-// An agent's executable registers its agent types, lists the model
-// providers it offers, and calls Main:
+// An agent's executable registers its agent types and calls Main:
 //
 //	func main() {
 //		reg := agent.NewRegistry()
 //		if err := reg.Register(myagent.Type()); err != nil {
 //			log.Fatal(err)
 //		}
-//		standalone.Main(standalone.Program{
-//			Name:      "myagent",
-//			Registry:  reg,
-//			Providers: map[llms.ProviderID]standalone.Provider{llms.ProviderAnthropic: newAnthropic},
-//		})
+//		standalone.Main(standalone.Program{Name: "myagent", Registry: reg})
 //	}
+//
+// The configuration chooses the model provider: any maestro-llms provider
+// ID, built with maestro-llms' providers.New. Program.Providers adds or
+// replaces a provider for a route the configuration cannot express, such
+// as Vertex AI.
 //
 // The executable then has two commands:
 //

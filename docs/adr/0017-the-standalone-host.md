@@ -54,22 +54,34 @@ It amends no earlier ADR.
 
 1. **`standalone` is a library package; the executable is the agent's.**
    An agent's `main` builds a `standalone.Program` (its name, a
-   `*agent.Registry` holding its agent types, its model providers, and
-   optionally a policy hook and a redactor) and calls
+   `*agent.Registry` holding its agent types, and optionally extra model
+   providers, a policy hook and a redactor) and calls
    `standalone.Main(p)`, which reads `os.Args`, installs the signal
    handling of item 21 and exits with item 22's code. `standalone.Run`
    is the same with the context, arguments and output streams passed in,
    for tests and for an executable that adds its own commands. The
    standalone host is itself a compiled-mode host (MODE-1): it only calls
    the controller and the store.
-2. **Model providers come from the executable.** `Program.Providers` maps
-   a `maestro-llms` provider ID to a function that builds that provider's
-   client from the configured route and its credential. The configuration
-   names a provider; one the program does not offer is a configuration
-   error. So `standalone` imports no provider SDK, and an executable
-   carries only the SDKs of the providers it offers: every importer of a
-   library package pays for its imports (CLAUDE.md, *Dependency
-   Discipline*). The host wraps the provider's client with
+2. **The configuration chooses the model provider.** `model.provider` is
+   any `maestro-llms` provider ID (anthropic, google, ollama, openai,
+   openaicompat), and the host builds its client with `maestro-llms`'
+   `providers.New` (maestro-llms ADR-0048) from the route's model name,
+   base URL and credential, which becomes the API key. The provider is
+   always named, never inferred from the model name: one model is
+   reachable through several providers (Opus through Anthropic or Vertex,
+   an open model through many OpenAI-compatible hosts), so there is no
+   model registry. Changing provider is a configuration change, not a
+   rebuild, so `standalone` links every provider package and the vendor
+   SDKs they import; those versions are `maestro-llms`' (CLAUDE.md,
+   *Dependency Discipline*). `Program.Providers` maps a provider ID to a
+   function that builds a client from the route and its credential: it
+   adds a provider or replaces a built-in one, for a route the
+   configuration cannot express (Vertex AI, whose credentials the
+   application supplies, maestro-llms ADR-0009) or a fake in tests. A
+   provider that is neither built in nor added is a configuration error,
+   and so are an API key for ollama and an openaicompat route without a
+   base URL; any other refusal by `providers.New`, such as a missing API
+   key, fails `run` before anything runs (exit 2). The host wraps the provider's client with
    `agent.NewModelClient` (ADR 0014), once per process, so every
    activation shares one chain and one rate limiter.
 3. **Two commands.** `run -config FILE [-input FILE]` runs the
@@ -113,8 +125,8 @@ It amends no earlier ADR.
    refuses fails every run with `config_error`, and a failed run is never
    run again (item 13); budgets
    are non-negative and an estimated token budget sets a limit; a type
-   with a model state has a model route, whose provider the program
-   offers and whose credential the configuration declares; the store,
+   with a model state has a model route, whose provider is built in or
+   added by the program and whose credential the configuration declares; the store,
    trigger, telemetry and log sections are complete and carry no field
    their kind does not use. So `config validate` catches what would
    otherwise fail each run with `config_error`, and it depends on nothing
@@ -252,7 +264,7 @@ It amends no earlier ADR.
     start, ADR 0016 item 12) is the configured one: a run started under
     another principal does not get this configuration's credentials. The
     model route's credential comes from the same set and goes only to the
-    provider function.
+    provider's constructor.
 20. **Telemetry and logs** (HOST-1, HOST-2, MODE-7). `telemetry.sink` is
     `none` (the default), `store` (the store's `store.Telemetry`, through
     `agent.StoreSink`) or `jsonl` (one JSON event per line, appended to
@@ -288,14 +300,14 @@ It amends no earlier ADR.
     cancelled, or was left runnable by a shutdown or a store failure), or
     a watch's shutdown interrupted an activation or a poisoned store ended
     it; **2**, usage: bad arguments, an invalid configuration, missing
-    credentials, a store, required sink or watched folder that cannot be
-    opened. In a watch, a run that fails is an outcome, logged, not a
+    credentials, a model provider that refuses its route, a store,
+    required sink or watched folder that cannot be opened. In a watch, a run that fails is an outcome, logged, not a
     reason to exit non-zero: the daemon did its job.
 
 ## Consequences
 
-- An agent's executable is a few lines: register its types, list its
-  providers, call `standalone.Main`. The intake agent's `cmd/addepar`
+- An agent's executable is a few lines: register its types, call
+  `standalone.Main`. The intake agent's `cmd/addepar`
   adopts it in the vertical slice; until then the package is exercised by
   its tests, with test agent types.
 - The configuration is the whole deployment: what to run, where state
@@ -307,8 +319,11 @@ It amends no earlier ADR.
 - A crash or restart loses nothing a durable store committed: runs are
   created before they are claimed, and the scheduler's queue is the
   store's set of runnable runs.
-- `standalone` depends on `maestro-llms`' core packages only; the provider
-  SDKs an executable offers are its own imports.
+- Every executable on `standalone` links every `maestro-llms` provider
+  package and its vendor SDK, the price of choosing the provider in
+  configuration. Vertex AI routes need the executable's own
+  `Program.Providers` entry until the configuration can name Vertex
+  credentials.
 
 ## Not decided here
 
@@ -320,8 +335,14 @@ It amends no earlier ADR.
 - **Re-running an input**, longer-lived instances and any other control
   plane: a later orchestrator's.
 - **A shared limiter's degradation** (MODE-7): with the Postgres bucket.
+- **Vertex AI in the configuration**: naming a project, location and
+  service-account credentials so `providers.New`'s Vertex option is
+  reachable without code; until then, `Program.Providers`.
 
 ## References
+
+- [maestro-llms ADR-0048](https://github.com/SnapdragonPartners/maestro-llms/blob/v1.7.0/docs/adr/0048-provider-neutral-constructor.md):
+  `providers.New`, the provider-neutral constructor (maestro-llms #175)
 
 - [Requirements](../requirements.md): MODE-1 to MODE-7, HOST-4, DEL-1,
   STM-9, TOOL-8

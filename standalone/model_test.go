@@ -3,7 +3,11 @@ package standalone
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -152,5 +156,130 @@ func TestMissingCredentialIsAUsageError(t *testing.T) {
 	writeFile(t, input, "x")
 	if o := runProgram(context.Background(), p, "run", "-config", path, "-input", input); o.code != ExitUsage {
 		t.Fatalf("exit %d: %s", o.code, o.stderr.String())
+	}
+}
+
+// completion is an OpenAI Chat Completions response calling one tool.
+func completion(id, tool string) string {
+	return `{"id":"` + id + `","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,` +
+		`"message":{"role":"assistant","content":null,"tool_calls":[{"id":"` + id + `","type":"function",` +
+		`"function":{"name":"` + tool + `","arguments":"{}"}}]},"finish_reason":"tool_calls"}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
+}
+
+// TestBuiltinProvider runs a model state through a provider the host
+// builds itself with providers.New, configured only by the configuration:
+// an openaicompat endpoint, the credential as its bearer key (ADR 0017,
+// item 2).
+func TestBuiltinProvider(t *testing.T) {
+	var mu sync.Mutex
+	var auths, paths []string
+	replies := []string{completion("c1", "fetch"), completion("c2", "finish")}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		auths, paths = append(auths, r.Header.Get("Authorization")), append(paths, r.URL.Path)
+		if len(replies) == 0 {
+			http.Error(w, "no more replies", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, replies[0])
+		replies = replies[1:]
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	var got []string
+	r := agent.NewRegistry()
+	if err := r.Register(credType(&got, &mu)); err != nil {
+		t.Fatal(err)
+	}
+	p := Program{Name: "creds", Registry: r, getenv: func(k string) string {
+		return map[string]string{"API_KEY": "api-secret", "DB": "db-secret"}[k]
+	}}
+	cfg := oneShotConfig(dir)
+	cfg["agent_type"] = "creds"
+	cfg["model"] = map[string]any{"provider": "openaicompat", "name": "m", "base_url": srv.URL + "/v1", "credential": "api"}
+	cfg["credentials"] = map[string]any{"env": map[string]any{"api": "API_KEY", "db": "DB"}}
+	cfg["budgets"] = map[string]any{"turns": 5}
+	path := writeConfig(t, dir, cfg)
+	input := filepath.Join(dir, "in.txt")
+	writeFile(t, input, "statement")
+	o := runProgram(context.Background(), p, "run", "-config", path, "-input", input)
+	if o.code != ExitComplete {
+		t.Fatalf("exit %d: %s %s", o.code, o.stdout.String(), o.stderr.String())
+	}
+	if rep := o.report(t); rep.Status != store.StatusSucceeded {
+		t.Fatalf("report %+v", rep)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(auths) != 2 || auths[0] != "Bearer api-secret" || paths[0] != "/v1/chat/completions" {
+		t.Fatalf("requests: auth %q, paths %q", auths, paths)
+	}
+	if len(got) != 1 || got[0] != "db-secret" {
+		t.Fatalf("tool got %v", got)
+	}
+}
+
+// TestBuiltinProviderRefusal: a built-in provider's constructor refusal
+// (here, no API key) is a usage error before any run starts (ADR 0017,
+// items 2 and 22).
+func TestBuiltinProviderRefusal(t *testing.T) {
+	dir := t.TempDir()
+	r := agent.NewRegistry()
+	if err := r.Register(credType(new([]string), new(sync.Mutex))); err != nil {
+		t.Fatal(err)
+	}
+	p := Program{Registry: r, getenv: func(string) string { return "" }}
+	cfg := oneShotConfig(dir)
+	cfg["agent_type"] = "creds"
+	cfg["model"] = map[string]any{"provider": "anthropic", "name": "claude-opus-5-5"}
+	path := writeConfig(t, dir, cfg)
+	if o := runProgram(context.Background(), p, "config", "validate", "-config", path); o.code != ExitComplete {
+		t.Fatalf("validate: exit %d: %s", o.code, o.stderr.String())
+	}
+	input := filepath.Join(dir, "in.txt")
+	writeFile(t, input, "x")
+	o := runProgram(context.Background(), p, "run", "-config", path, "-input", input)
+	if o.code != ExitUsage || !strings.Contains(o.stderr.String(), "anthropic") {
+		t.Fatalf("exit %d: %s", o.code, o.stderr.String())
+	}
+	if o.stdout.Len() != 0 {
+		t.Fatalf("a run started: %s", o.stdout.String())
+	}
+}
+
+// TestProgramProviderReplacesBuiltin: Program.Providers overrides a
+// built-in ID, for routes the configuration cannot express (ADR 0017,
+// item 2).
+func TestProgramProviderReplacesBuiltin(t *testing.T) {
+	dir := t.TempDir()
+	r := agent.NewRegistry()
+	if err := r.Register(credType(new([]string), new(sync.Mutex))); err != nil {
+		t.Fatal(err)
+	}
+	var key string
+	p := Program{
+		Registry:  r,
+		Providers: map[llms.ProviderID]Provider{llms.ProviderOllama: fakeProvider(&key, toolCall("c1", "finish"))},
+		getenv:    func(k string) string { return map[string]string{"K": "custom-key"}[k] },
+	}
+	cfg := oneShotConfig(dir)
+	cfg["agent_type"] = "creds"
+	// A credential with ollama is refused for the built-in builder, not
+	// for the program's own.
+	cfg["model"] = map[string]any{"provider": "ollama", "name": "m", "credential": "k"}
+	cfg["credentials"] = map[string]any{"env": map[string]any{"k": "K"}}
+	cfg["budgets"] = map[string]any{"turns": 5}
+	path := writeConfig(t, dir, cfg)
+	input := filepath.Join(dir, "in.txt")
+	writeFile(t, input, "x")
+	if o := runProgram(context.Background(), p, "run", "-config", path, "-input", input); o.code != ExitComplete {
+		t.Fatalf("exit %d: %s", o.code, o.stderr.String())
+	}
+	if key != "custom-key" {
+		t.Fatalf("the program's provider got %q", key)
 	}
 }

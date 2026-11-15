@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"syscall"
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers"
 	"github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
 
 	"github.com/SnapdragonPartners/maestro-agents/agent"
@@ -49,13 +51,29 @@ type ModelRoute struct {
 // with agent.NewModelClient (ADR 0017, item 2).
 type Provider func(route ModelRoute, credential agent.Secret) (llms.ChatClient, error)
 
+// builtinProviders are the provider IDs the host builds with maestro-llms'
+// providers.New (ADR 0017, item 2).
+var builtinProviders = []llms.ProviderID{ //nolint:gochecknoglobals // a fixed list
+	llms.ProviderAnthropic, llms.ProviderGoogle, llms.ProviderOllama, llms.ProviderOpenAI, llms.ProviderOpenAICompat,
+}
+
+// builtinProvider builds a route's client with providers.New: the
+// provider's direct API, the credential as its API key.
+func builtinProvider(route ModelRoute, credential agent.Secret) (llms.ChatClient, error) {
+	return providers.New(route.Provider, providers.Options{ //nolint:wrapcheck // the caller names the provider
+		Model: route.Name, APIKey: credential.Reveal(), BaseURL: route.BaseURL,
+	})
+}
+
 // Program is an agent executable: what standalone.Main runs (ADR 0017,
 // item 1).
 type Program struct {
 	// Registry holds the program's agent types.
 	Registry *agent.Registry
-	// Providers are the model providers the program offers, by ID. The
-	// executable imports their SDKs; this package imports none.
+	// Providers adds or replaces model providers, by ID; nil is none. The
+	// host builds every maestro-llms provider itself (builtinProviders);
+	// an entry here is for a route the configuration cannot express, such
+	// as Vertex AI, or a fake in tests.
 	Providers map[llms.ProviderID]Provider
 	// Policy is the policy hook every tool call passes (TOOL-3); nil
 	// allows every call.
@@ -71,15 +89,29 @@ type Program struct {
 	heartbeat time.Duration
 }
 
+// provider returns the builder for id: the program's own, else the
+// built-in one, else nil.
+func (p *Program) provider(id llms.ProviderID) Provider {
+	if f := p.Providers[id]; f != nil {
+		return f
+	}
+	if slices.Contains(builtinProviders, id) {
+		return builtinProvider
+	}
+	return nil
+}
+
 func (p *Program) providerNames() []string {
-	names := make([]string, 0, len(p.Providers))
-	for id := range p.Providers {
+	names := make([]string, 0, len(p.Providers)+len(builtinProviders))
+	for _, id := range builtinProviders {
 		names = append(names, string(id))
 	}
-	sort.Strings(names)
-	if len(names) == 0 {
-		return []string{"none"}
+	for id, f := range p.Providers {
+		if f != nil && !slices.Contains(builtinProviders, id) {
+			names = append(names, string(id))
+		}
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -309,7 +341,7 @@ func newModelClient(p *Program, mc *ModelConfig, creds *credentials) (*agent.Mod
 		}
 	}
 	route := ModelRoute{Provider: llms.ProviderID(mc.Provider), Name: mc.Name, BaseURL: mc.BaseURL}
-	base, err := p.Providers[route.Provider](route, key)
+	base, err := p.provider(route.Provider)(route, key)
 	if err != nil {
 		return nil, fmt.Errorf("provider %q: %w", mc.Provider, err)
 	}
