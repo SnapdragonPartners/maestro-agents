@@ -136,7 +136,8 @@ Load-bearing decisions so far:
   the PDF's layout-mode text (`maestro-cms`' pdftotext, Poppler): the seven
   checks, with check 4 decided from the page's column headers, never the
   record's claim; a copy-restricted PDF is read only under an operator's
-  recorded acceptance, asked at intake; the exporter refuses anything not
+  recorded acceptance (until #17, running the agent is that acceptance:
+  ADR 0018 item 3); the exporter refuses anything not
   approved, verified and accepted, and writes deterministic CSV bytes with
   an evidence manifest. Real statements are client data and never
   committed: they live in the gitignored `.local/addepar/`; committed tests

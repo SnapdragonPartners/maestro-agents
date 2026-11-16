@@ -90,7 +90,9 @@ library API.
      records' check results and the run, step and call that made it, whose
      execution record holds the model, prompt and transcript (N-2);
    - `records/<sha>/<NN>`: each verified record, in the shape the exporter
-     reads (`export.Record`, source `extracted`, no approval);
+     reads: `export.Record` with its source from `export.SourceOf` (the
+     document's hash, name, restriction and any override), and no
+     approval;
    - `outcomes/<sha>`: the disposition (`verified`, `set_aside`,
      `manual_review`), its reason, the records' IDs and the attempt count.
      A writing tool refuses a document that already has one.

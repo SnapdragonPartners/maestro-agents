@@ -174,11 +174,18 @@ to N-7. Three depart from that document:
   it does not need MCP to reach them; exposing them over MCP is deferred
   (TOOL-6's reverse direction).
 - **Prototype language.** Go, not Python (requirements section 6).
-- **I-3 (copy-restricted PDFs).** Not straight to manual entry: the
-  operator is asked at intake whether to read the text layer; accepting is
-  recorded and the statement is verified as usual, declining sends it to
-  manual entry ([ADR 0015](adr/0015-intake-verifier-exporter-and-test-data.md)).
-  Two of the five samples are copy-restricted.
+- **I-3 (copy-restricted PDFs).** Not straight to manual entry: the text
+  layer is read under the operator's recorded acceptance, and the
+  statement is verified as usual
+  ([ADR 0015](adr/0015-intake-verifier-exporter-and-test-data.md)). Until
+  [#17](https://github.com/SnapdragonPartners/maestro-agents/issues/17)
+  builds acceptance per document, running the agent is that acceptance,
+  recorded as an override on the stored document, its records and the
+  manifest; there is no declining path, and a copy-restricted statement
+  dropped into a watched folder is read too
+  ([ADR 0018](adr/0018-the-intake-agent-type-and-the-vertical-slice.md),
+  item 3). `addepar verify` still reads one only with `-override-by` and
+  `-override-reason`. Two of the five samples are copy-restricted.
 
 N-5 asks for data at rest to be encrypted. The file store does not
 encrypt; the MVP relies on the operating system's full-disk encryption,

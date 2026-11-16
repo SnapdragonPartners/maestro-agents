@@ -52,7 +52,7 @@ const (
 const maxPDFBytes = 64 << 20
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "verify" {
+	if hostCommand(os.Args[1:]) {
 		standalone.Main(program(nil))
 		return
 	}
@@ -62,9 +62,23 @@ func main() {
 	os.Exit(code)
 }
 
+// hostCommand reports whether args name one of the standalone host's
+// commands, run and config; every other invocation, a bad one included, is
+// addepar's own, so its usage lists all three.
+func hostCommand(args []string) bool {
+	return len(args) > 0 && (args[0] == "run" || args[0] == "config")
+}
+
+// usage lists every addepar command.
+const usage = `usage:
+  addepar run -config FILE [-input FILE]
+  addepar config validate -config FILE
+  addepar verify -pdf FILE -record FILE [-override-by NAME -override-reason TEXT]
+`
+
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "verify" {
-		say(stderr, "usage: addepar verify -pdf FILE -record FILE [-override-by NAME -override-reason TEXT]\n")
+		say(stderr, usage)
 		return exitUsage
 	}
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
