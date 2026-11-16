@@ -25,13 +25,14 @@ attempt-level budget admission, and the host seams for telemetry,
 logging and credentials (`agent/`), and the standalone host
 (`standalone/`, ADR 0017). The intake agent, `cmd/addepar`, has its
 verifier and exporter (ADR 0015) and its agent type on the standalone
-host, with the vertical slice's evidence (ADR 0018); the extraction
-agent (the PDF sent to the model, live-model acceptance) comes next. The requirements are in
+host, with the vertical slice's evidence (ADR 0018), and the extraction
+agent, whose model reads the PDF beside its text (ADR 0019); the scoring
+harness comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
 0014 and 0016, the standalone host ADR 0017, the intake agent's own
-design ADRs 0015 and 0018; further design
+design ADRs 0015, 0018 and 0019; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -172,6 +173,17 @@ Load-bearing decisions so far:
   recorded acceptance to read a copy-restricted PDF; TEST-5 and TEST-6 run
   on the agent itself against the file store
   ([ADR 0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md))
+- The extraction agent reads the PDF (type version 2): `load` also stores
+  the PDF's bytes at `pdfs/<sha256>`; `get_document` returns the PDF as a
+  document part, sent only if it hashes to the document's SHA-256, then
+  the layout text, which the model copies values from, since code
+  verifies against it; a PDF over 100 pages or 20 MiB is read as text
+  alone, recorded on the document and each attempt; no-text PDFs still go
+  to manual review; every permission (reading and sending a
+  copy-restricted PDF included) is implicit until the gates are built
+  (#17, TOOL-4); real statements go to a live model in testing only
+  through Vertex AI or OpenAI
+  ([ADR 0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md))
 
 ### Related repositories
 
@@ -246,7 +258,7 @@ store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
-cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018): `run` (standalone host) and `verify`;
+cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019): `run` (standalone host) and `verify`;
                      #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
                      #   decimal, document (hash, pdfinfo, layout text), statement (the record),
                      #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs)

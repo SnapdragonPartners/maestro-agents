@@ -52,4 +52,5 @@ template.
 | [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Amended by ADR-0018 |
 | [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Accepted |
 | [0017](0017-the-standalone-host.md) | The standalone host | Accepted |
-| [0018](0018-the-intake-agent-type-and-the-vertical-slice.md) | The intake agent type and the vertical slice | Accepted |
+| [0018](0018-the-intake-agent-type-and-the-vertical-slice.md) | The intake agent type and the vertical slice | Amended by ADR-0019 |
+| [0019](0019-the-extraction-agent-reads-the-pdf.md) | The extraction agent reads the PDF | Accepted |

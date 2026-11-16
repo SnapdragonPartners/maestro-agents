@@ -67,17 +67,28 @@ func toolResults(req llms.ChatRequest) []llms.ToolResult {
 func TestExtractVerifies(t *testing.T) {
 	c := synthetic(t, "keelson-vi")
 	sc := &scripted{script: []llms.ChatResponse{
-		getDocument("1"),
+		getDocument(),
 		submit("2", mutated(t, c, "total-fund column chosen")),
 		submit("3", c.Record),
 	}}
 	s, sha, out := run(t, "keelson-vi", sc, nil, agent.Budgets{}, intake.Options{})
 	wantSucceeded(t, out, agent.ReasonChanged)
 
-	// The model read the page's text, with each label beside its numbers.
+	// The model read the PDF itself and the page's text, with each label
+	// beside its numbers (ADR 0019).
 	res := toolResults(sc.seen[1])
-	if len(res) != 1 || !strings.Contains(res[0].Content, "Partners' capital account, end of period") || !strings.Contains(res[0].Content, "678,250") {
+	if len(res) != 1 || res[0].Content != "" {
 		t.Fatalf("get_document result = %+v", res)
+	}
+	if text := resultText(res[0]); !strings.Contains(text, "Partners' capital account, end of period") || !strings.Contains(text, "678,250") || strings.Contains(text, "not attached") {
+		t.Fatalf("get_document text = %q", text)
+	}
+	pdfs := resultPDFs(res[0])
+	if len(pdfs) != 1 || pdfs[0].Media.MediaType != "application/pdf" || document.Hash(pdfs[0].Media.Data) != sha || res[0].Parts[0].Type != llms.ContentDocument {
+		t.Fatalf("get_document parts = %+v", res[0].Parts)
+	}
+	if got := storedPDF(t, s, sha); document.Hash(got) != sha {
+		t.Fatalf("stored PDF hashes to %s, want %s", document.Hash(got), sha)
 	}
 	// The failed submission's reasons name check 4.
 	res = toolResults(sc.seen[2])
@@ -89,7 +100,7 @@ func TestExtractVerifies(t *testing.T) {
 	if len(atts) != 2 {
 		t.Fatalf("%d attempts stored, want 2", len(atts))
 	}
-	if a := atts[0]; a.N != 1 || a.Verdict != verify.Fail || len(a.Records) != 1 || !slices.Equal(a.Records[0].Result.Failed(), []int{verify.CheckInvestor}) {
+	if a := atts[0]; a.N != 1 || a.Reading != intake.ReadingPDFAndText || a.Verdict != verify.Fail || len(a.Records) != 1 || !slices.Equal(a.Records[0].Result.Failed(), []int{verify.CheckInvestor}) {
 		t.Fatalf("attempt 1 = %+v", a)
 	}
 	if a := atts[1]; a.N != 2 || a.Verdict != verify.Warn || a.Run != runID(sha) || a.Step == 0 {
@@ -115,7 +126,8 @@ func TestExtractVerifies(t *testing.T) {
 		t.Fatalf("outcome = %+v, %v", o, ok)
 	}
 	var doc intake.Document
-	if !getJSON(t, s, intake.DocumentKey(sha), &doc) || doc.Document.SHA256 != sha || len(doc.Text) != 1 || !doc.Received.Equal(fixedNow) {
+	if !getJSON(t, s, intake.DocumentKey(sha), &doc) || doc.Document.SHA256 != sha || len(doc.Text) != 1 || !doc.Received.Equal(fixedNow) ||
+		doc.Reading != intake.ReadingPDFAndText || doc.ReadingNote != "" {
 		t.Fatalf("document = %+v", doc)
 	}
 }
@@ -365,7 +377,7 @@ func TestSetAside(t *testing.T) {
 
 func TestManualReview(t *testing.T) {
 	sc := &scripted{script: []llms.ChatResponse{
-		getDocument("1"),
+		getDocument(),
 		turn(toolCall("2", "request_manual_review", `{"reason":"the roll-forward's labels wrap onto two lines"}`)),
 	}}
 	s, sha, out := run(t, "keelson-vi", sc, nil, agent.Budgets{}, intake.Options{})
@@ -400,7 +412,7 @@ func TestCopyRestrictedImplicitAcceptance(t *testing.T) {
 	if !c.CopyRestricted {
 		t.Fatal("brightwater-iv is no longer copy-restricted")
 	}
-	sc := &scripted{script: []llms.ChatResponse{submit("1", c.Record)}}
+	sc := &scripted{script: []llms.ChatResponse{getDocument(), submit("2", c.Record)}}
 	s, sha, out := run(t, "brightwater-iv", sc, nil, agent.Budgets{}, intake.Options{})
 	wantSucceeded(t, out, agent.ReasonChanged)
 	var doc intake.Document
@@ -412,6 +424,11 @@ func TestCopyRestrictedImplicitAcceptance(t *testing.T) {
 	recs := records(t, s, sha)
 	if len(recs) != 1 || recs[0].Source.Override == nil || *recs[0].Source.Override != *ov {
 		t.Fatalf("records = %+v", recs)
+	}
+	// The same acceptance covers sending the PDF itself to the model
+	// (ADR 0019).
+	if res := toolResults(sc.seen[1]); len(res) != 1 || len(resultPDFs(res[0])) != 1 {
+		t.Fatalf("get_document result = %+v", res)
 	}
 }
 
@@ -425,6 +442,75 @@ func TestUnrestrictedHasNoOverride(t *testing.T) {
 	if doc.Document.Override != nil {
 		t.Fatalf("override on an unrestricted document: %+v", doc.Document.Override)
 	}
+}
+
+// TestOversizedPDFIsReadAsText: a PDF over the size sent to the model is
+// read through its text alone, which get_document says, and the attempt
+// records (ADR 0019). The record is still verified as usual.
+func TestOversizedPDFIsReadAsText(t *testing.T) {
+	c := synthetic(t, "keelson-vi")
+	long := func(ctx context.Context, name string, data []byte, o document.Options) (*document.Document, error) {
+		doc, err := document.Load(ctx, name, data, o)
+		if err == nil {
+			doc.PageCount = intake.MaxPDFPages + 1 // the stored text keeps the real page
+		}
+		return doc, err
+	}
+	sc := &scripted{script: []llms.ChatResponse{getDocument(), submit("2", c.Record)}}
+	s, sha, out := run(t, "keelson-vi", sc, nil, agent.Budgets{}, intake.Options{Load: long})
+	wantSucceeded(t, out, agent.ReasonChanged)
+	res := toolResults(sc.seen[1])
+	if len(res) != 1 || len(resultPDFs(res[0])) != 0 {
+		t.Fatalf("get_document result = %+v", res)
+	}
+	if text := resultText(res[0]); !strings.Contains(text, "not attached") || !strings.Contains(text, "101 pages") || !strings.Contains(text, "678,250") {
+		t.Fatalf("get_document text = %q", text)
+	}
+	var doc intake.Document
+	if !getJSON(t, s, intake.DocumentKey(sha), &doc) || doc.Reading != intake.ReadingTextOnly || !strings.Contains(doc.ReadingNote, "101 pages") {
+		t.Fatalf("document reading = %q, %q", doc.Reading, doc.ReadingNote)
+	}
+	if atts := attempts(t, s, sha); len(atts) != 1 || atts[0].Reading != intake.ReadingTextOnly || atts[0].Verdict == verify.Fail {
+		t.Fatalf("attempts = %+v", atts)
+	}
+	if got := storedPDF(t, s, sha); document.Hash(got) != sha {
+		t.Fatal("the oversized PDF was not stored")
+	}
+}
+
+// TestStoredPDFMismatchFailsTheCall: get_document never sends bytes that do
+// not hash to the document's SHA-256.
+func TestStoredPDFMismatchFailsTheCall(t *testing.T) {
+	needPoppler(t)
+	s := memstore.New()
+	t.Cleanup(func() { _ = s.Close() })
+	pdf := writePDF(t, t.TempDir(), synthetic(t, "keelson-vi"))
+	sha := createRun(t, s, pdf)
+	reg := registry(t, intake.Options{})
+	tamper := &tampering{Store: s, key: intake.PDFKey(sha)}
+	sc := &scripted{script: []llms.ChatResponse{getDocument(), submit("2", synthetic(t, "keelson-vi").Record)}}
+	out, err := activate(t, tamper, s, reg, sha, ownerA, sc, nil, agent.Budgets{})
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if out.Status != store.StatusFailed || out.Reason.Code != agent.ReasonToolError || len(sc.seen) != 1 {
+		t.Fatalf("outcome = %+v after %d model calls", out, len(sc.seen))
+	}
+}
+
+// tampering serves one object's bytes altered.
+type tampering struct {
+	store.Store
+	key string
+}
+
+func (s *tampering) Object(ctx context.Context, ns, key string) (store.Object, bool, error) {
+	obj, ok, err := s.Store.Object(ctx, ns, key)
+	if ok && key == s.key && len(obj.Bytes) > 0 {
+		obj.Bytes = append([]byte{}, obj.Bytes...)
+		obj.Bytes[len(obj.Bytes)-1] ^= 1
+	}
+	return obj, ok, err //nolint:wrapcheck // a transparent wrapper
 }
 
 // TestNoTextLayer: a PDF with no usable text goes to manual review without

@@ -169,7 +169,7 @@ func turn(calls ...llms.ToolCall) llms.ChatResponse {
 	return llms.ChatResponse{Message: llms.Message{Role: llms.RoleAssistant, Content: parts}, ToolCalls: calls}
 }
 
-func getDocument(id string) llms.ChatResponse { return turn(toolCall(id, "get_document", `{}`)) }
+func getDocument() llms.ChatResponse { return turn(toolCall("doc", "get_document", `{}`)) }
 
 func submit(id string, recs ...json.RawMessage) llms.ChatResponse {
 	b, err := json.Marshal(map[string]any{"records": recs})
@@ -348,4 +348,43 @@ func canonical(t testing.TB, raw []byte) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// resultText is a tool result's text: its content, or its text parts
+// joined.
+func resultText(r llms.ToolResult) string {
+	if len(r.Parts) == 0 {
+		return r.Content
+	}
+	var b strings.Builder
+	for _, p := range r.Parts {
+		if p.Type == llms.ContentText {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
+}
+
+// resultPDFs are a tool result's document parts.
+func resultPDFs(r llms.ToolResult) []llms.ContentPart {
+	var out []llms.ContentPart
+	for _, p := range r.Parts {
+		if p.Type == llms.ContentDocument {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// storedPDF is the PDF bytes stored for a document, or nil.
+func storedPDF(t testing.TB, s store.Store, sha string) []byte {
+	t.Helper()
+	obj, ok, err := s.Object(context.Background(), namespace, intake.PDFKey(sha))
+	if err != nil {
+		t.Fatalf("Object %s: %v", intake.PDFKey(sha), err)
+	}
+	if !ok {
+		return nil
+	}
+	return obj.Bytes
 }

@@ -54,7 +54,7 @@ func TestLocalSamples(t *testing.T) {
 			s := openFile(t, t.TempDir(), clk)
 			defer s.Close()
 			sha := createRun(t, s, filepath.Join(dir, "statements", c.Statement))
-			sc := &scripted{script: []llms.ChatResponse{getDocument("1"), submit("2", c.Record)}}
+			sc := &scripted{script: []llms.ChatResponse{getDocument(), submit("2", c.Record)}}
 			out, err := activate(t, s, s, reg, sha, ownerA, sc, nil, agent.Budgets{})
 			if err != nil || out.Status != store.StatusSucceeded {
 				t.Fatalf("activation = %s/%s, %v", out.Status, out.Reason.Code, err)

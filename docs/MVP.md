@@ -184,7 +184,9 @@ to N-7. Three depart from that document:
   manifest; there is no declining path, and a copy-restricted statement
   dropped into a watched folder is read too
   ([ADR 0018](adr/0018-the-intake-agent-type-and-the-vertical-slice.md),
-  item 3). `addepar verify` still reads one only with `-override-by` and
+  item 3), and the PDF itself is sent to the model under the same
+  acceptance ([ADR 0019](adr/0019-the-extraction-agent-reads-the-pdf.md),
+  item 4). `addepar verify` still reads one only with `-override-by` and
   `-override-reason`. Two of the five samples are copy-restricted.
 
 N-5 asks for data at rest to be encrypted. The file store does not
@@ -215,6 +217,9 @@ an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
    the real samples stay out of the repository, in `.local/addepar/`.
 4. **The extraction agent** on the full library: visual reading once
    LLM-2 and TOOL-11 land, the headless runner and the folder trigger.
+   Built: the runner and the trigger are the standalone host (ADR 0017),
+   and `get_document` sends the PDF beside its text
+   ([ADR 0019](adr/0019-the-extraction-agent-reads-the-pdf.md)).
 5. **The scoring harness** (TEST-4) against the 3/31/2026 answer key.
 6. **The review UI**, embedded and served on localhost, with evidence
    highlighting from `maestro-cms#25`.

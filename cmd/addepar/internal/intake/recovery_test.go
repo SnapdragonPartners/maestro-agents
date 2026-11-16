@@ -33,7 +33,7 @@ func sliceScript(t testing.TB) []llms.ChatResponse {
 	t.Helper()
 	c := synthetic(t, "keelson-vi")
 	return []llms.ChatResponse{
-		getDocument("1"),
+		getDocument(),
 		submit("2", mutated(t, c, "total-fund column chosen")),
 		submit("3", c.Record),
 	}

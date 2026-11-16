@@ -53,17 +53,28 @@ func (a *intake) getDocument() agent.Tool[Data] {
 	return agent.Tool[Data]{
 		Definition: llms.ToolDefinition{
 			Name:        toolGetDocument,
-			Description: "Read the statement: its page count and each page's text in layout mode, which keeps each printed line, and each label beside its numbers, on one line.",
+			Description: "Read the statement: the PDF itself, to see its pages, and its page count and each page's text in layout mode, which keeps each printed line, and each label beside its numbers, on one line. Copy names, labels and amounts from the text.",
 			InputSchema: json.RawMessage(emptySchema),
 		},
 		Effect: agent.EffectRead,
 		Execute: func(ctx context.Context, c *agent.Call[Data]) (agent.Result[Data], error) {
-			doc, err := readDocument(ctx, c.Env, c.Data.Document)
+			var stored Document
+			ok, err := readJSON(ctx, c.Env, DocumentKey(c.Data.Document), &stored)
+			if err != nil {
+				return agent.Result[Data]{}, err
+			}
+			if !ok {
+				return agent.Result[Data]{}, fmt.Errorf("intake: document %s is not stored", c.Data.Document)
+			}
+			doc, err := stored.Doc()
 			if err != nil {
 				return agent.Result[Data]{}, err
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "%d page(s); text layer %s.\n", doc.PageCount, doc.TextLayer)
+			if stored.Reading != ReadingPDFAndText {
+				fmt.Fprintf(&b, "The PDF itself is not attached: %s. Read the text alone.\n", stored.ReadingNote)
+			}
 			for _, p := range doc.Pages {
 				fmt.Fprintf(&b, "\n=== page %d ===\n", p.Number)
 				if !p.Usable {
@@ -75,7 +86,23 @@ func (a *intake) getDocument() agent.Tool[Data] {
 					b.WriteString("\n")
 				}
 			}
-			return agent.TextResult[Data](b.String()), nil
+			if stored.Reading != ReadingPDFAndText {
+				return agent.TextResult[Data](b.String()), nil
+			}
+			pdf, ok, err := c.Env.Object(ctx, PDFKey(c.Data.Document))
+			if err != nil {
+				return agent.Result[Data]{}, err //nolint:wrapcheck // a *agent.ReadError, which the runtime classifies
+			}
+			if !ok || len(pdf.Bytes) == 0 {
+				return agent.Result[Data]{}, fmt.Errorf("intake: PDF %s is not stored", c.Data.Document)
+			}
+			if document.Hash(pdf.Bytes) != c.Data.Document {
+				return agent.Result[Data]{}, fmt.Errorf("intake: stored PDF %s does not match its hash", c.Data.Document)
+			}
+			return agent.Result[Data]{Parts: []llms.ContentPart{
+				llms.Document(pdfMediaType, pdf.Bytes),
+				llms.Text(b.String()),
+			}}, nil
 		},
 	}
 }
@@ -130,7 +157,7 @@ func (a *intake) submitExec(ctx context.Context, c *agent.Call[Data]) (agent.Res
 	now := a.now()
 	att := Attempt{
 		N: len(prior) + 1, Run: env.RunID(), Step: env.Step(), Call: c.Action.Call, At: now,
-		Submitted: c.ToolCall.Parameters, WrapUp: c.WrapUp,
+		Submitted: c.ToolCall.Parameters, WrapUp: c.WrapUp, Reading: d.Reading,
 	}
 	verifySubmission(doc, &att)
 	attOp, err := putNew(env, AttemptKey(d.Document, att.N), &att)
