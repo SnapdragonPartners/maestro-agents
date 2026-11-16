@@ -70,7 +70,7 @@ func TestDecodeStrict(t *testing.T) {
 func TestLoadConfigResolvesRelativePaths(t *testing.T) {
 	dir := t.TempDir()
 	inbox := filepath.Join(t.TempDir(), "inbox") // absolute on every platform
-	path := writeConfig(t, dir, map[string]any{
+	path := writeConfigFile(t, dir, map[string]any{
 		"agent_type": "probe", "namespace": "n",
 		"store":       map[string]any{"kind": "file", "dir": "state"},
 		"trigger":     map[string]any{"kind": "folder", "dir": inbox, "poll_interval": "2s"},

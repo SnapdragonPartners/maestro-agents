@@ -114,7 +114,18 @@ func probeProgram(t testing.TB, p *probe) Program {
 }
 
 // writeConfig writes a configuration to dir/config.json.
+// writeConfig writes a configuration for a test that runs it, skipping
+// the test where its store cannot open.
 func writeConfig(t testing.TB, dir string, cfg map[string]any) string {
+	t.Helper()
+	if st, _ := cfg["store"].(map[string]any); st["kind"] == StoreFile && !fileStoreSupported {
+		t.Skip("the file store does not support this platform")
+	}
+	return writeConfigFile(t, dir, cfg)
+}
+
+// writeConfigFile writes a configuration that is only loaded.
+func writeConfigFile(t testing.TB, dir string, cfg map[string]any) string {
 	t.Helper()
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
