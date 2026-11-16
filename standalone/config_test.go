@@ -69,10 +69,11 @@ func TestDecodeStrict(t *testing.T) {
 
 func TestLoadConfigResolvesRelativePaths(t *testing.T) {
 	dir := t.TempDir()
+	inbox := filepath.Join(t.TempDir(), "inbox") // absolute on every platform
 	path := writeConfig(t, dir, map[string]any{
 		"agent_type": "probe", "namespace": "n",
 		"store":       map[string]any{"kind": "file", "dir": "state"},
-		"trigger":     map[string]any{"kind": "folder", "dir": "/abs/inbox", "poll_interval": "2s"},
+		"trigger":     map[string]any{"kind": "folder", "dir": inbox, "poll_interval": "2s"},
 		"credentials": map[string]any{"file": "secrets.json"},
 		"telemetry":   map[string]any{"sink": "jsonl", "path": "events.jsonl"},
 		"budgets":     map[string]any{"active_time": "10m", "deadline_after": "1h", "turns": 3},
@@ -84,7 +85,7 @@ func TestLoadConfigResolvesRelativePaths(t *testing.T) {
 	abs, _ := filepath.Abs(dir)
 	for got, want := range map[string]string{
 		c.Store.Dir:        filepath.Join(abs, "state"),
-		c.Trigger.Dir:      "/abs/inbox",
+		c.Trigger.Dir:      inbox,
 		c.Credentials.File: filepath.Join(abs, "secrets.json"),
 		c.Telemetry.Path:   filepath.Join(abs, "events.jsonl"),
 	} {
@@ -167,8 +168,10 @@ func TestValidate(t *testing.T) {
 	// file is refused there (ADR 0017, item 19).
 	withFile := base()
 	withFile.Credentials.File = "/s.json"
-	if err := withFile.Validate(&p); err != nil {
-		t.Fatalf("secrets file here: %v", err)
+	unix := p
+	unix.goos = "linux"
+	if err := withFile.Validate(&unix); err != nil {
+		t.Fatalf("secrets file on linux: %v", err)
 	}
 	win := p
 	win.goos = "windows"
@@ -224,6 +227,9 @@ func TestValidate(t *testing.T) {
 		"folder without dir": {func(c *Config) { c.Trigger = TriggerConfig{Kind: agent.TriggerFolder} }, "trigger.dir is required"},
 		"bad pattern":        {func(c *Config) { c.Trigger = TriggerConfig{Kind: agent.TriggerFolder, Dir: "/x", Pattern: "["} }, "trigger.pattern"},
 		"pattern with path":  {func(c *Config) { c.Trigger = TriggerConfig{Kind: agent.TriggerFolder, Dir: "/x", Pattern: "a/*.pdf"} }, "names a path"},
+		"pattern, separator": {func(c *Config) {
+			c.Trigger = TriggerConfig{Kind: agent.TriggerFolder, Dir: "/x", Pattern: "a" + string(filepath.Separator) + "*.pdf"}
+		}, "names a path"},
 		"poll too fast": {func(c *Config) {
 			c.Trigger = TriggerConfig{Kind: agent.TriggerFolder, Dir: "/x", PollInterval: Duration(time.Millisecond)}
 		}, "is below"},

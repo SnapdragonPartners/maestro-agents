@@ -411,7 +411,8 @@ func (t *TriggerConfig) validate() []error {
 		if _, err := filepath.Match(t.pattern(), ""); err != nil {
 			add("trigger.pattern %q: %v", t.Pattern, err)
 		}
-		if strings.ContainsRune(t.Pattern, filepath.Separator) {
+		// '/' separates paths on every platform, Windows included.
+		if strings.ContainsAny(t.Pattern, "/"+string(filepath.Separator)) {
 			add("trigger.pattern %q names a path; it matches names in trigger.dir", t.Pattern)
 		}
 		if t.PollInterval != 0 && time.Duration(t.PollInterval) < MinPollInterval {
