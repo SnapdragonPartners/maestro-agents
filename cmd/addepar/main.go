@@ -63,10 +63,16 @@ func main() {
 }
 
 // hostCommand reports whether args name one of the standalone host's
-// commands, run and config; every other invocation, a bad one included, is
-// addepar's own, so its usage lists all three.
+// commands, run and config validate; every other invocation, a bad one
+// included, is addepar's own, so its usage lists all three.
 func hostCommand(args []string) bool {
-	return len(args) > 0 && (args[0] == "run" || args[0] == "config")
+	switch {
+	case len(args) >= 1 && args[0] == "run":
+		return true
+	case len(args) >= 2 && args[0] == "config" && args[1] == "validate":
+		return true
+	}
+	return false
 }
 
 // usage lists every addepar command.

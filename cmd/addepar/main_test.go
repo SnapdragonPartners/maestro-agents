@@ -25,7 +25,7 @@ import (
 )
 
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{nil, {"export"}, {"verify"}, {"verify", "-pdf", "x"}, {"verify", "-bogus"}} {
+	for _, args := range [][]string{nil, {"export"}, {"config"}, {"config", "check"}, {"verify"}, {"verify", "-pdf", "x"}, {"verify", "-bogus"}} {
 		var out, errb bytes.Buffer
 		if code := run(context.Background(), args, &out, &errb); code != exitUsage {
 			t.Errorf("%v: exit %d, want %d", args, code, exitUsage)
@@ -35,7 +35,7 @@ func TestUsage(t *testing.T) {
 		}
 	}
 	// With no command, or an unknown one, the usage lists every command.
-	for _, args := range [][]string{nil, {"export"}} {
+	for _, args := range [][]string{nil, {"export"}, {"config"}, {"config", "check"}} {
 		var errb bytes.Buffer
 		run(context.Background(), args, io.Discard, &errb)
 		for _, cmd := range []string{"addepar run ", "addepar config validate ", "addepar verify "} {
@@ -44,7 +44,7 @@ func TestUsage(t *testing.T) {
 			}
 		}
 	}
-	for _, args := range [][]string{{"run"}, {"config", "validate"}, {"config"}} {
+	for _, args := range [][]string{{"run"}, {"run", "-config", "x"}, {"config", "validate"}, {"config", "validate", "-config", "x"}} {
 		if !hostCommand(args) {
 			t.Errorf("%v: not routed to the standalone host", args)
 		}
