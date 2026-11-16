@@ -23,8 +23,10 @@ const (
 // fileState is what a scan saw of a file.
 type fileState struct {
 	modTime time.Time
-	size    int64
-	// stable: seen unchanged by two consecutive scans.
+	// since is when a scan first saw this size and modification time.
+	since time.Time
+	size  int64
+	// stable: seen unchanged for at least the scanner's settle time.
 	stable bool
 	// done: its run exists, or it was refused (too large, unreadable as
 	// a regular file); it is not hashed again until it changes.
@@ -33,13 +35,21 @@ type fileState struct {
 
 // scanner finds the watched folder's new files (ADR 0017, item 16).
 type scanner struct {
-	files   map[string]*fileState
-	dir     string
+	files map[string]*fileState
+	now   func() time.Time
+	dir   string
+	// pattern selects the files watched.
 	pattern string
+	// settle is how long a file's size and modification time must hold
+	// before it triggers: the poll interval, however often scan runs.
+	settle time.Duration
 }
 
 // scan returns the names of the files that have become stable since the
-// last scan and have no run yet.
+// last scan and have no run yet: seen by an earlier scan, with the same
+// size and modification time, at least settle ago. The bound is on time,
+// not on scans, because the watch also scans after each activation, which
+// can be milliseconds apart.
 func (s *scanner) scan() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -47,6 +57,7 @@ func (s *scanner) scan() ([]string, error) {
 	}
 	present := map[string]bool{}
 	ready := make([]string, 0, len(entries))
+	now := s.now()
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".") || !e.Type().IsRegular() {
@@ -62,10 +73,10 @@ func (s *scanner) scan() ([]string, error) {
 		present[name] = true
 		prev := s.files[name]
 		if prev == nil || prev.size != fi.Size() || !prev.modTime.Equal(fi.ModTime()) {
-			s.files[name] = &fileState{size: fi.Size(), modTime: fi.ModTime()}
+			s.files[name] = &fileState{size: fi.Size(), modTime: fi.ModTime(), since: now}
 			continue
 		}
-		if prev.done {
+		if prev.done || now.Sub(prev.since) < s.settle {
 			continue
 		}
 		prev.stable = true
@@ -102,8 +113,11 @@ type watcher struct {
 // reopened, and returns the exit code (ADR 0017, items 16, 21 and 22).
 func (h *host) watch(ctx context.Context) int {
 	w := &watcher{
-		host:      h,
-		scan:      &scanner{dir: h.cfg.Trigger.Dir, pattern: h.cfg.Trigger.pattern(), files: map[string]*fileState{}},
+		host: h,
+		scan: &scanner{
+			dir: h.cfg.Trigger.Dir, pattern: h.cfg.Trigger.pattern(), files: map[string]*fileState{},
+			now: time.Now, settle: h.cfg.Trigger.pollInterval(),
+		},
 		inflight:  map[string]bool{},
 		notBefore: map[string]time.Time{},
 		backoff:   map[string]time.Duration{},

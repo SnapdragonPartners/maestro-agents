@@ -457,6 +457,47 @@ func TestFolderMissingIsAUsageError(t *testing.T) {
 	if o := runProgram(context.Background(), p, "run", "-config", path); o.code != ExitUsage {
 		t.Fatalf("not a directory: exit %d", o.code)
 	}
+	// A folder that exists but cannot be listed would be polled forever
+	// and never seen into.
+	if os.Geteuid() == 0 {
+		return // root lists any folder
+	}
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	path = writeConfig(t, dir, folderConfig(dir, locked, 1))
+	if o := runProgram(context.Background(), p, "run", "-config", path); o.code != ExitUsage || !strings.Contains(o.stderr.String(), "trigger.dir") {
+		t.Fatalf("unlistable: exit %d: %s", o.code, o.stderr.String())
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+// TestOneShotOutcomeUnwritten: a succeeded run whose outcome cannot be
+// written to standard output exits 1, since the caller never learns it
+// succeeded (ADR 0017, item 22).
+func TestOneShotOutcomeUnwritten(t *testing.T) {
+	p := probeProgram(t, newProbe())
+	dir := t.TempDir()
+	path := writeConfig(t, dir, oneShotConfig(dir))
+	input := filepath.Join(dir, "in.txt")
+	writeFile(t, input, "statement")
+	var stderr bytes.Buffer
+	if code := Run(context.Background(), p, []string{"run", "-config", path, "-input", input}, failingWriter{}, &stderr); code != ExitIncomplete {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "cannot write the outcome") {
+		t.Fatalf("stderr %s", stderr.String())
+	}
+	// The run itself succeeded and is recorded.
+	o := runProgram(context.Background(), p, "run", "-config", path, "-input", input)
+	if rep := o.report(t); o.code != ExitComplete || rep.Status != store.StatusSucceeded {
+		t.Fatalf("exit %d, report %+v", o.code, rep)
+	}
 }
 
 // TestMainSignals runs Main in a child process and sends it SIGTERM while

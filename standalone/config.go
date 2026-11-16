@@ -246,7 +246,7 @@ func (c *Config) Validate(p *Program) error {
 	errs = append(errs, c.validateModel(p, &m)...)
 	errs = append(errs, c.Store.validate()...)
 	errs = append(errs, c.Trigger.validate()...)
-	errs = append(errs, c.Credentials.validate()...)
+	errs = append(errs, c.Credentials.validate(p.os())...)
 	errs = append(errs, c.Telemetry.validate()...)
 	errs = append(errs, c.Log.validate()...)
 	if c.Concurrency < 0 {
@@ -439,8 +439,11 @@ func (t *TriggerConfig) pollInterval() time.Duration {
 	return time.Duration(t.PollInterval)
 }
 
-func (c *CredentialsConfig) validate() []error {
+func (c *CredentialsConfig) validate(goos string) []error {
 	var errs []error
+	if c.File != "" && !secretsFileSupported(goos) {
+		errs = append(errs, fmt.Errorf("credentials.file is not supported on %s, where the host cannot check that only its owner can access it; use credentials.env", goos))
+	}
 	for _, name := range sortedKeys(c.Env) {
 		v := c.Env[name]
 		if name == "" {

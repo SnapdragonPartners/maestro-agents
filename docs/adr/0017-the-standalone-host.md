@@ -224,9 +224,11 @@ It amends no earlier ADR.
     folder the operator chose; a file swapped for a link after the scan is
     refused when it is opened, with `O_NOFOLLOW`; an operator's `-input`
     and a secrets file may be links) and names starting with `.` (editors' and
-    copiers' temporary files). A file triggers only once its size and
-    modification time are unchanged across two consecutive scans, so a
-    file still being copied in is not hashed half-written; a file whose
+    copiers' temporary files). A file triggers only once a later scan
+    finds its size and modification time unchanged for at least the poll
+    interval, so a file still being copied in is not hashed half-written;
+    the bound is on time, not on scans, because the watch also scans after
+    each activation, and two such scans can be milliseconds apart; a file whose
     size or modification time changes later is hashed again, and new
     bytes are a new run. At start-up it activates every claimable run of
     its agent type before the first scan finds anything new, so unfinished
@@ -259,6 +261,9 @@ It amends no earlier ADR.
     the configuration. A name in both is a configuration error. The host
     reads both once, when `run` starts, and refuses a secrets file that
     its group or others can read or write, as `ssh` refuses a private key.
+    On Windows, whose file modes do not reflect its access-control lists,
+    the host cannot make that check, so `credentials.file` is a
+    configuration error there and credentials come from `credentials.env`.
     The host's credential provider (`agent.WithCredentials`) serves only
     those names, and only to runs whose principal (fixed at the run's
     start, ADR 0016 item 12) is the configured one: a run started under
@@ -299,10 +304,13 @@ It amends no earlier ADR.
     incomplete: the one-shot run did not succeed (it failed, was
     cancelled, or was left runnable by a shutdown or a store failure), or
     a watch's shutdown interrupted an activation or a poisoned store ended
-    it; **2**, usage: bad arguments, an invalid configuration, missing
-    credentials, a model provider that refuses its route, a store,
-    required sink or watched folder that cannot be opened. In a watch, a run that fails is an outcome, logged, not a
-    reason to exit non-zero: the daemon did its job.
+    it, or the one-shot outcome could not be written to standard output
+    (the caller would not learn the run succeeded); **2**, usage: bad
+    arguments, an invalid configuration, missing credentials, a model
+    provider that refuses its route, a store, required sink or watched
+    folder that cannot be opened (or, for the folder, listed). In a
+    watch, a run that fails is an outcome, logged, not a reason to exit
+    non-zero: the daemon did its job.
 
 ## Consequences
 

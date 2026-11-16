@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"sort"
 	"syscall"
@@ -30,8 +31,9 @@ const (
 	// ExitComplete: the one-shot run succeeded, or a watch stopped with
 	// no activation interrupted.
 	ExitComplete = 0
-	// ExitIncomplete: the one-shot run did not succeed, or a watch's
-	// shutdown interrupted an activation, or the store must be reopened.
+	// ExitIncomplete: the one-shot run did not succeed or its outcome
+	// could not be written, or a watch's shutdown interrupted an
+	// activation, or the store must be reopened.
 	ExitIncomplete = 1
 	// ExitUsage: bad arguments, an invalid configuration, or a credential,
 	// store, required sink or watched folder that cannot be set up.
@@ -83,11 +85,15 @@ type Program struct {
 	Redactor agent.Redactor
 	// getenv reads the environment; nil is os.Getenv. Tests set it.
 	getenv func(string) string
+	// goos overrides runtime.GOOS in tests.
+	goos string
 	// Name is the executable's name, for usage messages.
 	Name string
 	// heartbeat overrides heartbeatInterval in tests.
 	heartbeat time.Duration
 }
+
+func (p *Program) os() string { return cmp.Or(p.goos, runtime.GOOS) }
 
 // provider returns the builder for id: the program's own, else the
 // built-in one, else nil.
@@ -285,6 +291,11 @@ func checkFolder(t *TriggerConfig) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("trigger.dir %s is not a directory", t.Dir)
 	}
+	// A directory can be stat-able and still not listable (mode 0111):
+	// the watch would then poll forever and see nothing.
+	if _, err := os.ReadDir(t.Dir); err != nil {
+		return fmt.Errorf("trigger.dir: %w", err)
+	}
 	return nil
 }
 
@@ -436,7 +447,10 @@ func (h *host) oneShot(ctx context.Context, path string, stdout, stderr io.Write
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(rep); err != nil {
-		say(stderr, "run: %v\n", err)
+		// The outcome is the command's result: without it the caller
+		// cannot know the run succeeded (ADR 0017, item 22).
+		say(stderr, "run: cannot write the outcome: %v\n", err)
+		return ExitIncomplete
 	}
 	if rep.Status == store.StatusSucceeded {
 		return ExitComplete

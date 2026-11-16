@@ -56,6 +56,12 @@ func loadCredentials(c *CredentialsConfig, principal string, getenv func(string)
 	return creds, nil
 }
 
+// secretsFileSupported reports whether the host can check on goos that
+// only a secrets file's owner can access it: Windows file modes do not
+// reflect its access-control lists, so a secrets file there is refused
+// (ADR 0017, item 19).
+func secretsFileSupported(goos string) bool { return goos != "windows" }
+
 // readSecretsFile reads a secrets file: a JSON object from name to value,
 // decoded strictly, that only its owner can access.
 func readSecretsFile(path string) (map[string]string, error) {
@@ -69,7 +75,10 @@ func readSecretsFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secrets file: %w", err)
 	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
+	if !secretsFileSupported(runtime.GOOS) {
+		return nil, fmt.Errorf("secrets file: not supported on %s; use credentials.env", runtime.GOOS)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("secrets file %s is accessible by its group or others (mode %04o); make it owner-only (chmod 600)", path, fi.Mode().Perm())
 	}
 	data, err := readLimited(f, maxConfigBytes)

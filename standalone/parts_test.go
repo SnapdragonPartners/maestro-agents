@@ -292,8 +292,12 @@ type noTelemetry struct{ store.Store }
 
 func TestScanner(t *testing.T) {
 	dir := t.TempDir()
-	s := &scanner{dir: dir, pattern: "*.pdf", files: map[string]*fileState{}}
-	scan := func() []string {
+	clock := time.Unix(1000, 0)
+	s := &scanner{dir: dir, pattern: "*.pdf", files: map[string]*fileState{}, settle: 5 * time.Second,
+		now: func() time.Time { return clock }}
+	// scan advances the clock by the poll interval first, as the ticker
+	// would; scanSoon does not, as a scan after an activation would not.
+	scanSoon := func() []string {
 		t.Helper()
 		names, err := s.scan()
 		if err != nil {
@@ -301,6 +305,11 @@ func TestScanner(t *testing.T) {
 		}
 		slices.Sort(names)
 		return names
+	}
+	scan := func() []string {
+		t.Helper()
+		clock = clock.Add(s.settle)
+		return scanSoon()
 	}
 	writeFile(t, filepath.Join(dir, "a.pdf"), "a")
 	writeFile(t, filepath.Join(dir, "b.txt"), "b")
@@ -316,7 +325,16 @@ func TestScanner(t *testing.T) {
 	if got := scan(); len(got) != 0 {
 		t.Fatalf("first sight is not stable: %v", got)
 	}
-	if got := scan(); !slices.Equal(got, []string{"a.pdf"}) {
+	// Two scans close together are not a settled file, however many: a
+	// paused copy would pass that.
+	for range 3 {
+		clock = clock.Add(time.Second)
+		if got := scanSoon(); len(got) != 0 {
+			t.Fatalf("unchanged for less than the settle time: %v", got)
+		}
+	}
+	clock = clock.Add(2 * time.Second)
+	if got := scanSoon(); !slices.Equal(got, []string{"a.pdf"}) {
 		t.Fatalf("second scan: %v (only regular, matching, visible files)", got)
 	}
 	if got := scan(); !slices.Equal(got, []string{"a.pdf"}) {
@@ -334,6 +352,9 @@ func TestScanner(t *testing.T) {
 	}
 	if got := scan(); len(got) != 0 {
 		t.Fatalf("changed: %v", got)
+	}
+	if got := scanSoon(); len(got) != 0 {
+		t.Fatalf("changed just now: %v", got)
 	}
 	if got := scan(); !slices.Equal(got, []string{"a.pdf"}) {
 		t.Fatalf("changed, then stable: %v", got)

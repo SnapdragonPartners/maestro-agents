@@ -163,6 +163,21 @@ func TestValidate(t *testing.T) {
 	if err := base().Validate(&p); err != nil {
 		t.Fatalf("valid: %v", err)
 	}
+	// Windows file modes say nothing of who can read a file, so a secrets
+	// file is refused there (ADR 0017, item 19).
+	withFile := base()
+	withFile.Credentials.File = "/s.json"
+	if err := withFile.Validate(&p); err != nil {
+		t.Fatalf("secrets file here: %v", err)
+	}
+	win := p
+	win.goos = "windows"
+	if err := withFile.Validate(&win); err == nil || !strings.Contains(err.Error(), "credentials.file is not supported on windows") {
+		t.Fatalf("secrets file on windows: %v", err)
+	}
+	if err := base().Validate(&win); err != nil {
+		t.Fatalf("no secrets file on windows: %v", err)
+	}
 	cases := map[string]struct {
 		edit func(*Config)
 		want string
