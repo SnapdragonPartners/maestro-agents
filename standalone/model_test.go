@@ -78,6 +78,7 @@ func credType(got *[]string, mu *sync.Mutex) *agent.Type[probeData] {
 // gets the route's credential, a tool gets its credential through TOOL-8,
 // and the store sink records the run's events (ADR 0017, items 2, 19, 20).
 func TestModelRouteAndCredentials(t *testing.T) {
+	unixOnly(t, "secrets file")
 	dir := t.TempDir()
 	var got []string
 	var mu sync.Mutex

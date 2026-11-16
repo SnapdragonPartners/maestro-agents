@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -91,6 +92,16 @@ func (p *probe) read(ctx context.Context, env *agent.Env, d probeData) (agent.Tr
 		}
 	}
 	return agent.Goto("done", d), nil
+}
+
+// unixOnly skips a test that depends on Unix behavior: file modes,
+// symbolic links without privilege, signals, or a secrets file (refused
+// on Windows, ADR 0017 item 19).
+func unixOnly(t testing.TB, why string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix only: " + why)
+	}
 }
 
 func probeProgram(t testing.TB, p *probe) Program {

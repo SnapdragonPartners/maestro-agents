@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -459,8 +460,8 @@ func TestFolderMissingIsAUsageError(t *testing.T) {
 	}
 	// A folder that exists but cannot be listed would be polled forever
 	// and never seen into.
-	if os.Geteuid() == 0 {
-		return // root lists any folder
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		return // root lists any folder; Windows ignores the mode
 	}
 	locked := filepath.Join(dir, "locked")
 	if err := os.Mkdir(locked, 0o111); err != nil {
@@ -504,6 +505,7 @@ func TestOneShotOutcomeUnwritten(t *testing.T) {
 // a run is in flight: the run is left runnable and the exit code is 1
 // (MODE-6, ADR 0017 items 21 and 22).
 func TestMainSignals(t *testing.T) {
+	unixOnly(t, "SIGTERM")
 	if os.Getenv("STANDALONE_TEST_MAIN") != "" {
 		pr := newProbe()
 		go func() {

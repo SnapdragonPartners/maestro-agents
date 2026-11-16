@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 )
 
 func TestCredentials(t *testing.T) {
+	unixOnly(t, "secrets file")
 	dir := t.TempDir()
 	secrets := filepath.Join(dir, "secrets.json")
 	writeFile(t, secrets, `{"db":"file-value"}`)
@@ -54,6 +54,7 @@ func TestCredentials(t *testing.T) {
 }
 
 func TestCredentialsRefused(t *testing.T) {
+	unixOnly(t, "secrets file modes")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.json")
 	none := func(string) string { return "" }
@@ -143,10 +144,11 @@ func TestHashInputAndRead(t *testing.T) {
 }
 
 // TestInputAdmission covers the findings of Codex round 1 on 651edbc: a
-// symbolic link in a watched folder is refused rather than followed, a
-// FIFO is refused without blocking, and the largest max_input_bytes does
-// not overflow (ADR 0017, items 11 and 16).
+// symbolic link in a watched folder is refused rather than followed, and
+// the largest max_input_bytes does not overflow (ADR 0017, items 11 and
+// 16). FIFOs: TestFIFOInputsRefused.
 func TestInputAdmission(t *testing.T) {
+	unixOnly(t, "symbolic links")
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	writeFile(t, outside, "elsewhere")
@@ -159,30 +161,6 @@ func TestInputAdmission(t *testing.T) {
 	}
 	if in, err := hashInput(link, 1024, false); err != nil || in.trigger.Size != 9 {
 		t.Fatalf("an operator's -input link: %+v, %v", in, err)
-	}
-
-	fifo := filepath.Join(dir, "pipe")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 3)
-	go func() {
-		_, err := hashInput(fifo, 1024, false)
-		done <- err
-		_, err = readSecretsFile(fifo)
-		done <- err
-		_, err = LoadConfig(fifo)
-		done <- err
-	}()
-	for range 3 {
-		select {
-		case err := <-done:
-			if err == nil || !strings.Contains(err.Error(), "not a regular file") {
-				t.Fatalf("FIFO: %v", err)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("blocked opening a FIFO")
-		}
 	}
 
 	path := filepath.Join(dir, "in.txt")
@@ -262,26 +240,8 @@ func TestOpenSink(t *testing.T) {
 	if _, _, err := openSink(&TelemetryConfig{Sink: SinkJSONL, Path: filepath.Join(t.TempDir(), "no", "dir")}, st); err == nil {
 		t.Fatal("an unopenable path")
 	}
-	// A FIFO with no reader is refused at once, not hung on (Codex round
-	// 2 on 04e40e4), and so is a directory.
+	// A directory is refused (a FIFO: TestOpenSinkFIFO).
 	dir := t.TempDir()
-	fifo := filepath.Join(dir, "pipe")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() {
-		_, _, err := openSink(&TelemetryConfig{Sink: SinkJSONL, Path: fifo}, st)
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("opened a FIFO")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("blocked opening a FIFO")
-	}
 	if _, _, err := openSink(&TelemetryConfig{Sink: SinkJSONL, Path: dir}, st); err == nil {
 		t.Fatal("opened a directory")
 	}
@@ -291,6 +251,7 @@ func TestOpenSink(t *testing.T) {
 type noTelemetry struct{ store.Store }
 
 func TestScanner(t *testing.T) {
+	unixOnly(t, "symbolic links")
 	dir := t.TempDir()
 	clock := time.Unix(1000, 0)
 	s := &scanner{dir: dir, pattern: "*.pdf", files: map[string]*fileState{}, settle: 5 * time.Second,
