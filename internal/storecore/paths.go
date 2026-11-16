@@ -126,3 +126,12 @@ func objectPath(ns, key string) string      { return objectDir(ns) + "/" + key +
 func artifactPath(digest string) string     { return "artifacts/" + digest }
 func artifactMetaPath(d string) string      { return "artifacts/" + d + ".json" }
 func triggerDir(inst string) string         { return "triggers/" + inst }
+
+// CheckNamespace refuses a namespace the reference stores cannot hold:
+// empty, not valid UTF-8, or longer than a path component once encoded.
+// A host validating its configuration calls it before any run (ADR 0017,
+// item 7).
+func CheckNamespace(ns string) error {
+	_, err := component("namespace", ns)
+	return err
+}

@@ -11,9 +11,14 @@ through [maestro-llms](https://github.com/SnapdragonPartners/maestro-llms).
 its reference stores (memory and files) exist, in `store/`, and so do agent
 types, the run controller for code and model states, budgets, forced
 wrap-up with the visible clock, manifests, namespace confinement, skills
-and prompt templates, and the model client with attempt-level budget
-admission, in `agent/`; the intake agent comes next, with its
-[ADR](docs/adr/README.md).
+and prompt templates, the model client with attempt-level budget
+admission, and the host seams for telemetry, logging and credentials, in
+`agent/`. The standalone host, which runs an agent type from a JSON
+configuration and which every agent's `main` calls, is in `standalone/`
+([ADR 0017](docs/adr/0017-the-standalone-host.md)). The intake agent,
+`cmd/addepar`, has begun with its verifier and exporter; the vertical
+slice, which runs it on the standalone host, comes next. Design decisions
+are in the [ADRs](docs/adr/README.md).
 
 ## Layout
 

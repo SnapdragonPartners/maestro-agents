@@ -22,13 +22,15 @@ so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
 confinement, skills and prompt templates, the model client with
 attempt-level budget admission, and the host seams for telemetry,
-logging and credentials (`agent/`). The intake agent,
-`cmd/addepar`, has begun with its verifier and exporter (no model, no
-store yet; ADR 0015); the standalone host comes next. The requirements are in
+logging and credentials (`agent/`), and the standalone host
+(`standalone/`, ADR 0017). The intake agent, `cmd/addepar`, has begun
+with its verifier and exporter (no model, no store yet; ADR 0015); the
+vertical slice, which runs it on the standalone host, comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0014 and 0016, the intake agent's own design ADR 0015; further design
+0014 and 0016, the standalone host ADR 0017, the intake agent's own
+design ADR 0015; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -139,6 +141,23 @@ Load-bearing decisions so far:
   committed: they live in the gitignored `.local/addepar/`; committed tests
   use synthetic statements
   ([ADR 0015](docs/adr/0015-intake-verifier-exporter-and-test-data.md))
+- The standalone host is the package `standalone`: an agent's `main`
+  passes `standalone.Main` a `Program` (registry, and optional extra model
+  providers, policy and redactor); the configuration names the model
+  provider, any `maestro-llms` provider ID, built with `providers.New`
+  (never inferred from the model name); `run` and `config validate` read one
+  strictly decoded JSON configuration (exact keys, no repeats), validated
+  in full before anything runs; one instance and one run per input file,
+  both `sha256-<hex>` of its bytes, so a file is processed once per store
+  and `FileTrigger.Read` refuses changed bytes; every trigger becomes a
+  runnable run at once (enqueue, create, remove), and the scheduler claims
+  `Claimable` runs up to `concurrency`; folder watch polls, skips dotfiles
+  and symlinks, waits for a stable size and mtime and leaves files in
+  place; credentials from env or an owner-only secrets file, served only
+  to runs of the configured principal; telemetry `none`, `store` or
+  `jsonl`, `required` failing the start; SIGINT/SIGTERM shut down at the
+  next step boundary; exit 0 complete, 1 incomplete, 2 usage
+  ([ADR 0017](docs/adr/0017-the-standalone-host.md))
 
 ### Related repositories
 
@@ -206,6 +225,7 @@ them and does not pin or bump them independently.
 ```
 doc.go               # Root package `agents`: package documentation
 agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials (ADR 0007-0014, 0016)
+standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
