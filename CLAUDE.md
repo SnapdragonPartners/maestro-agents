@@ -16,7 +16,7 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 - Agent executables live in this repository under `cmd/<agent>/`, beside the
   library
 
-Current state: **MVP, step 2 (the vertical slice)**. The store interface,
+Current state: **MVP, step 4 (the extraction agent)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
@@ -175,8 +175,10 @@ Load-bearing decisions so far:
   ([ADR 0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md))
 - The extraction agent reads the PDF (type version 2): `load` also stores
   the PDF's bytes at `pdfs/<sha256>`; `get_document` returns the PDF as a
-  document part, sent only if it hashes to the document's SHA-256, then
-  the layout text, which the model copies values from, since code
+  document part, sent only if it hashes to the document's SHA-256 and only
+  once per conversation (an atomic local transaction putting the marker
+  `sent/<sha256>`; a repeat call gets the text alone), then the layout
+  text, which the model copies values from, since code
   verifies against it; a PDF over 100 pages or 20 MiB is read as text
   alone, recorded on the document and each attempt; no-text PDFs still go
   to manual review; every permission (reading and sending a

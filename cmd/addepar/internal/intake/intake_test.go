@@ -444,6 +444,41 @@ func TestUnrestrictedHasNoOverride(t *testing.T) {
 	}
 }
 
+// TestPDFSentOnce: the PDF enters the conversation once. A repeat
+// get_document, in a later turn or in the same turn, returns the text alone
+// with a line saying the PDF was attached earlier, so no request carries
+// two copies (ADR 0019, item 2); the first call's marker records it.
+func TestPDFSentOnce(t *testing.T) {
+	c := synthetic(t, "keelson-vi")
+	twice := turn(toolCall("d1", "get_document", `{}`), toolCall("d2", "get_document", `{}`))
+	sc := &scripted{script: []llms.ChatResponse{
+		twice,
+		submit("2", mutated(t, c, "total-fund column chosen")),
+		turn(toolCall("d3", "get_document", `{}`)),
+		submit("4", c.Record),
+	}}
+	s, sha, out := run(t, "keelson-vi", sc, nil, agent.Budgets{}, intake.Options{})
+	wantSucceeded(t, out, agent.ReasonChanged)
+	// The last request holds every result: one PDF in all.
+	res := toolResults(sc.seen[len(sc.seen)-1])
+	pdfs := 0
+	for _, r := range res {
+		pdfs += len(resultPDFs(r))
+	}
+	if pdfs != 1 || len(resultPDFs(res[0])) != 1 {
+		t.Fatalf("%d PDFs in the conversation's %d results, want 1, in the first", pdfs, len(res))
+	}
+	for _, i := range []int{1, 3} {
+		if text := resultText(res[i]); !strings.Contains(text, "attached to your first get_document result") || !strings.Contains(text, "678,250") {
+			t.Fatalf("repeat get_document result %d = %q", i, text)
+		}
+	}
+	var sent intake.PDFSent
+	if !getJSON(t, s, intake.PDFSentKey(sha), &sent) || sent.Run != runID(sha) || sent.Step == 0 || sent.Call != 0 || !sent.At.Equal(fixedNow) {
+		t.Fatalf("sent marker = %+v", sent)
+	}
+}
+
 // TestOversizedPDFIsReadAsText: a PDF over the size sent to the model is
 // read through its text alone, which get_document says, and the attempt
 // records (ADR 0019). The record is still verified as usual.
@@ -475,6 +510,9 @@ func TestOversizedPDFIsReadAsText(t *testing.T) {
 	}
 	if got := storedPDF(t, s, sha); document.Hash(got) != sha {
 		t.Fatal("the oversized PDF was not stored")
+	}
+	if getJSON(t, s, intake.PDFSentKey(sha), &intake.PDFSent{}) {
+		t.Fatal("a sent marker for a PDF never sent")
 	}
 }
 
@@ -591,7 +629,7 @@ func TestManifest(t *testing.T) {
 	var tools []string
 	for _, tl := range m.Tools {
 		tools = append(tools, tl.Name)
-		if tl.Name != "get_document" && (tl.Effect != agent.EffectWrite || tl.Contract != agent.ContractAtomicLocal) {
+		if tl.Effect != agent.EffectWrite || tl.Contract != agent.ContractAtomicLocal {
 			t.Errorf("tool %s is %s/%s, want an atomic local write", tl.Name, tl.Effect, tl.Contract)
 		}
 	}

@@ -43,7 +43,19 @@ the page, but it never becomes evidence.
    part with the page count, the text-layer status and each page's
    layout-mode text, as before. It sends the PDF only if the stored bytes
    hash to the document's SHA-256; otherwise the call fails with
-   `tool_error`. The prompt tells the model to use the pages to
+   `tool_error`. **The PDF enters the conversation once.** Every later
+   request re-sends the transcript, so a second copy would double a
+   request's PDF size and pages past the limits item 3 is set against.
+   `get_document` is therefore an atomic local transaction (ADR 0005,
+   item 9), like the other three tools: the call that attaches the PDF
+   also puts a marker at `sent/<sha256>` (the run, step, call and time),
+   committed with its result. A later call, in a later turn or in the same
+   turn (each call's result commits on its own, ADR 0008), finds the
+   marker and returns the text alone, headed by a line saying the PDF was
+   attached to the first result. Recovery reuses a recorded result and
+   re-runs a call whose result did not land, whose marker did not land
+   either, so the marker and the PDF in the transcript cannot disagree.
+   The prompt tells the model to use the pages to
    understand the layout (which column is the investor's, where a table
    starts and ends) and to copy every name, label, date and amount from
    the text, since code verifies against the text. Where the two seem to
@@ -58,7 +70,8 @@ the page, but it never becomes evidence.
    32 MB request), with room for the base64 encoding, the text and the
    conversation. `load` decides this and records it on the stored
    document (`reading`, `text_only`, with a note naming the limit) and in
-   the run's data. `get_document` then returns the text with a line
+   the run's data. The limits hold for a whole request because the PDF is
+   sent once (item 2). `get_document` then returns the text with a line
    saying the PDF is not attached and why, and each attempt records the
    reading (`Attempt.Reading`). The statement is verified as usual; it is
    not sent to manual review for its size. This was the human operator's
@@ -90,19 +103,25 @@ the page, but it never becomes evidence.
    0017). Synthetic statements may use any provider.
 8. **Evidence.** Scripted-model tests in `cmd/addepar/internal/intake`:
    `get_document` returns the stored PDF's bytes (hashing to the
-   document's SHA-256) as its first part, beside the text; a
+   document's SHA-256) as its first part, beside the text; a repeat call,
+   in a later turn or the same one, returns the text alone, so the
+   conversation holds one PDF, and the marker records the first call; a
    copy-restricted PDF is sent under the acceptance; a PDF over the page
    limit is read as text, which the result, the stored document and the
    attempt record; a stored PDF that does not match its hash fails the
    call before anything is sent; and the size decision at both limits.
-   TEST-5 and TEST-6 (ADR 0018, item 9) run unchanged over the new
-   commit. Live-model runs on the statements are recorded in the PR that
+   TEST-5 and TEST-6 (ADR 0018, item 9) run over the new commits, with
+   the PDF and its marker stored once. Live-model runs on the statements are recorded in the PR that
    implements this ADR; scoring against the answer key is MVP step 5.
 
 ## Amendments
 
 - [ADR 0018](0018-the-intake-agent-type-and-the-vertical-slice.md) item 2:
   `load` also stores the PDF's bytes (item 1 above).
+- ADR 0018 item 5: the objects a run writes include `pdfs/<sha>`, the
+  input's bytes as received, and `sent/<sha>`, the marker that the PDF
+  was sent (items 1 and 2 above); `get_document` is a fourth atomic local
+  transaction.
 - ADR 0018 item 3: the implicit acceptance also covers sending a
   copy-restricted PDF to the model (item 4 above).
 - ADR 0018 item 7: `get_document` returns the PDF beside the text, or the
@@ -113,9 +132,9 @@ the page, but it never becomes evidence.
 
 ## Consequences
 
-- Each run's execution record holds the PDF once per `get_document`
-  call, base64-encoded, as it holds every tool result (ADR 0008), and the
-  store holds it once at `pdfs/`. The store's footprint grows by the
+- Each run's execution record holds the PDF once, base64-encoded, in the
+  first `get_document` result (ADR 0008), and the store holds it once at
+  `pdfs/`. The store's footprint grows by the
   input's size per statement. The file store does not encrypt (ADR 0005);
   the MVP relies on the operating system's full-disk encryption.
 - Input tokens per turn grow by the PDF's pages: each page is sent as an

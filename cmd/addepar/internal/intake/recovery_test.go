@@ -85,7 +85,8 @@ func (c *counting) Commit(ctx context.Context, f store.Fence, ops []store.Op) er
 }
 
 // checkSlice checks the finished run: succeeded, the document stored once,
-// exactly the two attempts (the refused one and the verified one), one
+// exactly the two attempts (the refused one and the verified one), the PDF
+// stored and marked sent once, one
 // record, the verified outcome, and every model turn recorded once, so no
 // turn was asked of the model again once recorded and no work was lost.
 func checkSlice(t testing.TB, s store.Store, sha string) {
@@ -95,8 +96,10 @@ func checkSlice(t testing.TB, s store.Store, sha string) {
 	if err != nil || r.Status != store.StatusSucceeded {
 		t.Fatalf("run = %+v, %v", r, err)
 	}
-	if keys := listKeys(t, s, "documents/"); len(keys) != 1 {
-		t.Fatalf("documents = %v", keys)
+	for _, prefix := range []string{"documents/", "pdfs/", "sent/"} {
+		if keys := listKeys(t, s, prefix); len(keys) != 1 {
+			t.Fatalf("%s = %v", prefix, keys)
+		}
 	}
 	atts := attempts(t, s, sha)
 	if len(atts) != 2 || atts[0].N != 1 || atts[0].Verdict != verify.Fail || atts[1].N != 2 || atts[1].Verdict != verify.Warn {

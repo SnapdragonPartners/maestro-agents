@@ -25,6 +25,10 @@ func DocumentKey(sha string) string { return "documents/" + sha }
 // PDFKey is the key of the document's PDF bytes, as received (ADR 0019).
 func PDFKey(sha string) string { return "pdfs/" + sha }
 
+// PDFSentKey is the key of the marker that get_document sent the PDF to the
+// model (ADR 0019).
+func PDFSentKey(sha string) string { return "sent/" + sha }
+
 // OutcomeKey is the document's outcome's key.
 func OutcomeKey(sha string) string { return "outcomes/" + sha }
 
@@ -107,6 +111,15 @@ func (d *Document) Doc() (*document.Document, error) {
 		doc.Pages[i] = p
 	}
 	return &doc, nil
+}
+
+// PDFSent records the get_document call that sent the PDF to the model,
+// whose result in the execution record holds it.
+type PDFSent struct {
+	At   time.Time `json:"at"`
+	Run  string    `json:"run"`
+	Step uint64    `json:"step"`
+	Call int       `json:"call"`
 }
 
 // The dispositions an outcome records (intake: a run ends when every
