@@ -202,8 +202,11 @@ func TestJSONLSink(t *testing.T) {
 	fi, err := os.Stat(path)
 	// Windows reports a writable file as 0666 whatever it was created
 	// with: its modes do not reflect its access-control lists.
-	if err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
-		t.Fatalf("mode: %v, %v", fi.Mode(), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode: %v", fi.Mode())
 	}
 	f, err := os.Open(path)
 	if err != nil {

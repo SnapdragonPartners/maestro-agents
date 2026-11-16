@@ -113,7 +113,6 @@ func probeProgram(t testing.TB, p *probe) Program {
 	return Program{Name: "probe", Registry: r, getenv: func(string) string { return "" }}
 }
 
-// writeConfig writes a configuration to dir/config.json.
 // writeConfig writes a configuration for a test that runs it, skipping
 // the test where its store cannot open.
 func writeConfig(t testing.TB, dir string, cfg map[string]any) string {
