@@ -150,6 +150,10 @@ func exactWords(s string) []string { return splitNorm(s, false) }
 // the verifier accepts compares keys, never raw strings.
 func NameKey(s string) string { return strings.Join(exactWords(s), " ") }
 
+// LabelKey is NameKey for a label or header, which also drops a footnote
+// reference glued to a word, as the checks do when they match labels.
+func LabelKey(s string) string { return strings.Join(normWords(s), " ") }
+
 func splitNorm(s string, footnotes bool) []string {
 	var out []string
 	for _, f := range strings.Fields(foldPunct(s)) {

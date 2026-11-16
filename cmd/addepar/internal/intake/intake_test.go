@@ -197,9 +197,10 @@ func TestMalformedSubmission(t *testing.T) {
 	}
 }
 
-// TestDuplicateSpellings: two records for one investor and fund are
-// refused however the names are spelled, as long as the verifier would
-// ground both against the same printed text (Codex round 1).
+// TestDuplicateSpellings: a second record for one position is refused
+// however its names are spelled or shortened, as long as the verifier
+// would ground it, and whatever names it claims for the same printed
+// ending (Codex rounds 1 and 2).
 func TestDuplicateSpellings(t *testing.T) {
 	c := synthetic(t, "keelson-vi")
 	variants := map[string]func(m map[string]any){
@@ -209,6 +210,15 @@ func TestDuplicateSpellings(t *testing.T) {
 		"fund no-break space": func(m map[string]any) {
 			setPath(t, m, []string{"fund", "text"}, "Keelson Partners VI, L.P.\u00a0")
 		},
+		"investor truncated": func(m map[string]any) { setPath(t, m, []string{"investor", "text"}, "Example Holdings IV") },
+		"investor inner run": func(m map[string]any) { setPath(t, m, []string{"investor", "text"}, "Holdings IV") },
+		"fund truncated":     func(m map[string]any) { setPath(t, m, []string{"fund", "text"}, "Keelson Partners VI") },
+		"both truncated": func(m map[string]any) {
+			setPath(t, m, []string{"investor", "text"}, "Example Holdings")
+			setPath(t, m, []string{"fund", "text"}, "Keelson Partners")
+		},
+		// Another printed name as the investor, reading the same ending.
+		"other printed name": func(m map[string]any) { setPath(t, m, []string{"investor", "text"}, "A. Reviewer") },
 	}
 	for name, edit := range variants {
 		t.Run(name, func(t *testing.T) {
@@ -218,11 +228,17 @@ func TestDuplicateSpellings(t *testing.T) {
 			}
 			edit(m)
 			variant := mustJSON(t, m)
+			// On its own the variant verifies: only the duplicate check
+			// stands between it and a second record for the position.
+			alone, _, _ := run(t, "keelson-vi", &scripted{script: []llms.ChatResponse{submit("1", variant)}}, nil, agent.Budgets{}, intake.Options{})
+			if n := len(listKeys(t, alone, "records/")); n != 1 {
+				t.Fatalf("the variant alone stored %d records; it should verify", n)
+			}
 			sc := &scripted{script: []llms.ChatResponse{submit("1", c.Record, variant), submit("2", c.Record)}}
 			s, sha, out := run(t, "keelson-vi", sc, nil, agent.Budgets{}, intake.Options{})
 			wantSucceeded(t, out, agent.ReasonChanged)
 			atts := attempts(t, s, sha)
-			if len(atts) != 2 || atts[0].Verdict != verify.Fail || !strings.Contains(atts[0].Records[1].Problem, "same investor and fund") {
+			if len(atts) != 2 || atts[0].Verdict != verify.Fail || !strings.Contains(atts[0].Records[1].Problem, "same position as record 1") {
 				t.Fatalf("attempts = %+v", atts)
 			}
 			if recs := records(t, s, sha); len(recs) != 1 {

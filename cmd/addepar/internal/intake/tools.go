@@ -173,23 +173,27 @@ func (a *intake) submitExec(ctx context.Context, c *agent.Call[Data]) (agent.Res
 
 // verifySubmission decodes and verifies the attempt's submission, filling
 // in its records and verdict: fail if the submission or any record could not
-// be read, any record repeats another's investor and fund, or any has a
-// verification error; else warn if any record has a warning; else pass.
-// Investor and fund are compared as the verifier compares names
-// (verify.NameKey), so spellings it treats as one name are one position.
+// be read, any record may denote the same position as an earlier one
+// (samePosition), or any has a verification error; else warn if any record
+// has a warning; else pass.
 func verifySubmission(doc *document.Document, att *Attempt) {
 	recs, problem := decodeSubmission(att.Submitted)
 	att.Problem = problem
 	fail, warn := problem != "", false
-	seen := map[[2]string]bool{}
-	for _, r := range recs {
+	kept := map[int]*statement.Record{}
+	for n, r := range recs {
 		ar := AttemptRecord{Record: r.rec, Problem: r.problem}
 		if r.rec != nil {
-			who := [2]string{verify.NameKey(r.rec.Investor.Text), verify.NameKey(r.rec.Fund.Text)}
-			if seen[who] {
-				ar.Problem = "a second record for the same investor and fund"
-			} else {
-				seen[who] = true
+			for i := range n {
+				if k := kept[i]; k != nil {
+					if why := samePosition(k, r.rec); why != "" {
+						ar.Problem = fmt.Sprintf("may be the same position as record %d (%s in %s): %s; submit one record per investor and fund", i+1, k.Investor.Text, k.Fund.Text, why)
+						break
+					}
+				}
+			}
+			if ar.Problem == "" {
+				kept[n] = r.rec
 				res := verify.Verify(doc, r.rec)
 				ar.Result = &res
 			}
@@ -210,6 +214,37 @@ func verifySubmission(doc *document.Document, att *Attempt) {
 	default:
 		att.Verdict = verify.Pass
 	}
+}
+
+// samePosition reports why two records of one submission may denote the
+// same position, or "" if they cannot (ADR 0018, item 4). It errs toward
+// "same": two distinct positions it cannot tell apart are refused, failing
+// closed into a correction or manual review, never stored twice.
+//
+// Names are no identity: grounding (check 1) accepts any contiguous run of
+// a printed name's words, compared by verify.NameKey, so "Example Holdings
+// IV" grounds wherever "Example Holdings IV, LLC" is printed. Two records
+// are therefore the same position when each one's investor words run
+// inside the other's, or contain them, and likewise their funds. And the
+// value is what a record exports: two records whose endings are the same
+// amount under the same label on the same page read one printed balance,
+// whatever names they claim.
+func samePosition(a, b *statement.Record) string {
+	if wordsOverlap(a.Investor.Text, b.Investor.Text) && wordsOverlap(a.Fund.Text, b.Fund.Text) {
+		return "their investor and fund names are the same printed words, or one runs inside the other"
+	}
+	if a.Ending.Page == b.Ending.Page && a.Ending.Amount.Equal(b.Ending.Amount) &&
+		verify.LabelKey(a.Ending.Label) == verify.LabelKey(b.Ending.Label) {
+		return "their endings are the same amount under the same label on the same page"
+	}
+	return ""
+}
+
+// wordsOverlap reports whether one name's normalized words are a
+// contiguous run of the other's.
+func wordsOverlap(a, b string) bool {
+	ka, kb := " "+verify.NameKey(a)+" ", " "+verify.NameKey(b)+" "
+	return strings.Contains(ka, kb) || strings.Contains(kb, ka)
 }
 
 type submitted struct {

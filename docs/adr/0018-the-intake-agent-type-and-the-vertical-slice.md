@@ -57,12 +57,23 @@ library API.
    human operator's, for testing.
 4. **One submission holds every record.** `submit_extraction` takes
    `{"records": [...]}`, one record per investor and fund (E-4). Each is
-   decoded and verified on its own (ADR 0015), and a second record for the
-   same investor and fund is refused, the names compared as the verifier
-   compares them (`verify.NameKey`: case, typographic punctuation, spacing
-   and trailing commas folded, every digit kept), so two spellings that
-   ground against the same printed name are one position. The submission passes when no record
-   is malformed or has an error; warnings pass, for a person to accept.
+   decoded and verified on its own (ADR 0015). The submission passes when
+   no record is malformed or has an error; warnings pass, for a person to
+   accept. A record that may denote the same position as an earlier one is
+   refused before it is verified. Names are no identity: grounding accepts
+   any contiguous run of a printed name's words, compared as the verifier
+   compares names (`verify.NameKey`: case, typographic punctuation, spacing
+   and trailing commas folded, every digit kept). So two records are one
+   position when each one's investor words run inside the other's, or
+   contain them, and likewise their funds; or when their endings are the
+   same amount under the same label (`verify.LabelKey`) on the same page,
+   whatever names they claim. The rule errs toward "same": distinct
+   positions it cannot tell apart (nested names such as "Trust" and "Trust
+   II", two investors with equal balances side by side) are refused, so
+   the statement fails closed into a correction or manual review and is
+   never stored twice. Whether a record's investor is the one its column
+   belongs to is the verifier's question (checks 1 and 4), not this
+   rule's.
 5. **Every write is an atomic local transaction, written once.** The three
    writing tools are `ContractAtomicLocal` (ADR 0005 items 7 to 10): they
    read, verify and return object operations that commit with the call's
