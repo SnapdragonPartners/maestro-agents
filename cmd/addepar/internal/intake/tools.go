@@ -175,6 +175,8 @@ func (a *intake) submitExec(ctx context.Context, c *agent.Call[Data]) (agent.Res
 // in its records and verdict: fail if the submission or any record could not
 // be read, any record repeats another's investor and fund, or any has a
 // verification error; else warn if any record has a warning; else pass.
+// Investor and fund are compared as the verifier compares names
+// (verify.NameKey), so spellings it treats as one name are one position.
 func verifySubmission(doc *document.Document, att *Attempt) {
 	recs, problem := decodeSubmission(att.Submitted)
 	att.Problem = problem
@@ -183,7 +185,7 @@ func verifySubmission(doc *document.Document, att *Attempt) {
 	for _, r := range recs {
 		ar := AttemptRecord{Record: r.rec, Problem: r.problem}
 		if r.rec != nil {
-			who := [2]string{r.rec.Investor.Text, r.rec.Fund.Text}
+			who := [2]string{verify.NameKey(r.rec.Investor.Text), verify.NameKey(r.rec.Fund.Text)}
 			if seen[who] {
 				ar.Problem = "a second record for the same investor and fund"
 			} else {

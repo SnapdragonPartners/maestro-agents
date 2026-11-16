@@ -58,7 +58,10 @@ library API.
 4. **One submission holds every record.** `submit_extraction` takes
    `{"records": [...]}`, one record per investor and fund (E-4). Each is
    decoded and verified on its own (ADR 0015), and a second record for the
-   same investor and fund is refused. The submission passes when no record
+   same investor and fund is refused, the names compared as the verifier
+   compares them (`verify.NameKey`: case, typographic punctuation, spacing
+   and trailing commas folded, every digit kept), so two spellings that
+   ground against the same printed name are one position. The submission passes when no record
    is malformed or has an error; warnings pass, for a person to accept.
 5. **Every write is an atomic local transaction, written once.** The three
    writing tools are `ContractAtomicLocal` (ADR 0005 items 7 to 10): they

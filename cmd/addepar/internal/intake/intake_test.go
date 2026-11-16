@@ -197,6 +197,41 @@ func TestMalformedSubmission(t *testing.T) {
 	}
 }
 
+// TestDuplicateSpellings: two records for one investor and fund are
+// refused however the names are spelled, as long as the verifier would
+// ground both against the same printed text (Codex round 1).
+func TestDuplicateSpellings(t *testing.T) {
+	c := synthetic(t, "keelson-vi")
+	variants := map[string]func(m map[string]any){
+		"doubled spaces": func(m map[string]any) { setPath(t, m, []string{"investor", "text"}, "Example  Holdings  IV, LLC") },
+		"case":           func(m map[string]any) { setPath(t, m, []string{"investor", "text"}, "EXAMPLE HOLDINGS IV, LLC") },
+		"comma":          func(m map[string]any) { setPath(t, m, []string{"investor", "text"}, "Example Holdings IV LLC") },
+		"fund no-break space": func(m map[string]any) {
+			setPath(t, m, []string{"fund", "text"}, "Keelson Partners VI, L.P.\u00a0")
+		},
+	}
+	for name, edit := range variants {
+		t.Run(name, func(t *testing.T) {
+			var m map[string]any
+			if err := json.Unmarshal(c.Record, &m); err != nil {
+				t.Fatal(err)
+			}
+			edit(m)
+			variant := mustJSON(t, m)
+			sc := &scripted{script: []llms.ChatResponse{submit("1", c.Record, variant), submit("2", c.Record)}}
+			s, sha, out := run(t, "keelson-vi", sc, nil, agent.Budgets{}, intake.Options{})
+			wantSucceeded(t, out, agent.ReasonChanged)
+			atts := attempts(t, s, sha)
+			if len(atts) != 2 || atts[0].Verdict != verify.Fail || !strings.Contains(atts[0].Records[1].Problem, "same investor and fund") {
+				t.Fatalf("attempts = %+v", atts)
+			}
+			if recs := records(t, s, sha); len(recs) != 1 {
+				t.Fatalf("%d records stored for one position", len(recs))
+			}
+		})
+	}
+}
+
 // TestSetAside and TestManualReview: the model's two other exits store the
 // document's outcome and end the run.
 func TestSetAside(t *testing.T) {

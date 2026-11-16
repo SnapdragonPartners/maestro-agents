@@ -471,3 +471,33 @@ func TestCheckNames(t *testing.T) {
 		t.Fatalf("CheckCount = %d", verify.CheckCount)
 	}
 }
+
+// TestNameKey: spellings the checks compare as one name share a key, and
+// names they tell apart (a digit, a word) do not.
+func TestNameKey(t *testing.T) {
+	same := [][2]string{
+		{"Example Holdings IV, LLC", "Example  Holdings IV, LLC"},
+		{"Example Holdings IV, LLC", "example holdings iv, llc"},
+		{"Example Holdings IV, LLC", "Example Holdings IV LLC"},
+		{"Partners’ Fund", "Partners' Fund"},
+		{"Fund – A", "Fund - A"},
+		{"Fund - A", "Fund A"},
+		{"Example Holdings", "Example Holdings"},
+	}
+	for _, p := range same {
+		if a, b := verify.NameKey(p[0]), verify.NameKey(p[1]); a != b {
+			t.Errorf("NameKey(%q) = %q, NameKey(%q) = %q; want equal", p[0], a, p[1], b)
+		}
+	}
+	differ := [][2]string{
+		{"Fund 3, LP", "Fund 4, LP"},
+		{"Fund 3, LP", "Fund III, LP"},
+		{"Fund3", "Fund"},
+		{"Example Holdings IV", "Example Holdings V"},
+	}
+	for _, p := range differ {
+		if verify.NameKey(p[0]) == verify.NameKey(p[1]) {
+			t.Errorf("NameKey(%q) == NameKey(%q); want different", p[0], p[1])
+		}
+	}
+}
