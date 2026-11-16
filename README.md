@@ -16,8 +16,10 @@ admission, and the host seams for telemetry, logging and credentials, in
 `agent/`. The standalone host, which runs an agent type from a JSON
 configuration and which every agent's `main` calls, is in `standalone/`
 ([ADR 0017](docs/adr/0017-the-standalone-host.md)). The intake agent,
-`cmd/addepar`, has begun with its verifier and exporter; the vertical
-slice, which runs it on the standalone host, comes next. Design decisions
+`cmd/addepar`, runs on the standalone host: its verifier and exporter,
+and the vertical slice (extraction, verification, crash recovery and
+fencing on the file store, [ADR
+0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md)). Design decisions
 are in the [ADRs](docs/adr/README.md).
 
 ## Layout

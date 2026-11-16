@@ -1,12 +1,18 @@
 // Command addepar is the capital-statement intake agent: one PDF statement
 // in, a verified valuation record and an Addepar import row out (docs/MVP.md).
 //
-// This first slice has no model and no store. Its one command verifies a
-// hand-written extraction record against its statement:
+// It runs the intake agent (ADR 0018) on the standalone host (ADR 0017),
+// one run per statement:
+//
+//	addepar run -config FILE [-input FILE]
+//	addepar config validate -config FILE
+//
+// and verifies a hand-written extraction record against its statement,
+// with no model and no store:
 //
 //	addepar verify -pdf statement.pdf -record record.json
 //
-// It prints the seven checks' result as JSON and exits 0 when the record has
+// verify prints the seven checks' result as JSON and exits 0 when the record has
 // no error (warnings still need a person's acceptance), 1 when it has one,
 // and 2 on a usage or input error. A copy-restricted PDF's text is read only
 // with -override-by and -override-reason, the operator's recorded acceptance;
@@ -25,9 +31,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/SnapdragonPartners/maestro-llms/llms"
+
+	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/document"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/intake"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
+	"github.com/SnapdragonPartners/maestro-agents/standalone"
 )
 
 // Exit codes.
@@ -41,6 +52,10 @@ const (
 const maxPDFBytes = 64 << 20
 
 func main() {
+	if len(os.Args) < 2 || os.Args[1] != "verify" {
+		standalone.Main(program(nil))
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
@@ -106,6 +121,16 @@ func verifyFiles(ctx context.Context, pdfPath, recPath string, ov *document.Over
 	}
 	res := verify.Verify(doc, rec)
 	return &res, nil
+}
+
+// program is the intake agent's standalone program; providers adds model
+// providers to the host's own (tests add a fake).
+func program(providers map[llms.ProviderID]standalone.Provider) standalone.Program {
+	reg := agent.NewRegistry()
+	if err := reg.Register(intake.Type(intake.Options{})); err != nil {
+		panic(err) // the agent type's declaration is fixed; a test registers it
+	}
+	return standalone.Program{Name: "addepar", Registry: reg, Providers: providers}
 }
 
 // say writes a message for the operator; a failed write to stderr has

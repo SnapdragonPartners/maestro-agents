@@ -199,7 +199,8 @@ an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
    -layout`, which keeps each label beside its numbers, through
    `maestro-cms`' layout option from #25, in v0.9.0): extract, verify,
    commit, crash, continue, no duplicate (steps 1 to 4), then both TEST-6
-   interleavings (step 5).
+   interleavings (step 5). Built on the intake agent itself
+   ([ADR 0018](adr/0018-the-intake-agent-type-and-the-vertical-slice.md)).
 3. **The verifier and exporter**, with no model (the intake requirements'
    build step 1), alongside the slice: the seven checks, CSV and manifest,
    hand-written records for the five samples and the mutation suite.
