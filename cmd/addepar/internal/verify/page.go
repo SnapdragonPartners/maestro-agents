@@ -143,6 +143,13 @@ func normWords(s string) []string { return splitNorm(s, true) }
 // exactWords normalizes a name, keeping every digit.
 func exactWords(s string) []string { return splitNorm(s, false) }
 
+// NameKey is a name as the checks compare it: its words, case and
+// typographic punctuation folded, trailing ':' ',' ';' and stray
+// punctuation dropped, every digit kept. Two names with the same key ground
+// against the same printed text, so a caller deduplicating names by what
+// the verifier accepts compares keys, never raw strings.
+func NameKey(s string) string { return strings.Join(exactWords(s), " ") }
+
 func splitNorm(s string, footnotes bool) []string {
 	var out []string
 	for _, f := range strings.Fields(foldPunct(s)) {

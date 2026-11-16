@@ -23,14 +23,15 @@ budgets, forced wrap-up with the visible clock, manifests, namespace
 confinement, skills and prompt templates, the model client with
 attempt-level budget admission, and the host seams for telemetry,
 logging and credentials (`agent/`), and the standalone host
-(`standalone/`, ADR 0017). The intake agent, `cmd/addepar`, has begun
-with its verifier and exporter (no model, no store yet; ADR 0015); the
-vertical slice, which runs it on the standalone host, comes next. The requirements are in
+(`standalone/`, ADR 0017). The intake agent, `cmd/addepar`, has its
+verifier and exporter (ADR 0015) and its agent type on the standalone
+host, with the vertical slice's evidence (ADR 0018); the extraction
+agent (the PDF sent to the model, live-model acceptance) comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
 0014 and 0016, the standalone host ADR 0017, the intake agent's own
-design ADR 0015; further design
+design ADRs 0015 and 0018; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -135,7 +136,8 @@ Load-bearing decisions so far:
   the PDF's layout-mode text (`maestro-cms`' pdftotext, Poppler): the seven
   checks, with check 4 decided from the page's column headers, never the
   record's claim; a copy-restricted PDF is read only under an operator's
-  recorded acceptance, asked at intake; the exporter refuses anything not
+  recorded acceptance (until #17, running the agent is that acceptance:
+  ADR 0018 item 3); the exporter refuses anything not
   approved, verified and accepted, and writes deterministic CSV bytes with
   an evidence manifest. Real statements are client data and never
   committed: they live in the gitignored `.local/addepar/`; committed tests
@@ -158,6 +160,18 @@ Load-bearing decisions so far:
   `jsonl`, `required` failing the start; SIGINT/SIGTERM shut down at the
   next step boundary; exit 0 complete, 1 incomplete, 2 usage
   ([ADR 0017](docs/adr/0017-the-standalone-host.md))
+- The intake agent type (`intake.Type`, `addepar-intake`) runs as `addepar
+  run` on the standalone host: `load` (code) stores the document and its
+  layout text; `extract` (model) has the four tools, whose three writes
+  are atomic local transactions putting each object once (expected
+  version zero) under the document's SHA-256 (`documents/`, `attempts/`,
+  `records/` in the exporter's shape, `outcomes/`); `submit_extraction`
+  takes every record in the document and verifies each in code; at most
+  three submissions (config may lower), the last failure or a wrap-up
+  failure going to manual review; until #17, running the agent is the
+  recorded acceptance to read a copy-restricted PDF; TEST-5 and TEST-6 run
+  on the agent itself against the file store
+  ([ADR 0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md))
 
 ### Related repositories
 
@@ -232,7 +246,8 @@ store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
-cmd/addepar/         # The capital-statement intake agent (ADR 0015): `verify` command; internal/ holds
+cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018): `run` (standalone host) and `verify`;
+                     #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
                      #   decimal, document (hash, pdfinfo, layout text), statement (the record),
                      #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs)
 .local/              # Gitignored machine-local data; .local/addepar/ holds the real sample statements
