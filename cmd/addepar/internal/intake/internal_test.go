@@ -27,6 +27,13 @@ func TestSamePosition(t *testing.T) {
 		"spelling":              rec("EXAMPLE  HOLDINGS IV LLC", "Keelson Partners VI, L.P.", 2, "Other", "1"),
 		"same ending":           rec("Another Investor", "Another Fund", 1, "Ending capital", "678250.00"),
 		"same ending, footnote": rec("Another Investor", "Another Fund", 1, "Ending capital2", "678250"),
+		// A table repeated on a later page: disjoint fragments of the one
+		// printed name, each grounding there, and the same balance.
+		"disjoint fragment, repeated page":    rec("Example", "Keelson Partners VI, L.P.", 3, "Ending capital", "678250"),
+		"overlapping fragment, repeated page": rec("Holdings IV", "Partners VI", 3, "Ending capital", "678250"),
+		"same amount, other label":            rec("Example Holdings V, LLC", "Keelson Partners VI, L.P.", 1, "Closing balance", "678250"),
+		"repeat printed rounded":              rec("Another Investor", "Another Fund", 4, "Capital, end of period", "678249.60"),
+		"repeat rounded up":                   rec("Another Investor", "Another Fund", 4, "Ending capital", "678251"),
 	}
 	for name, r := range same {
 		if samePosition(base, r) == "" || samePosition(r, base) == "" {
@@ -34,11 +41,11 @@ func TestSamePosition(t *testing.T) {
 		}
 	}
 	distinct := map[string]*statement.Record{
-		"other investor":           rec("Example Holdings V, LLC", "Keelson Partners VI, L.P.", 2, "Ending capital", "1000"),
-		"other fund":               rec("Example Holdings IV, LLC", "Keelson Partners VII, L.P.", 2, "Ending capital", "1000"),
-		"same amount, other page":  rec("Example Holdings V, LLC", "Keelson Partners VI, L.P.", 2, "Ending capital", "678250"),
-		"same amount, other label": rec("Example Holdings V, LLC", "Keelson Partners VI, L.P.", 1, "Closing balance", "678250"),
-		"digit kept":               rec("Example Holdings IV, LLC", "Keelson Partners 6, L.P.", 2, "Ending capital", "1000"),
+		"other investor":         rec("Example Holdings V, LLC", "Keelson Partners VI, L.P.", 2, "Ending capital", "1000"),
+		"other fund":             rec("Example Holdings IV, LLC", "Keelson Partners VII, L.P.", 2, "Ending capital", "1000"),
+		"beyond rounding":        rec("Another Investor", "Another Fund", 1, "Ending capital", "678251.01"),
+		"beyond rounding, below": rec("Another Investor", "Another Fund", 1, "Ending capital", "678248.99"),
+		"digit kept":             rec("Example Holdings IV, LLC", "Keelson Partners 6, L.P.", 2, "Ending capital", "1000"),
 	}
 	for name, r := range distinct {
 		if why := samePosition(base, r); why != "" {

@@ -11,6 +11,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 
 	"github.com/SnapdragonPartners/maestro-agents/agent"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/decimal"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/document"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/export"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
@@ -225,17 +226,21 @@ func verifySubmission(doc *document.Document, att *Attempt) {
 // a printed name's words, compared by verify.NameKey, so "Example Holdings
 // IV" grounds wherever "Example Holdings IV, LLC" is printed. Two records
 // are therefore the same position when each one's investor words run
-// inside the other's, or contain them, and likewise their funds. And the
-// value is what a record exports: two records whose endings are the same
-// amount under the same label on the same page read one printed balance,
-// whatever names they claim.
+// inside the other's, or contain them, and likewise their funds. Even that
+// is not enough: on a table repeated across pages, disjoint fragments
+// ("Example", "Holdings IV") each ground against the one printed name, and
+// the page's words do not say where a name starts or ends, so a fragment
+// cannot be resolved to a full identity. The value decides instead: it is
+// what a record exports, so two records whose endings are within one unit
+// of each other (a repeat may be printed rounded) are one balance, whatever
+// names, labels and pages they claim.
 func samePosition(a, b *statement.Record) string {
 	if wordsOverlap(a.Investor.Text, b.Investor.Text) && wordsOverlap(a.Fund.Text, b.Fund.Text) {
 		return "their investor and fund names are the same printed words, or one runs inside the other"
 	}
-	if a.Ending.Page == b.Ending.Page && a.Ending.Amount.Equal(b.Ending.Amount) &&
-		verify.LabelKey(a.Ending.Label) == verify.LabelKey(b.Ending.Label) {
-		return "their endings are the same amount under the same label on the same page"
+	// One unit: the rounding a repeated balance may carry.
+	if a.Ending.Amount.Sub(b.Ending.Amount).Abs().Cmp(decimal.MustParse("1")) <= 0 {
+		return "their endings are the same balance, within rounding"
 	}
 	return ""
 }

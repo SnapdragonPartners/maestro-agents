@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/document"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/intake"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/synthpdf"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 	"github.com/SnapdragonPartners/maestro-agents/store/memstore"
@@ -245,6 +248,100 @@ func TestDuplicateSpellings(t *testing.T) {
 				t.Fatalf("%d records stored for one position", len(recs))
 			}
 		})
+	}
+}
+
+// TestRepeatedPageFragments: with the statement's single-column table
+// printed again on page 2, disjoint fragments of the one investor name ("Example" on page 1,
+// "Holdings IV" on page 2) each verify alone, cannot be told apart by name,
+// and are refused together as one balance (ADR 0018, item 4).
+func TestRepeatedPageFragments(t *testing.T) {
+	needPoppler(t)
+	c := synthetic(t, "keelson-vi")
+	b, err := os.ReadFile(filepath.Join(syntheticDir, c.Statement)) //nolint:gosec // test data path
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep only the Limited Partner columns, so the repeated table is the
+	// investor's alone and both copies print one ending.
+	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	for i, l := range lines {
+		switch {
+		case i < 7:
+			l = strings.Replace(l, "Total Fund (Including GP)", "", 1)
+		case len(l) > lpColumns:
+			l = l[:lpColumns]
+		}
+		lines[i] = strings.TrimRight(l, " ")
+	}
+	page := strings.Join(lines, "\n")
+	pdf, err := synthpdf.Build([]string{page, page}, synthpdf.Options{FileID: "repeated"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "repeated.pdf")
+	if err := os.WriteFile(path, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fragment := func(investor string, page int) json.RawMessage {
+		var m map[string]any
+		if err := json.Unmarshal(c.Record, &m); err != nil {
+			t.Fatal(err)
+		}
+		setPages(m, page)
+		delete(m, "fund_total")
+		setPath(t, m, []string{"investor", "text"}, investor)
+		// The other page's copy of the ending, as check 3 asks.
+		m["repeats"] = []any{map[string]any{"label": "Partners' capital account, end of period", "amount": "678250", "page": 3 - page}}
+		return mustJSON(t, m)
+	}
+	first, second := fragment("Example", 1), fragment("Holdings IV", 2)
+	runOn := func(t *testing.T, sc *scripted) (store.Store, string) {
+		t.Helper()
+		s := memstore.New()
+		t.Cleanup(func() { _ = s.Close() })
+		sha := createRun(t, s, path)
+		out, err := activate(t, s, s, registry(t, intake.Options{}), sha, ownerA, sc, nil, agent.Budgets{})
+		if err != nil {
+			t.Fatalf("Activate: %v", err)
+		}
+		wantSucceeded(t, out, agent.ReasonChanged)
+		return s, sha
+	}
+	for _, r := range []json.RawMessage{first, second} {
+		s, sha := runOn(t, &scripted{script: []llms.ChatResponse{submit("1", r)}})
+		if n := len(records(t, s, sha)); n != 1 {
+			t.Fatalf("a fragment alone stored %d records; it should verify", n)
+		}
+	}
+	s, sha := runOn(t, &scripted{script: []llms.ChatResponse{submit("1", first, second), submit("2", first)}})
+	atts := attempts(t, s, sha)
+	if len(atts) != 2 || atts[0].Verdict != verify.Fail || !strings.Contains(atts[0].Records[1].Problem, "same position as record 1") {
+		t.Fatalf("attempts = %+v", atts)
+	}
+	if n := len(records(t, s, sha)); n != 1 {
+		t.Fatalf("%d records stored for one position", n)
+	}
+}
+
+// lpColumns is where keelson-vi's Total Fund columns start.
+const lpColumns = 103
+
+// setPages sets every "page" in a record's JSON to n.
+func setPages(node any, n int) {
+	switch v := node.(type) {
+	case map[string]any:
+		for k, child := range v {
+			if k == "page" {
+				v[k] = n
+				continue
+			}
+			setPages(child, n)
+		}
+	case []any:
+		for _, child := range v {
+			setPages(child, n)
+		}
 	}
 }
 

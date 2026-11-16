@@ -65,11 +65,16 @@ library API.
    compares names (`verify.NameKey`: case, typographic punctuation, spacing
    and trailing commas folded, every digit kept). So two records are one
    position when each one's investor words run inside the other's, or
-   contain them, and likewise their funds; or when their endings are the
-   same amount under the same label (`verify.LabelKey`) on the same page,
-   whatever names they claim. The rule errs toward "same": distinct
-   positions it cannot tell apart (nested names such as "Trust" and "Trust
-   II", two investors with equal balances side by side) are refused, so
+   contain them, and likewise their funds. Names alone cannot settle it:
+   on a table printed again on another page, disjoint fragments
+   ("Example", "Holdings IV") each ground against the one printed name,
+   and the page's words do not mark where a name starts or ends, so no
+   fragment resolves to a full identity. So the value decides as well: two
+   records are also one position when their endings are within one unit of
+   each other (a repeat may be printed rounded), whatever names, labels and
+   pages they claim. The rule errs toward "same": distinct positions it
+   cannot tell apart (nested names such as "Trust" and "Trust II", two
+   positions whose balances are within a unit) are refused, so
    the statement fails closed into a correction or manual review and is
    never stored twice. Whether a record's investor is the one its column
    belongs to is the verifier's question (checks 1 and 4), not this
