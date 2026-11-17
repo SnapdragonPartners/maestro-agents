@@ -21,7 +21,10 @@ and the vertical slice (extraction, verification, crash recovery and
 fencing on the file store, [ADR
 0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md)), with the
 model reading the PDF itself beside its text ([ADR
-0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md)). Design decisions
+0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md)). The scoring
+harness, `scoring/`, runs an agent over a set of inputs and compares its
+outputs with an answer key; `addepar score` scores the intake agent
+([ADR 0020](docs/adr/0020-the-scoring-harness.md)). Design decisions
 are in the [ADRs](docs/adr/README.md).
 
 ## Layout

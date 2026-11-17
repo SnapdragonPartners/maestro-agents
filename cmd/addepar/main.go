@@ -17,6 +17,19 @@
 // and 2 on a usage or input error. A copy-restricted PDF's text is read only
 // with -override-by and -override-reason, the operator's recorded acceptance;
 // without them the record fails grounding and goes to manual entry.
+//
+// It also scores the agent against an answer key (ADR 0020):
+//
+//	addepar score -config FILE -inputs DIR -key FILE -map FILE [-json]
+//
+// runs every PDF in DIR, one at a time, on the configuration (a one_shot
+// trigger; use a fresh store to score a model or prompt change), and
+// compares each statement's verified records with the answer key, the
+// upload saved as CSV in the exporter's columns, by the mapping of each
+// statement's positions to answer rows. It prints the report, which holds
+// values and names, and exits 0 when nothing wrong came out, 1 on a
+// mismatch, a hallucination, an error or an input not run, and 2 on a usage
+// error.
 package main
 
 import (
@@ -57,7 +70,7 @@ func main() {
 		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	code := run(ctx, program(nil), os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
 }
@@ -80,20 +93,30 @@ const usage = `usage:
   addepar run -config FILE [-input FILE]
   addepar config validate -config FILE
   addepar verify -pdf FILE -record FILE [-override-by NAME -override-reason TEXT]
+  addepar score -config FILE -inputs DIR -key FILE -map FILE [-json]
 `
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "verify" {
-		say(stderr, usage)
-		return exitUsage
+// run runs addepar's own commands, verify and score; p is the program
+// score runs the agent with.
+func run(ctx context.Context, p standalone.Program, args []string, stdout, stderr io.Writer) int { //nolint:gocritic // hugeParam: called once
+	switch {
+	case len(args) > 0 && args[0] == "verify":
+		return verifyCommand(ctx, args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "score":
+		return scoreCommand(ctx, p, args[1:], stdout, stderr)
 	}
+	say(stderr, usage)
+	return exitUsage
+}
+
+func verifyCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	pdfPath := fs.String("pdf", "", "the statement PDF")
 	recPath := fs.String("record", "", "the extraction record (JSON)")
 	ovBy := fs.String("override-by", "", "the operator accepting reading a copy-restricted PDF's text")
 	ovReason := fs.String("override-reason", "", "why the operator accepts it")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
 	if *pdfPath == "" || *recPath == "" || fs.NArg() != 0 {
@@ -124,7 +147,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 func verifyFiles(ctx context.Context, pdfPath, recPath string, ov *document.Override) (*verify.Result, error) {
 	pdf, err := readCapped(pdfPath, maxPDFBytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pdf: %w", err)
 	}
 	rf, err := os.Open(recPath) //nolint:gosec // the operator names the file
 	if err != nil {
@@ -164,12 +187,12 @@ var errTooLarge = errors.New("file too large")
 func readCapped(path string, limit int64) ([]byte, error) {
 	f, err := os.Open(path) //nolint:gosec // the operator names the file
 	if err != nil {
-		return nil, fmt.Errorf("open pdf: %w", err)
+		return nil, fmt.Errorf("open: %w", err)
 	}
 	defer f.Close() //nolint:errcheck // read-only
 	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("read pdf: %w", err)
+		return nil, fmt.Errorf("read: %w", err)
 	}
 	if int64(len(b)) > limit {
 		return nil, fmt.Errorf("%w: %s is over %d bytes", errTooLarge, path, limit)

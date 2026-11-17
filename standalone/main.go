@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -369,8 +370,9 @@ func newModelClient(p *Program, mc *ModelConfig, creds *credentials) (*agent.Mod
 	return agent.NewModelClient(base, cfg) //nolint:wrapcheck // the caller says it was the model
 }
 
-// report is the one-shot command's output: the run's outcome.
-type report struct {
+// Report is a one-shot run's outcome: what `run -input` prints and
+// Host.RunInput returns (ADR 0017, item 13; ADR 0020, item 2).
+type Report struct {
 	Consumed *agent.Consumption `json:"consumed,omitempty"`
 	Run      string             `json:"run"`
 	Input    string             `json:"input"`
@@ -382,14 +384,15 @@ type report struct {
 	// is then the run's as reread, if the reread succeeded.
 	Error string `json:"error,omitempty"`
 	Steps uint64 `json:"steps,omitempty"`
-	// Activated is false when the run was already terminal.
+	// Activated is false when the run was already terminal: the report is
+	// its recorded outcome.
 	Activated bool `json:"activated"`
 }
 
 // recordedOutcome fills a terminal run's report from the outcome entry
 // its last activation recorded (ADR 0017, item 13): running an input again
 // reports what its run committed, detail and consumption included.
-func (h *host) recordedOutcome(ctx context.Context, rep *report) {
+func (h *host) recordedOutcome(ctx context.Context, rep *Report) {
 	es, err := h.st.Entries(ctx, rep.Run, 0)
 	if err != nil {
 		rep.Error = "cannot read the run's recorded outcome: " + errorClass(err)
@@ -412,18 +415,50 @@ func (h *host) recordedOutcome(ctx context.Context, rep *report) {
 // oneShot makes the input's run, activates it if it is runnable, and
 // prints its outcome (ADR 0017, items 13 and 15).
 func (h *host) oneShot(ctx context.Context, path string, stdout, stderr io.Writer) int {
+	rep, err := h.runInput(ctx, path)
+	var ie *inputError
+	switch {
+	case errors.As(err, &ie):
+		say(stderr, "run: input %s: %v\n", path, ie.err)
+		return ExitUsage
+	case err != nil:
+		say(stderr, "run: %v\n", err)
+		return ExitIncomplete
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rep); err != nil {
+		// The outcome is the command's result: without it the caller
+		// cannot know the run succeeded (ADR 0017, item 22).
+		say(stderr, "run: cannot write the outcome: %v\n", err)
+		return ExitIncomplete
+	}
+	if rep.Status == store.StatusSucceeded {
+		return ExitComplete
+	}
+	return ExitIncomplete
+}
+
+// inputError is an input that cannot be read: a usage error.
+type inputError struct{ err error }
+
+func (e *inputError) Error() string { return e.err.Error() }
+func (e *inputError) Unwrap() error { return e.err }
+
+// runInput makes the input's run and activates it if it is runnable. Its
+// error is an *inputError when the input cannot be read, or the error
+// making the run; a run that does not succeed is a report.
+func (h *host) runInput(ctx context.Context, path string) (Report, error) {
 	in, err := hashInput(path, h.maxInput, false)
 	if err != nil {
-		say(stderr, "run: input %s: %v\n", path, err)
-		return ExitUsage
+		return Report{}, &inputError{err}
 	}
 	dctx := context.WithoutCancel(ctx)
 	run, err := h.makeRun(dctx, in, agent.TriggerOneShot)
 	if err != nil {
-		say(stderr, "run: %v\n", err)
-		return ExitIncomplete
+		return Report{}, err
 	}
-	rep := report{Run: run.ID, Input: in.trigger.Path, SHA256: in.trigger.SHA256, Status: run.Status, Reason: run.Reason}
+	rep := Report{Run: run.ID, Input: in.trigger.Path, SHA256: in.trigger.SHA256, Status: run.Status, Reason: run.Reason}
 	switch run.Status {
 	case store.StatusRunnable:
 		if ctx.Err() != nil {
@@ -444,16 +479,5 @@ func (h *host) oneShot(ctx context.Context, path string, stdout, stderr io.Write
 	default:
 		h.recordedOutcome(dctx, &rep)
 	}
-	enc := json.NewEncoder(stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(rep); err != nil {
-		// The outcome is the command's result: without it the caller
-		// cannot know the run succeeded (ADR 0017, item 22).
-		say(stderr, "run: cannot write the outcome: %v\n", err)
-		return ExitIncomplete
-	}
-	if rep.Status == store.StatusSucceeded {
-		return ExitComplete
-	}
-	return ExitIncomplete
+	return rep, nil //nolint:nilerr // a shutdown before the run started is a report: the run stays runnable
 }

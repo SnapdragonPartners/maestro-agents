@@ -16,7 +16,7 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 - Agent executables live in this repository under `cmd/<agent>/`, beside the
   library
 
-Current state: **MVP, step 4 (the extraction agent)**. The store interface,
+Current state: **MVP, step 5 (the scoring harness)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
@@ -26,13 +26,14 @@ logging and credentials (`agent/`), and the standalone host
 (`standalone/`, ADR 0017). The intake agent, `cmd/addepar`, has its
 verifier and exporter (ADR 0015) and its agent type on the standalone
 host, with the vertical slice's evidence (ADR 0018), and the extraction
-agent, whose model reads the PDF beside its text (ADR 0019); the scoring
-harness comes next. The requirements are in
+agent, whose model reads the PDF beside its text (ADR 0019), and the
+scoring harness (`scoring/`, ADR 0020) with the intake agent's answer-key
+comparator (`addepar score`); the review UI comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0014 and 0016, the standalone host ADR 0017, the intake agent's own
-design ADRs 0015, 0018 and 0019; further design
+0014 and 0016, the standalone host ADR 0017, the scoring harness ADR 0020, the intake
+agent's own design ADRs 0015, 0018 and 0019; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -187,6 +188,20 @@ Load-bearing decisions so far:
   (#17, TOOL-4); real statements go to a live model in testing only
   through Vertex AI or OpenAI
   ([ADR 0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md))
+- The scoring harness (TEST-4) is the package `scoring`: `scoring.Run`
+  runs inputs one at a time through the standalone host opened in process
+  (`standalone.Open`, `Host.RunInput`, `Host.Store`; `standalone.Report`
+  is the one-shot output) and asks the type's `Comparator` for a verdict
+  per item: match, mismatch, missed, hallucination or exception (an input
+  the key lacks is uncovered); a mismatch or hallucination, an error or
+  an input not run fails it; an input already in the store reports its
+  recorded run, so a model or prompt change is scored on a fresh store.
+  The intake agent's comparator (`addepar score`) reads the answer key as
+  the template sheet saved as CSV (exporter's columns) and a hand-written
+  mapping, by statement SHA-256, from printed investor and fund to owner
+  and asset IDs, a stopgap: an LLM judge with a set of criteria is the
+  planned second comparator, to pair records with rows
+  ([ADR 0020](docs/adr/0020-the-scoring-harness.md))
 
 ### Related repositories
 
@@ -254,16 +269,17 @@ them and does not pin or bump them independently.
 ```
 doc.go               # Root package `agents`: package documentation
 agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials (ADR 0007-0014, 0016)
-standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017)
+standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017); in process (ADR 0020)
+scoring/             # The scoring harness (TEST-4): run inputs, compare with an answer key, report (ADR 0020)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
-cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019): `run` (standalone host) and `verify`;
+cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019, 0020): `run` (standalone host), `verify` and `score`;
                      #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
-                     #   decimal, document (hash, pdfinfo, layout text), statement (the record),
+                     #   decimal, document (hash, pdfinfo, layout text), score (answer key, mapping, comparator), statement (the record),
                      #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs)
 .local/              # Gitignored machine-local data; .local/addepar/ holds the real sample statements
 docs/requirements.md # Library requirements (input to the design ADRs)
