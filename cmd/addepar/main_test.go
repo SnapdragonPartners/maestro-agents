@@ -116,6 +116,14 @@ func TestVerifyCommand(t *testing.T) {
 	if code := run(context.Background(), program(nil), []string{"verify", "-pdf", pdfPath, "-record", recPath, "-override-by", "x"}, &out, &errb); code != exitUsage || !strings.Contains(errb.String(), "reason") {
 		t.Fatalf("incomplete override: exit %d, %s", code, errb.String())
 	}
+	// Interrupted (the signal context cancelled): exit 1, not a usage error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out.Reset()
+	errb.Reset()
+	if code := run(ctx, program(nil), []string{"verify", "-pdf", pdfPath, "-record", recPath, "-override-by", "o", "-override-reason", "r"}, &out, &errb); code != exitFail || !strings.Contains(errb.String(), "interrupted") {
+		t.Fatalf("interrupted: exit %d, %s", code, errb.String())
+	}
 }
 
 // TestRunCommand runs the intake agent the way an operator does, through

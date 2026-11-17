@@ -13,8 +13,8 @@
 //	addepar verify -pdf statement.pdf -record record.json
 //
 // verify prints the seven checks' result as JSON and exits 0 when the record has
-// no error (warnings still need a person's acceptance), 1 when it has one,
-// and 2 on a usage or input error. A copy-restricted PDF's text is read only
+// no error (warnings still need a person's acceptance), 1 when it has one
+// or a signal interrupted it, and 2 on a usage or input error. A copy-restricted PDF's text is read only
 // with -override-by and -override-reason, the operator's recorded acceptance;
 // without them the record fails grounding and goes to manual entry.
 //
@@ -35,7 +35,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -50,6 +49,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/intake"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
+	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
 )
 
@@ -73,8 +73,9 @@ func main() {
 }
 
 // command runs one of addepar's own commands under the host's signal
-// lifecycle: the first SIGINT or SIGTERM shuts a score run down at its next
-// step boundary, a second ends the process (ADR 0017, item 21).
+// lifecycle: the first SIGINT or SIGTERM cancels the command's context (a
+// score run shuts down at its next step boundary; verify stops reading the
+// PDF and exits 1), a second ends the process (ADR 0017, item 21).
 func command(p standalone.Program, args []string) int { //nolint:gocritic // hugeParam: called once
 	ctx, stop := standalone.SignalContext(context.Background())
 	defer stop()
@@ -134,6 +135,10 @@ func verifyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		ov = &document.Override{By: *ovBy, Reason: *ovReason, At: time.Now().UTC()}
 	}
 	res, err := verifyFiles(ctx, *pdfPath, *recPath, ov)
+	if err != nil && ctx.Err() != nil {
+		say(stderr, "verify: interrupted: %v\n", err)
+		return exitFail
+	}
 	if err != nil {
 		say(stderr, "verify: %v\n", err)
 		return exitUsage
@@ -155,7 +160,7 @@ func verifyFiles(ctx context.Context, pdfPath, recPath string, ov *document.Over
 	if err != nil {
 		return nil, fmt.Errorf("pdf: %w", err)
 	}
-	rf, err := os.Open(recPath) //nolint:gosec // the operator names the file
+	rf, err := regularfile.Open(recPath, false)
 	if err != nil {
 		return nil, fmt.Errorf("open record: %w", err)
 	}
@@ -188,20 +193,13 @@ func say(w io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(w, format, args...)
 }
 
-var errTooLarge = errors.New("file too large")
-
+// readCapped reads an operator's file of at most limit bytes, refusing a
+// FIFO, device or other non-regular file rather than hanging on it (ADR
+// 0017, item 11).
 func readCapped(path string, limit int64) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // the operator names the file
-	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
-	}
-	defer f.Close() //nolint:errcheck // read-only
-	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	b, err := regularfile.ReadCapped(path, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)
-	}
-	if int64(len(b)) > limit {
-		return nil, fmt.Errorf("%w: %s is over %d bytes", errTooLarge, path, limit)
 	}
 	return b, nil
 }

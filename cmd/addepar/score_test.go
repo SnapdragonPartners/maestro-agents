@@ -313,9 +313,37 @@ func TestScoreUsage(t *testing.T) {
 			}
 		})
 	}
+	// A subfolder and a symlink named *.pdf are not inputs, as the folder
+	// watch skips them (ADR 0020, item 9).
+	if err := os.Mkdir(filepath.Join(inbox, "dir.pdf"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	links := filepath.Join(dir, "links")
+	if err := os.Mkdir(links, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(links, "dir.pdf"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	symlinks := runtime.GOOS != "windows"
+	if symlinks {
+		target := filepath.Join(inbox, "a.PDF")
+		for _, l := range []string{filepath.Join(inbox, "link.pdf"), filepath.Join(links, "link.pdf")} {
+			if err := os.Symlink(target, l); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	in, err := pdfInputs(inbox)
-	if err != nil || len(in) != 1 {
-		t.Fatalf("a .PDF is an input: %v, %v", in, err)
+	if err != nil || len(in) != 1 || filepath.Base(in[0].Path) != "a.PDF" {
+		t.Fatalf("only the regular a.PDF is an input: %v, %v", in, err)
+	}
+	if in, err := pdfInputs(links); err == nil || !strings.Contains(err.Error(), "no PDF") {
+		t.Fatalf("a folder of a subfolder and a symlink has no input: %v, %v", in, err)
+	}
+	var out, errb bytes.Buffer
+	if code := run(context.Background(), p, []string{"score", "-config", folderCfg, "-inputs", links, "-key", keyPath, "-map", mapPath}, &out, &errb); code != exitUsage || !strings.Contains(errb.String(), "no PDF") {
+		t.Fatalf("no regular PDF: exit %d, %s", code, errb.String())
 	}
 }
 
