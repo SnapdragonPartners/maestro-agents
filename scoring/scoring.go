@@ -105,8 +105,9 @@ type Host interface {
 // Result is one input's score.
 type Result struct {
 	Input Input `json:"input"`
-	// Error is the host's error running the input, or the comparator's;
-	// the input then has no items.
+	// Error is the host's error running the input (the input then has no
+	// items), a failure its report carries (an outcome not confirmed, a run
+	// not finished), or the comparator's.
 	Error string `json:"error,omitempty"`
 	Items []Item `json:"items,omitempty"`
 	// Report is the host's report on the input's run; zero when Error is
@@ -190,6 +191,10 @@ func Run(ctx context.Context, h Host, inputs []Input, c Comparator, now func() t
 		}
 		rep.Results = append(rep.Results, score(ctx, h, in, c, now))
 	}
+	if ctx.Err() != nil {
+		// Cancelled during the last input: its run was cut short.
+		rep.Complete = false
+	}
 	rep.Totals = total(rep.Results)
 	return rep
 }
@@ -204,16 +209,25 @@ func score(ctx context.Context, h Host, in Input, c Comparator, now func() time.
 		return res
 	}
 	res.Report, res.Recorded = r, !r.Activated && r.Status.Terminal()
+	// A report can carry its own failure: an activation whose outcome was
+	// not confirmed, or a run left unfinished (a shutdown). Either fails the
+	// input whatever the comparator makes of it (ADR 0020, item 1).
+	switch {
+	case r.Error != "":
+		res.Error = "run: " + r.Error
+	case !r.Status.Terminal():
+		res.Error = "run: not finished (status " + string(r.Status) + reasonSuffix(r.Reason.Code) + ")"
+	}
 	items, err := c.Compare(ctx, &Output{Store: h.Store(), Namespace: h.Namespace(), Report: r, Input: in})
 	switch {
 	case errors.Is(err, ErrNoAnswer):
 		res.Uncovered = true
 	case err != nil:
-		res.Error = "compare: " + err.Error()
+		res.Error = joinErr(res.Error, "compare: "+err.Error())
 	default:
 		for i := range items {
 			if !items[i].Verdict.valid() {
-				res.Error = "compare: item " + items[i].Key + " has an unknown verdict " + string(items[i].Verdict)
+				res.Error = joinErr(res.Error, "compare: item "+items[i].Key+" has an unknown verdict "+string(items[i].Verdict))
 				items = nil
 				break
 			}
@@ -222,6 +236,20 @@ func score(ctx context.Context, h Host, in Input, c Comparator, now func() time.
 	}
 	res.Wall = now().Sub(start)
 	return res
+}
+
+func reasonSuffix(code string) string {
+	if code == "" {
+		return ""
+	}
+	return ", " + code
+}
+
+func joinErr(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + "; " + b
 }
 
 func total(results []Result) Totals {

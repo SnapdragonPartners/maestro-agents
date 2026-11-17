@@ -46,8 +46,13 @@ answer key may not be deterministic at all.
    comparator's items. It returns a `Report`: the inputs' results, and
    totals of every verdict, tokens, turns and wall time. A host error on
    one input (an unreadable file) is recorded on that input and the run
-   goes on; cancelling the context stops after the current input. The
-   report writes as JSON or as a text table.
+   goes on. So is a failure the host's report carries: an activation
+   whose outcome was not confirmed (`Report.Error`), or a run left
+   unfinished (a status that is not terminal, as after a shutdown); the
+   comparator still gives its items, but the input is an error whatever
+   they are. Cancelling the context stops after the current input and
+   leaves the report incomplete, including when the current input is the
+   last. The report writes as JSON or as a text table.
 2. **The standalone host opens in process.** `standalone.Open(ctx,
    program, configPath, stderr)` loads and validates the configuration as
    `run` does, refuses any trigger but `one_shot`, and builds the host
@@ -143,9 +148,13 @@ answer key may not be deterministic at all.
    FILE -map FILE [-json]` opens the host on the configuration, takes
    the regular `.pdf` files directly in DIR (no subfolders, dotfiles or
    symlinks, as the folder watch skips them), sorted by name, and prints
-   the report. The report carries values and names (the answer's and the
-   agent's), so on real statements it is client data: the command prints
-   it to stdout for the operator, and it goes to telemetry and logs never.
+   the report. It runs under the host's signal lifecycle
+   (`standalone.SignalContext`, which `standalone.Main` uses too): the
+   first SIGINT or SIGTERM shuts the current run down at its next step
+   boundary and the report is incomplete; a second ends the process. The
+   report carries values and names (the answer's and the agent's), so on
+   real statements it is client data: the command prints it to stdout for
+   the operator, and it goes to telemetry and logs never.
 10. **Test data.** Committed tests score synthetic statements (the
     verifier's synthetic set, rendered with `synthpdf`) with a scripted
     model, a synthetic answer key and mapping, and cover every verdict and

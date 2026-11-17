@@ -40,7 +40,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"time"
 
@@ -65,14 +64,21 @@ const (
 const maxPDFBytes = 64 << 20
 
 func main() {
+	p := program(nil)
 	if hostCommand(os.Args[1:]) {
-		standalone.Main(program(nil))
+		standalone.Main(p)
 		return
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	code := run(ctx, program(nil), os.Args[1:], os.Stdout, os.Stderr)
-	stop()
-	os.Exit(code)
+	os.Exit(command(p, os.Args[1:]))
+}
+
+// command runs one of addepar's own commands under the host's signal
+// lifecycle: the first SIGINT or SIGTERM shuts a score run down at its next
+// step boundary, a second ends the process (ADR 0017, item 21).
+func command(p standalone.Program, args []string) int { //nolint:gocritic // hugeParam: called once
+	ctx, stop := standalone.SignalContext(context.Background())
+	defer stop()
+	return run(ctx, p, args, os.Stdout, os.Stderr)
 }
 
 // hostCommand reports whether args name one of the standalone host's

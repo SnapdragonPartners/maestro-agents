@@ -126,14 +126,24 @@ func (p *Program) providerNames() []string {
 // exit code. The first SIGINT or SIGTERM shuts down gracefully; a second
 // ends the process at once (ADR 0017, item 21).
 func Main(p Program) { //nolint:gocritic // hugeParam: called once, by main
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := SignalContext(context.Background())
+	code := Run(ctx, p, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
+}
+
+// SignalContext is the host's signal lifecycle (ADR 0017, item 21), for an
+// agent's own commands that run the host in process (ADR 0020): the first
+// SIGINT or SIGTERM cancels the returned context, so a run shuts down at
+// its next step boundary, and restores the default handling, so a second
+// ends the process at once. stop releases the signals.
+func SignalContext(parent context.Context) (ctx context.Context, stop func()) {
+	ctx, stop = signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ctx.Done()
 		stop() // restore the default handling: a second signal ends the process
 	}()
-	code := Run(ctx, p, os.Args[1:], os.Stdout, os.Stderr)
-	stop()
-	os.Exit(code)
+	return ctx, stop
 }
 
 // Run runs the program with the given arguments and returns its exit code.

@@ -199,3 +199,36 @@ func TestWriteReport(t *testing.T) {
 		t.Errorf("passing report:\n%s", b.String())
 	}
 }
+
+// TestReportFailuresFailTheInput: a report carrying an unconfirmed outcome,
+// or a run left unfinished, fails the input whatever the comparator says.
+func TestReportFailuresFailTheInput(t *testing.T) {
+	unconfirmed := succeeded(1, 1)
+	unconfirmed.Error = "store read failed"
+	shutdown := standalone.Report{Status: store.StatusRunnable, Reason: store.Reason{Code: "shutdown"}, Activated: true}
+	h := &fakeHost{reports: map[string]standalone.Report{"a.pdf": unconfirmed, "b.pdf": shutdown}}
+	cmp := scoring.ComparatorFunc(func(context.Context, *scoring.Output) ([]scoring.Item, error) { return items(scoring.Exception), nil })
+	rep := scoring.Run(context.Background(), h, []scoring.Input{{Path: "a.pdf"}, {Path: "b.pdf"}}, cmp, nil)
+	if !strings.Contains(rep.Results[0].Error, "store read failed") || len(rep.Results[0].Items) != 1 {
+		t.Fatalf("unconfirmed: %+v", rep.Results[0])
+	}
+	if !strings.Contains(rep.Results[1].Error, "not finished (status runnable, shutdown)") {
+		t.Fatalf("shutdown: %+v", rep.Results[1])
+	}
+	if !rep.Failed() || rep.Totals.Errors != 2 {
+		t.Fatalf("totals %+v", rep.Totals)
+	}
+}
+
+// TestCancelDuringTheLastInput: a cancellation that cuts the last input
+// short leaves the report incomplete.
+func TestCancelDuringTheLastInput(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := &fakeHost{reports: map[string]standalone.Report{"a.pdf": succeeded(1, 1)}, cancel: cancel}
+	cmp := scoring.ComparatorFunc(func(context.Context, *scoring.Output) ([]scoring.Item, error) { return items(scoring.Match), nil })
+	rep := scoring.Run(ctx, h, []scoring.Input{{Path: "a.pdf"}}, cmp, nil)
+	if len(rep.Results) != 1 || rep.Complete || !rep.Failed() {
+		t.Fatalf("complete %v, failed %v", rep.Complete, rep.Failed())
+	}
+}

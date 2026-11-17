@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -313,5 +316,69 @@ func TestScoreUsage(t *testing.T) {
 	in, err := pdfInputs(inbox)
 	if err != nil || len(in) != 1 {
 		t.Fatalf("a .PDF is an input: %v, %v", in, err)
+	}
+}
+
+// TestScoreSignals: SIGTERM during a score run shuts the run down at its
+// next step boundary; the input is reported unfinished, the report
+// incomplete, and the exit code 1 (ADR 0017 item 21, ADR 0020 item 1).
+func TestScoreSignals(t *testing.T) {
+	requirePoppler(t)
+	if os.Getenv("ADDEPAR_TEST_SCORE_MAIN") != "" {
+		fake := func(standalone.ModelRoute, agent.Secret) (llms.ChatClient, error) {
+			return &testllm.FakeChatClient{
+				ModelRef: llms.ModelRef{Provider: "fake", Name: "scripted"},
+				Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+					if len(req.Messages) == 1 {
+						return toolCall("1", "get_document", `{}`), nil
+					}
+					fmt.Fprintln(os.Stderr, "STARTED")
+					<-ctx.Done()
+					return llms.ChatResponse{}, ctx.Err()
+				},
+			}, nil
+		}
+		for i, a := range os.Args {
+			if a == "--" {
+				os.Exit(command(program(map[llms.ProviderID]standalone.Provider{"fake": fake}), os.Args[i+1:]))
+			}
+		}
+		t.Fatal("no -- in the arguments")
+	}
+	dir := t.TempDir()
+	inbox := filepath.Join(dir, "inbox")
+	if err := os.Mkdir(inbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sha, _ := synthStatement(t, inbox, "keelson-vi")
+	mapPath := filepath.Join(dir, "map.json")
+	writeJSONFile(t, mapPath, map[string]any{"statements": []any{map[string]any{"sha256": sha, "positions": []any{map[string]any{
+		"investor": "Example Holdings IV, LLC", "fund": "Keelson Partners VI, L.P.", "owner_id": "1", "asset_id": "10"}}}}})
+	keyPath := filepath.Join(dir, "key.csv")
+	writeKey(t, keyPath, answerRow("1", "EXAMPLE HOLDINGS IV, LLC", "10", "Keelson Partners VI, LP", "678250"))
+	cmd := exec.Command(os.Args[0], "-test.run=^TestScoreSignals$", "--", "score", //nolint:gosec // the test binary
+		"-config", scoreConfig(t, dir, "state"), "-inputs", inbox, "-key", keyPath, "-map", mapPath)
+	cmd.Env = append(os.Environ(), "ADDEPAR_TEST_SCORE_MAIN=1")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	sc := bufio.NewScanner(stderr)
+	for sc.Scan() {
+		if sc.Text() == "STARTED" {
+			if err = cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	err = cmd.Wait()
+	out := stdout.String()
+	if code := cmd.ProcessState.ExitCode(); code != exitFail || !strings.Contains(out, "not finished (status runnable") || !strings.Contains(out, "incomplete") {
+		t.Fatalf("exit %d (%v): %s", code, err, out)
 	}
 }
