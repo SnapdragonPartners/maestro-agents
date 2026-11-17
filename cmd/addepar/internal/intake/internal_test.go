@@ -1,6 +1,7 @@
 package intake
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/decimal"
@@ -50,6 +51,25 @@ func TestSamePosition(t *testing.T) {
 	for name, r := range distinct {
 		if why := samePosition(base, r); why != "" {
 			t.Errorf("%s: treated as the same position: %s", name, why)
+		}
+	}
+}
+
+// TestReading: a PDF within both limits is sent; over either, the text alone
+// is read, with a note naming the limit (ADR 0019).
+func TestReading(t *testing.T) {
+	for _, c := range []struct {
+		pages, size int
+		mode, note  string
+	}{
+		{1, 1, ReadingPDFAndText, ""},
+		{MaxPDFPages, MaxPDFBytes, ReadingPDFAndText, ""},
+		{MaxPDFPages + 1, 1, ReadingTextOnly, "101 pages"},
+		{1, MaxPDFBytes + 1, ReadingTextOnly, "20971521 bytes"},
+	} {
+		mode, note := reading(c.pages, c.size)
+		if mode != c.mode || (c.note == "") != (note == "") || !strings.Contains(note, c.note) {
+			t.Errorf("reading(%d, %d) = %q, %q; want %q with %q", c.pages, c.size, mode, note, c.mode, c.note)
 		}
 	}
 }

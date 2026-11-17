@@ -22,6 +22,13 @@ import (
 // DocumentKey is the stored document's key.
 func DocumentKey(sha string) string { return "documents/" + sha }
 
+// PDFKey is the key of the document's PDF bytes, as received (ADR 0019).
+func PDFKey(sha string) string { return "pdfs/" + sha }
+
+// PDFSentKey is the key of the marker that get_document sent the PDF to the
+// model (ADR 0019).
+func PDFSentKey(sha string) string { return "sent/" + sha }
+
 // OutcomeKey is the document's outcome's key.
 func OutcomeKey(sha string) string { return "outcomes/" + sha }
 
@@ -49,9 +56,44 @@ type Document struct {
 	Document *document.Document `json:"document"`
 	// Run is the run that loaded it.
 	Run string `json:"run"`
+	// Reading is how get_document gives the model the statement (ADR
+	// 0019): ReadingPDFAndText, or ReadingTextOnly with ReadingNote saying
+	// why.
+	Reading     string `json:"reading"`
+	ReadingNote string `json:"reading_note,omitempty"`
 	// Text is each page's text in layout mode, in page order; empty when
 	// the text was not read.
 	Text []string `json:"text,omitempty"`
+}
+
+// How the model reads a statement (ADR 0019).
+const (
+	// ReadingPDFAndText: get_document returns the PDF itself beside its
+	// layout-mode text.
+	ReadingPDFAndText = "pdf_and_text"
+	// ReadingTextOnly: the PDF is over the size the model is sent, so
+	// get_document returns the layout-mode text alone.
+	ReadingTextOnly = "text_only"
+)
+
+// The largest PDF sent to the model (ADR 0019): within the providers' PDF
+// limits (Anthropic's 100 pages and 32 MB request) with room for the
+// base64 encoding, the text and the conversation.
+const (
+	MaxPDFPages = 100
+	MaxPDFBytes = 20 << 20
+)
+
+// reading decides how the model reads a PDF of the given page count and
+// size.
+func reading(pages, size int) (mode, note string) {
+	switch {
+	case pages > MaxPDFPages:
+		return ReadingTextOnly, fmt.Sprintf("the PDF has %d pages, over the %d sent to the model", pages, MaxPDFPages)
+	case size > MaxPDFBytes:
+		return ReadingTextOnly, fmt.Sprintf("the PDF is %d bytes, over the %d sent to the model", size, MaxPDFBytes)
+	}
+	return ReadingPDFAndText, ""
 }
 
 // Doc returns the document with its pages' text restored.
@@ -69,6 +111,15 @@ func (d *Document) Doc() (*document.Document, error) {
 		doc.Pages[i] = p
 	}
 	return &doc, nil
+}
+
+// PDFSent records the get_document call that sent the PDF to the model,
+// whose result in the execution record holds it.
+type PDFSent struct {
+	At   time.Time `json:"at"`
+	Run  string    `json:"run"`
+	Step uint64    `json:"step"`
+	Call int       `json:"call"`
 }
 
 // The dispositions an outcome records (intake: a run ends when every
@@ -105,8 +156,10 @@ type Attempt struct {
 	// Submitted is the tool call's arguments, as the model sent them.
 	Submitted json.RawMessage `json:"submitted"`
 	// Problem is why the submission as a whole could not be read.
-	Problem string          `json:"problem,omitempty"`
-	Verdict verify.Status   `json:"verdict"`
+	Problem string        `json:"problem,omitempty"`
+	Verdict verify.Status `json:"verdict"`
+	// Reading is how the model read the statement (ADR 0019).
+	Reading string          `json:"reading"`
 	Records []AttemptRecord `json:"records,omitempty"`
 	Step    uint64          `json:"step"`
 	Call    int             `json:"call"`

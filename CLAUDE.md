@@ -16,7 +16,7 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 - Agent executables live in this repository under `cmd/<agent>/`, beside the
   library
 
-Current state: **MVP, step 2 (the vertical slice)**. The store interface,
+Current state: **MVP, step 4 (the extraction agent)**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
@@ -25,13 +25,14 @@ attempt-level budget admission, and the host seams for telemetry,
 logging and credentials (`agent/`), and the standalone host
 (`standalone/`, ADR 0017). The intake agent, `cmd/addepar`, has its
 verifier and exporter (ADR 0015) and its agent type on the standalone
-host, with the vertical slice's evidence (ADR 0018); the extraction
-agent (the PDF sent to the model, live-model acceptance) comes next. The requirements are in
+host, with the vertical slice's evidence (ADR 0018), and the extraction
+agent, whose model reads the PDF beside its text (ADR 0019); the scoring
+harness comes next. The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
 0014 and 0016, the standalone host ADR 0017, the intake agent's own
-design ADRs 0015 and 0018; further design
+design ADRs 0015, 0018 and 0019; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -161,17 +162,31 @@ Load-bearing decisions so far:
   next step boundary; exit 0 complete, 1 incomplete, 2 usage
   ([ADR 0017](docs/adr/0017-the-standalone-host.md))
 - The intake agent type (`intake.Type`, `addepar-intake`) runs as `addepar
-  run` on the standalone host: `load` (code) stores the document and its
-  layout text; `extract` (model) has the four tools, whose three writes
-  are atomic local transactions putting each object once (expected
-  version zero) under the document's SHA-256 (`documents/`, `attempts/`,
-  `records/` in the exporter's shape, `outcomes/`); `submit_extraction`
+  run` on the standalone host: `load` (code) stores the document, its
+  layout text and (ADR 0019) the PDF; `extract` (model) has the four
+  tools, all atomic local transactions (`get_document` since ADR 0019)
+  putting each object once (expected version zero) under the document's
+  SHA-256 (`documents/`, `pdfs/`, `sent/`, `attempts/`, `records/` in the
+  exporter's shape, `outcomes/`); `submit_extraction`
   takes every record in the document and verifies each in code; at most
   three submissions (config may lower), the last failure or a wrap-up
   failure going to manual review; until #17, running the agent is the
   recorded acceptance to read a copy-restricted PDF; TEST-5 and TEST-6 run
   on the agent itself against the file store
   ([ADR 0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md))
+- The extraction agent reads the PDF (type version 2): `load` also stores
+  the PDF's bytes at `pdfs/<sha256>`; `get_document` returns the PDF as a
+  document part, sent only if it hashes to the document's SHA-256 and only
+  once per conversation (an atomic local transaction putting the marker
+  `sent/<sha256>`; a repeat call gets the text alone), then the layout
+  text, which the model copies values from, since code
+  verifies against it; a PDF over 100 pages or 20 MiB is read as text
+  alone, recorded on the document and each attempt; no-text PDFs still go
+  to manual review; every permission (reading and sending a
+  copy-restricted PDF included) is implicit until the gates are built
+  (#17, TOOL-4); real statements go to a live model in testing only
+  through Vertex AI or OpenAI
+  ([ADR 0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md))
 
 ### Related repositories
 
@@ -246,7 +261,7 @@ store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
-cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018): `run` (standalone host) and `verify`;
+cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019): `run` (standalone host) and `verify`;
                      #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
                      #   decimal, document (hash, pdfinfo, layout text), statement (the record),
                      #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs)

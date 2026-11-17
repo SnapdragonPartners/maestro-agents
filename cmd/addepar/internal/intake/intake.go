@@ -2,10 +2,12 @@
 // statement PDF in; its verified records, or its disposition, out.
 //
 // A run loads its input (the standalone host's file trigger) in a code state,
-// storing the document and its layout-mode text, then extracts in a model
+// storing the PDF, the document and its layout-mode text, then extracts in a model
 // state whose four tools are the intake requirements' own: get_document,
 // submit_extraction, set_aside and request_manual_review. The model only
-// proposes. submit_extraction verifies every record in code (ADR 0015) and,
+// proposes. get_document gives it the PDF itself beside the layout-mode text
+// (ADR 0019), so it sees the page while copying what code verifies against.
+// submit_extraction verifies every record in code (ADR 0015) and,
 // as an atomic local transaction, stores the attempt and, when no record has
 // an error, the records and the document's outcome, ending the run. Every
 // object lives in the run's namespace, keyed by the document's SHA-256, and
@@ -30,7 +32,7 @@ const TypeName = "addepar-intake"
 
 // Version is the agent type's version, recorded in every checkpoint and part
 // of every tool's content identity.
-const Version = "1"
+const Version = "2"
 
 // MaxAttempts is the most submissions a run accepts (intake E-6): when the
 // last fails, the statement goes to manual review.
@@ -52,8 +54,9 @@ const (
 	toolSubmit        = "submit_extraction"
 	toolSetAside      = "set_aside"
 	toolManualReview  = "request_manual_review"
+	pdfMediaType      = "application/pdf"
 	implicitAcceptor  = "operator"
-	implicitReason    = "implicit acceptance: running the intake agent processes copy-restricted statements until per-document acceptance is built (maestro-agents#17)"
+	implicitReason    = "implicit acceptance: running the intake agent reads copy-restricted statements and sends them to the model until per-document acceptance is built (maestro-agents#17)"
 	configSchema      = `{"type":["object","null"],"properties":{"max_attempts":{"type":"integer","minimum":1,"maximum":3}},"additionalProperties":false}`
 	defaultTurns      = 16
 	defaultActiveTime = 10 * time.Minute
@@ -70,6 +73,8 @@ type Data struct {
 	Document string `json:"document,omitempty"`
 	// Name is the input's display name.
 	Name string `json:"name,omitempty"`
+	// Reading is how the model reads the statement (ADR 0019).
+	Reading string `json:"reading,omitempty"`
 	// Pages is the document's page count.
 	Pages int `json:"pages,omitempty"`
 	// MaxAttempts is the run's submission cap.

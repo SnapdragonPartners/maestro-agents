@@ -7,7 +7,6 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/document"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
-	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
 // LoadFunc reads a statement PDF: document.Load's signature.
@@ -18,7 +17,8 @@ func defaultLoad(ctx context.Context, name string, data []byte, opts document.Op
 }
 
 // loadState reads the input named by the run's file trigger, loads it, and
-// stores the document with the transition. A document already stored (the
+// stores the PDF and the document with the transition, deciding how the
+// model will read it (ADR 0019). A document already stored (the
 // same file run again under another instance) is flagged as a duplicate and
 // not processed (intake I-2); one with no usable text goes to manual review
 // (I-3).
@@ -44,7 +44,8 @@ func (a *intake) loadState(ctx context.Context, env *agent.Env, d Data) (agent.T
 	// Running the agent is the operator's acceptance of reading a
 	// copy-restricted statement's text, until acceptance per document is
 	// built (ADR 0018; maestro-agents#17). Load applies it only to a
-	// restricted PDF, and the document and manifest record it.
+	// restricted PDF, and the document and manifest record it. It covers
+	// sending the PDF itself to the model too (ADR 0019).
 	by := env.RunContext().Principal
 	if by == "" {
 		by = implicitAcceptor
@@ -55,7 +56,9 @@ func (a *intake) loadState(ctx context.Context, env *agent.Env, d Data) (agent.T
 		return agent.Transition[Data]{}, fmt.Errorf("intake: load: %w", err)
 	}
 	d.Pages = doc.PageCount
-	stored := Document{Document: doc, Received: now, Run: env.RunID()}
+	mode, note := reading(doc.PageCount, len(data))
+	d.Reading = mode
+	stored := Document{Document: doc, Received: now, Run: env.RunID(), Reading: d.Reading, ReadingNote: note}
 	for _, p := range doc.Pages {
 		stored.Text = append(stored.Text, p.Text)
 	}
@@ -63,13 +66,16 @@ func (a *intake) loadState(ctx context.Context, env *agent.Env, d Data) (agent.T
 	if err != nil {
 		return agent.Transition[Data]{}, err
 	}
+	// The PDF as received, for get_document and the review: written once,
+	// like every object.
+	pdfOp := env.PutBytes(PDFKey(d.Document), 0, data)
 	if doc.TextLayer == document.TextNone || doc.TextLayer == document.TextNotRead {
 		out := Outcome{At: now, Disposition: DispositionManual, Reason: "the PDF has no usable text layer", Run: env.RunID()}
 		outOp, err := putNew(env, OutcomeKey(d.Document), &out)
 		if err != nil {
 			return agent.Transition[Data]{}, err
 		}
-		return agent.Goto(stateManual, d, docOp, outOp), nil
+		return agent.Goto(stateManual, d, docOp, pdfOp, outOp), nil
 	}
-	return agent.Goto(stateExtract, d, []store.Op{docOp}...), nil
+	return agent.Goto(stateExtract, d, docOp, pdfOp), nil
 }

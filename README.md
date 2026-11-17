@@ -19,7 +19,9 @@ configuration and which every agent's `main` calls, is in `standalone/`
 `cmd/addepar`, runs on the standalone host: its verifier and exporter,
 and the vertical slice (extraction, verification, crash recovery and
 fencing on the file store, [ADR
-0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md)). Design decisions
+0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md)), with the
+model reading the PDF itself beside its text ([ADR
+0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md)). Design decisions
 are in the [ADRs](docs/adr/README.md).
 
 ## Layout

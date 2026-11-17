@@ -53,32 +53,90 @@ func (a *intake) getDocument() agent.Tool[Data] {
 	return agent.Tool[Data]{
 		Definition: llms.ToolDefinition{
 			Name:        toolGetDocument,
-			Description: "Read the statement: its page count and each page's text in layout mode, which keeps each printed line, and each label beside its numbers, on one line.",
+			Description: "Read the statement: the PDF itself, to see its pages, and its page count and each page's text in layout mode, which keeps each printed line, and each label beside its numbers, on one line. Copy names, labels and amounts from the text.",
 			InputSchema: json.RawMessage(emptySchema),
 		},
-		Effect: agent.EffectRead,
+		// An atomic local transaction whose one write is the marker that
+		// the PDF was sent, so the conversation carries it once (ADR 0019,
+		// item 2).
+		Effect:   agent.EffectWrite,
+		Contract: agent.ContractAtomicLocal,
 		Execute: func(ctx context.Context, c *agent.Call[Data]) (agent.Result[Data], error) {
-			doc, err := readDocument(ctx, c.Env, c.Data.Document)
+			var stored Document
+			ok, err := readJSON(ctx, c.Env, DocumentKey(c.Data.Document), &stored)
 			if err != nil {
 				return agent.Result[Data]{}, err
 			}
-			var b strings.Builder
-			fmt.Fprintf(&b, "%d page(s); text layer %s.\n", doc.PageCount, doc.TextLayer)
-			for _, p := range doc.Pages {
-				fmt.Fprintf(&b, "\n=== page %d ===\n", p.Number)
-				if !p.Usable {
-					b.WriteString("(no usable text on this page)\n")
-					continue
-				}
-				b.WriteString(p.Text)
-				if !strings.HasSuffix(p.Text, "\n") {
-					b.WriteString("\n")
-				}
+			if !ok {
+				return agent.Result[Data]{}, fmt.Errorf("intake: document %s is not stored", c.Data.Document)
 			}
-			return agent.TextResult[Data](b.String()), nil
+			doc, err := stored.Doc()
+			if err != nil {
+				return agent.Result[Data]{}, err
+			}
+			text := documentText(doc, &stored)
+			if stored.Reading != ReadingPDFAndText {
+				return agent.TextResult[Data](text), nil
+			}
+			// The PDF goes into the conversation once: a later call, in the
+			// same turn or after recovery, finds the marker its first call
+			// committed with its result, and returns the text alone.
+			var sent PDFSent
+			ok, err = readJSON(ctx, c.Env, PDFSentKey(c.Data.Document), &sent)
+			if err != nil {
+				return agent.Result[Data]{}, err
+			}
+			if ok {
+				return agent.TextResult[Data](pdfAttachedEarlier + text), nil
+			}
+			pdf, ok, err := c.Env.Object(ctx, PDFKey(c.Data.Document))
+			if err != nil {
+				return agent.Result[Data]{}, err //nolint:wrapcheck // a *agent.ReadError, which the runtime classifies
+			}
+			if !ok || len(pdf.Bytes) == 0 {
+				return agent.Result[Data]{}, fmt.Errorf("intake: PDF %s is not stored", c.Data.Document)
+			}
+			if document.Hash(pdf.Bytes) != c.Data.Document {
+				return agent.Result[Data]{}, fmt.Errorf("intake: stored PDF %s does not match its hash", c.Data.Document)
+			}
+			sentOp, err := putNew(c.Env, PDFSentKey(c.Data.Document), &PDFSent{
+				At: a.now(), Run: c.Env.RunID(), Step: c.Env.Step(), Call: c.Action.Call,
+			})
+			if err != nil {
+				return agent.Result[Data]{}, err
+			}
+			return agent.Result[Data]{Parts: []llms.ContentPart{
+				llms.Document(pdfMediaType, pdf.Bytes),
+				llms.Text(text),
+			}, Ops: []store.Op{sentOp}}, nil
 		},
 	}
 }
+
+// documentText is get_document's text: the page count, the text layer, why
+// the PDF is not attached when it is not, and each page's layout text.
+func documentText(doc *document.Document, stored *Document) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d page(s); text layer %s.\n", doc.PageCount, doc.TextLayer)
+	if stored.Reading != ReadingPDFAndText {
+		fmt.Fprintf(&b, "The PDF itself is not attached: %s. Read the text alone.\n", stored.ReadingNote)
+	}
+	for _, p := range doc.Pages {
+		fmt.Fprintf(&b, "\n=== page %d ===\n", p.Number)
+		if !p.Usable {
+			b.WriteString("(no usable text on this page)\n")
+			continue
+		}
+		b.WriteString(p.Text)
+		if !strings.HasSuffix(p.Text, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// pdfAttachedEarlier heads a repeat get_document result.
+const pdfAttachedEarlier = "The PDF itself was attached to your first get_document result, earlier in this conversation, and is not attached again.\n"
 
 func (a *intake) submit() agent.Tool[Data] {
 	return agent.Tool[Data]{
@@ -130,7 +188,7 @@ func (a *intake) submitExec(ctx context.Context, c *agent.Call[Data]) (agent.Res
 	now := a.now()
 	att := Attempt{
 		N: len(prior) + 1, Run: env.RunID(), Step: env.Step(), Call: c.Action.Call, At: now,
-		Submitted: c.ToolCall.Parameters, WrapUp: c.WrapUp,
+		Submitted: c.ToolCall.Parameters, WrapUp: c.WrapUp, Reading: d.Reading,
 	}
 	verifySubmission(doc, &att)
 	attOp, err := putNew(env, AttemptKey(d.Document, att.N), &att)

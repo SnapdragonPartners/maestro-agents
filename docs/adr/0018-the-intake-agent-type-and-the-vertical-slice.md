@@ -1,6 +1,6 @@
 # 0018. The intake agent type and the vertical slice
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0019
 - **Date:** 2026-11-16
 
 ## Context
