@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 )
 
@@ -29,6 +30,16 @@ func Check(f *os.File, path string) (*os.File, error) {
 	return f, nil
 }
 
+// PlusOne is n+1, saturating: the one byte past a limit that shows a
+// file exceeds it. At math.MaxInt64 no file can exceed the limit, and n+1
+// would wrap to a negative limit that reads nothing (ADR 0017, item 11).
+func PlusOne(n int64) int64 {
+	if n == math.MaxInt64 {
+		return n
+	}
+	return n + 1
+}
+
 // ReadCapped reads a regular file of at most limit bytes.
 func ReadCapped(path string, limit int64) ([]byte, error) {
 	f, err := Open(path, false)
@@ -36,7 +47,7 @@ func ReadCapped(path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close() //nolint:errcheck // read-only
-	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	b, err := io.ReadAll(io.LimitReader(f, PlusOne(limit)))
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the PathError names the file
 	}
