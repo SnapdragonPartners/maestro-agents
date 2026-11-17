@@ -277,6 +277,7 @@ store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
+internal/strictjson/ # The strict JSON decoder for operators' files: host config and secrets, the scoring mapping (ADR 0017, 0020)
 cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019, 0020): `run` (standalone host), `verify` and `score`;
                      #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
                      #   decimal, document (hash, pdfinfo, layout text), score (answer key, mapping, comparator), statement (the record),

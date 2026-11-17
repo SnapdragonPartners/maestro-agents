@@ -83,7 +83,7 @@ func command(p standalone.Program, args []string) int { //nolint:gocritic // hug
 
 // hostCommand reports whether args name one of the standalone host's
 // commands, run and config validate; every other invocation, a bad one
-// included, is addepar's own, so its usage lists all three.
+// included, is addepar's own, so its usage lists every command.
 func hostCommand(args []string) bool {
 	switch {
 	case len(args) >= 1 && args[0] == "run":

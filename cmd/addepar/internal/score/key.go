@@ -11,6 +11,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,8 +67,12 @@ func (k *Key) Lookup(ownerID, assetID string) (*Row, error) {
 	case 1:
 		return rows[0], nil
 	}
-	return nil, fmt.Errorf("%w: the answer key has %d rows for owner %q, asset %q (lines %d and %d)",
-		ErrInvalid, len(rows), ownerID, assetID, rows[0].Line, rows[1].Line)
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		lines[i] = strconv.Itoa(r.Line)
+	}
+	return nil, fmt.Errorf("%w: the answer key has %d rows for owner %q, asset %q (lines %s)",
+		ErrInvalid, len(rows), ownerID, assetID, strings.Join(lines, ", "))
 }
 
 // groupedRE is a decimal with thousands commas.

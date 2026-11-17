@@ -1,15 +1,13 @@
 package score
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"regexp"
 	"strings"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
+	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
 )
 
 // Mapping pairs each statement's positions with answer rows. It is written
@@ -38,22 +36,18 @@ type Position struct {
 
 var shaRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// LoadMapping reads a mapping strictly: no unknown fields, no trailing
-// data, no statement twice, every field of a position set, and no two
+// LoadMapping reads a mapping strictly: no unknown or case-mismatched
+// field, no key repeated in any object (encoding/json keeps the last, so a
+// repeated "statements" could erase the mapping), no trailing data, no statement twice, every field of a position set, and no two
 // positions of a statement with the same names or the same row.
 func LoadMapping(r io.Reader) (*Mapping, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("%w: mapping: %w", ErrInvalid, err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	var m Mapping
-	if err := dec.Decode(&m); err != nil {
+	if err := strictjson.Decode(data, &m); err != nil {
 		return nil, fmt.Errorf("%w: mapping: %w", ErrInvalid, err)
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%w: mapping: trailing data after the object", ErrInvalid)
 	}
 	if m.Statements == nil {
 		return nil, fmt.Errorf("%w: mapping: no statements", ErrInvalid)

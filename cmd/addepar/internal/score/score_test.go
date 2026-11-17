@@ -68,11 +68,13 @@ func TestLoadKeyDuplicateRowIsRefusedOnLookup(t *testing.T) {
 	k, err := score.LoadKey(strings.NewReader(keyCSV(
 		keyRow("1", "A", "10", "F", "2026-03-31", "1", "USD"),
 		keyRow("1", "A", "10", "F", "2026-03-31", "2", "USD"),
+		keyRow("1", "A", "10", "F", "2026-03-31", "3", "USD"),
 	)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := k.Lookup("1", "10"); !errors.Is(err, score.ErrInvalid) || !strings.Contains(err.Error(), "2 rows") {
+	// Every duplicate's line is named, so the operator finds them all.
+	if _, err := k.Lookup("1", "10"); !errors.Is(err, score.ErrInvalid) || !strings.Contains(err.Error(), "3 rows") || !strings.Contains(err.Error(), "lines 6, 7, 8") {
 		t.Fatalf("duplicate: %v", err)
 	}
 }
@@ -103,6 +105,9 @@ func TestLoadMappingRejects(t *testing.T) {
 	for name, in := range map[string]string{
 		"unknown field":     `{"statements": [], "extra": 1}`,
 		"trailing data":     `{"statements": []} {}`,
+		"repeated erases":   `{"statements": [{"sha256": "` + sha1 + `", "positions": []}], "statements": []}`,
+		"repeated in pos":   `{"statements": [{"sha256": "` + sha1 + `", "positions": [{"investor": "A", "investor": "B", "fund": "F", "owner_id": "1", "asset_id": "10"}]}]}`,
+		"case mismatch":     `{"Statements": []}`,
 		"no statements":     `{}`,
 		"bad sha":           `{"statements": [{"sha256": "ABC", "positions": []}]}`,
 		"statement twice":   `{"statements": [{"sha256": "` + sha1 + `", "positions": []}, {"sha256": "` + sha1 + `", "positions": []}]}`,
