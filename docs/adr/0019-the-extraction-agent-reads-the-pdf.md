@@ -132,10 +132,11 @@ the page, but it never becomes evidence.
 
 ## Consequences
 
-- Each run's execution record holds the PDF once, base64-encoded, in the
-  first `get_document` result (ADR 0008), and the store holds it once at
-  `pdfs/`. The store's footprint grows by the
-  input's size per statement. The file store does not encrypt (ADR 0005);
+- The store keeps the PDF twice: as the `pdfs/<sha>` object and in the
+  first `get_document` result in the execution record (ADR 0008). The
+  file store encodes both copies' bytes as base64 in JSON, each about a
+  third larger than the input, so a statement grows the store by roughly
+  2.5 to 3 times its PDF's size. The file store does not encrypt (ADR 0005);
   the MVP relies on the operating system's full-disk encryption.
 - Input tokens per turn grow by the PDF's pages: each page is sent as an
   image and as text. Token budgets for these requests stay estimated

@@ -162,11 +162,12 @@ Load-bearing decisions so far:
   next step boundary; exit 0 complete, 1 incomplete, 2 usage
   ([ADR 0017](docs/adr/0017-the-standalone-host.md))
 - The intake agent type (`intake.Type`, `addepar-intake`) runs as `addepar
-  run` on the standalone host: `load` (code) stores the document and its
-  layout text; `extract` (model) has the four tools, whose three writes
-  are atomic local transactions putting each object once (expected
-  version zero) under the document's SHA-256 (`documents/`, `attempts/`,
-  `records/` in the exporter's shape, `outcomes/`); `submit_extraction`
+  run` on the standalone host: `load` (code) stores the document, its
+  layout text and (ADR 0019) the PDF; `extract` (model) has the four
+  tools, all atomic local transactions (`get_document` since ADR 0019)
+  putting each object once (expected version zero) under the document's
+  SHA-256 (`documents/`, `pdfs/`, `sent/`, `attempts/`, `records/` in the
+  exporter's shape, `outcomes/`); `submit_extraction`
   takes every record in the document and verifies each in code; at most
   three submissions (config may lower), the last failure or a wrap-up
   failure going to manual review; until #17, running the agent is the
