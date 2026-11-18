@@ -8,9 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"path/filepath"
 	"unicode/utf8"
+
+	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
 )
 
 // FileTrigger is the payload of a one-shot or folder trigger (ADR 0017,
@@ -65,15 +66,8 @@ func (t FileTrigger) Read() ([]byte, error) { //nolint:gocritic // hugeParam: a 
 	return data, nil
 }
 
-// plusOne is n+1, saturating: the one byte past a limit that shows a
-// file exceeds it. At math.MaxInt64 no file can exceed the limit, and n+1
-// would wrap to a negative limit that reads nothing (ADR 0017, item 11).
-func plusOne(n int64) int64 {
-	if n == math.MaxInt64 {
-		return n
-	}
-	return n + 1
-}
+// plusOne is n+1, saturating (ADR 0017, item 11): see regularfile.PlusOne.
+func plusOne(n int64) int64 { return regularfile.PlusOne(n) }
 
 // ID prefixes (ADR 0017, item 11).
 const (

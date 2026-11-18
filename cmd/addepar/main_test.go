@@ -27,7 +27,7 @@ import (
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"export"}, {"config"}, {"config", "check"}, {"verify"}, {"verify", "-pdf", "x"}, {"verify", "-bogus"}} {
 		var out, errb bytes.Buffer
-		if code := run(context.Background(), args, &out, &errb); code != exitUsage {
+		if code := run(context.Background(), program(nil), args, &out, &errb); code != exitUsage {
 			t.Errorf("%v: exit %d, want %d", args, code, exitUsage)
 		}
 		if hostCommand(args) {
@@ -37,8 +37,8 @@ func TestUsage(t *testing.T) {
 	// With no command, or an unknown one, the usage lists every command.
 	for _, args := range [][]string{nil, {"export"}, {"config"}, {"config", "check"}} {
 		var errb bytes.Buffer
-		run(context.Background(), args, io.Discard, &errb)
-		for _, cmd := range []string{"addepar run ", "addepar config validate ", "addepar verify "} {
+		run(context.Background(), program(nil), args, io.Discard, &errb)
+		for _, cmd := range []string{"addepar run ", "addepar config validate ", "addepar verify ", "addepar score "} {
 			if !strings.Contains(errb.String(), cmd) {
 				t.Errorf("%v: usage %q does not list %q", args, errb.String(), cmd)
 			}
@@ -92,7 +92,7 @@ func TestVerifyCommand(t *testing.T) {
 	verdict := func(args ...string) (int, verify.Result) {
 		t.Helper()
 		var out, errb bytes.Buffer
-		code := run(context.Background(), append([]string{"verify", "-pdf", pdfPath, "-record", recPath}, args...), &out, &errb)
+		code := run(context.Background(), program(nil), append([]string{"verify", "-pdf", pdfPath, "-record", recPath}, args...), &out, &errb)
 		var res verify.Result
 		if code != exitUsage {
 			if err := json.Unmarshal(out.Bytes(), &res); err != nil {
@@ -113,8 +113,16 @@ func TestVerifyCommand(t *testing.T) {
 	}
 	// An override without a reason is refused.
 	var out, errb bytes.Buffer
-	if code := run(context.Background(), []string{"verify", "-pdf", pdfPath, "-record", recPath, "-override-by", "x"}, &out, &errb); code != exitUsage || !strings.Contains(errb.String(), "reason") {
+	if code := run(context.Background(), program(nil), []string{"verify", "-pdf", pdfPath, "-record", recPath, "-override-by", "x"}, &out, &errb); code != exitUsage || !strings.Contains(errb.String(), "reason") {
 		t.Fatalf("incomplete override: exit %d, %s", code, errb.String())
+	}
+	// Interrupted (the signal context cancelled): exit 1, not a usage error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out.Reset()
+	errb.Reset()
+	if code := run(ctx, program(nil), []string{"verify", "-pdf", pdfPath, "-record", recPath, "-override-by", "o", "-override-reason", "r"}, &out, &errb); code != exitFail || !strings.Contains(errb.String(), "interrupted") {
+		t.Fatalf("interrupted: exit %d, %s", code, errb.String())
 	}
 }
 

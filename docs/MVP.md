@@ -221,6 +221,11 @@ an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
    and `get_document` sends the PDF beside its text
    ([ADR 0019](adr/0019-the-extraction-agent-reads-the-pdf.md)).
 5. **The scoring harness** (TEST-4) against the 3/31/2026 answer key.
+   Built: the library's `scoring` package runs inputs through the
+   standalone host in process, and `addepar score` compares each
+   statement's verified records with the answer key, by a hand-written
+   mapping until an LLM judge replaces it
+   ([ADR 0020](adr/0020-the-scoring-harness.md)).
 6. **The review UI**, embedded and served on localhost, with evidence
    highlighting from `maestro-cms#25`.
 7. **The trial** with the operators, for one reporting cycle.

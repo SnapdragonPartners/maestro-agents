@@ -167,9 +167,9 @@ func runProgram(ctx context.Context, p Program, args ...string) *runOutput { //n
 	return o
 }
 
-func (o *runOutput) report(t testing.TB) report {
+func (o *runOutput) report(t testing.TB) Report {
 	t.Helper()
-	var r report
+	var r Report
 	if err := json.Unmarshal(o.stdout.Bytes(), &r); err != nil {
 		t.Fatalf("report %q: %v (stderr %s)", o.stdout.String(), err, o.stderr.String())
 	}

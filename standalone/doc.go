@@ -29,4 +29,13 @@
 // FileTrigger; an agent type reads the input with FileTrigger.Read.
 //
 // Exit codes: ExitComplete (0), ExitIncomplete (1) and ExitUsage (2).
+//
+// An agent's own commands, or a harness such as the scoring package, can
+// open the host in process instead (ADR 0020, item 2): Open loads a
+// configuration with a one_shot trigger, Host.RunInput runs one input as
+// run -input does and returns its Report, and Host.Store and
+// Host.Namespace read what the runs wrote. SignalContext gives such a
+// command the host's signal lifecycle: the first SIGINT or SIGTERM cancels
+// its context, so a run shuts down at its next step boundary, and a second
+// ends the process.
 package standalone
