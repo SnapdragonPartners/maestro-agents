@@ -255,6 +255,7 @@ func TestReviewAndExport(t *testing.T) {
 		return append([]string{"export", "-config", cfg, "-by", "Jordan Lee", "-out", out, "-manifests", man}, extra...)
 	}
 	stdout := runOK(t, p, exportArgs("-approved")...)
+	firstOut := stdout
 	csvs, _ := filepath.Glob(filepath.Join(out, "addepar-*.csv"))
 	mans, _ := filepath.Glob(filepath.Join(man, "*.json"))
 	if len(csvs) != 1 || len(mans) != 1 || !strings.Contains(stdout, "exported 2 record(s)") {
@@ -296,6 +297,40 @@ func TestReviewAndExport(t *testing.T) {
 		t.Fatalf("re-export manifests %v", mans)
 	}
 
+	// A write that fails after the export committed (PR #22): the export
+	// is stored and counts, and -rewrite writes its files from the store.
+	if err = os.Chmod(man, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	var fo, fe bytes.Buffer
+	code := run(context.Background(), p, exportArgs("-record", hy), &fo, &fe)
+	if err = os.Chmod(man, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if code != exitFail || !strings.Contains(fe.String(), "-rewrite ") {
+		t.Fatalf("failed write: exit %d %s", code, fe.String())
+	}
+	failedRun := strings.TrimSpace(fe.String()[strings.LastIndex(fe.String(), "-rewrite ")+len("-rewrite "):])
+	stdout = runOK(t, p, "export", "-config", cfg, "-out", out, "-manifests", man, "-rewrite", failedRun)
+	if mans, _ = filepath.Glob(filepath.Join(man, "*.json")); len(mans) != 3 || !strings.Contains(stdout, failedRun) {
+		t.Fatalf("rewrite: manifests %v; %s", mans, stdout)
+	}
+	// Rewriting again, with the CSV gone, restores it byte for byte and
+	// keeps the identical manifest.
+	if err = os.Remove(csvs[0]); err != nil {
+		t.Fatal(err)
+	}
+	_, after, _ := strings.Cut(firstOut, "(run ")
+	first, _, _ := strings.Cut(after, ")")
+	runOK(t, p, "export", "-config", cfg, "-out", out, "-manifests", man, "-rewrite", first)
+	if again, rerr := os.ReadFile(csvs[0]); rerr != nil || !bytes.Equal(again, csvBytes) {
+		t.Fatalf("rewritten CSV differs: %v", rerr)
+	}
+	var no, ne bytes.Buffer
+	if code := run(context.Background(), p, []string{"export", "-config", cfg, "-out", out, "-manifests", man, "-rewrite", "no-such-run"}, &no, &ne); code != exitFail {
+		t.Fatalf("rewrite of an unknown run: exit %d", code)
+	}
+
 	// A later action voids the approval: the record is refused.
 	h, err = standalone.Open(context.Background(), p, cfg, io.Discard)
 	if err != nil {
@@ -322,14 +357,15 @@ func TestExportUsage(t *testing.T) {
 	cfg := scoreConfig(t, dir, "state")
 	p := program(nil)
 	for name, args := range map[string][]string{
-		"no config":       {"export", "-by", "a", "-out", dir, "-manifests", dir, "-approved"},
-		"no by":           {"export", "-config", cfg, "-out", dir, "-manifests", dir, "-approved"},
-		"blank by":        {"export", "-config", cfg, "-by", " ", "-out", dir, "-manifests", dir, "-approved"},
-		"no selection":    {"export", "-config", cfg, "-by", "a", "-out", dir, "-manifests", dir},
-		"both selections": {"export", "-config", cfg, "-by", "a", "-out", dir, "-manifests", dir, "-approved", "-record", "x"},
-		"out missing":     {"export", "-config", cfg, "-by", "a", "-out", filepath.Join(dir, "none"), "-manifests", dir, "-approved"},
-		"extra argument":  {"export", "-config", cfg, "-by", "a", "-out", dir, "-manifests", dir, "-approved", "x"},
-		"bad config":      {"export", "-config", filepath.Join(dir, "none.json"), "-by", "a", "-out", dir, "-manifests", dir, "-approved"},
+		"no config":        {"export", "-by", "a", "-out", dir, "-manifests", dir, "-approved"},
+		"no by":            {"export", "-config", cfg, "-out", dir, "-manifests", dir, "-approved"},
+		"blank by":         {"export", "-config", cfg, "-by", " ", "-out", dir, "-manifests", dir, "-approved"},
+		"no selection":     {"export", "-config", cfg, "-by", "a", "-out", dir, "-manifests", dir},
+		"rewrite and more": {"export", "-config", cfg, "-out", dir, "-manifests", dir, "-rewrite", "r", "-approved"},
+		"both selections":  {"export", "-config", cfg, "-by", "a", "-out", dir, "-manifests", dir, "-approved", "-record", "x"},
+		"out missing":      {"export", "-config", cfg, "-by", "a", "-out", filepath.Join(dir, "none"), "-manifests", dir, "-approved"},
+		"extra argument":   {"export", "-config", cfg, "-by", "a", "-out", dir, "-manifests", dir, "-approved", "x"},
+		"bad config":       {"export", "-config", filepath.Join(dir, "none.json"), "-by", "a", "-out", dir, "-manifests", dir, "-approved"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var o, e bytes.Buffer

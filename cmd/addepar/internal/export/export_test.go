@@ -254,8 +254,23 @@ func TestWrite(t *testing.T) {
 			t.Fatalf("%s: %v", path, rerr)
 		}
 	}
-	if _, _, err = exp.Write(csvDir, manDir); err == nil {
-		t.Fatal("an existing manifest was replaced")
+	// Writing the same export again (a rewrite after a failed write, PR
+	// #22) keeps both identical files; a manifest of that name with other
+	// content is refused, never replaced.
+	if c, m, werr := exp.Write(csvDir, manDir); werr != nil || c != csvPath || m != manPath {
+		t.Fatalf("rewrite: %s %s %v", c, m, werr)
+	}
+	if err = os.WriteFile(manPath, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = exp.Write(csvDir, manDir); err == nil || !strings.Contains(err.Error(), "other content") {
+		t.Fatalf("a changed manifest: %v", err)
+	}
+	if got, _ := os.ReadFile(manPath); string(got) != "changed" { //nolint:gosec // test temp dir
+		t.Fatal("a manifest with other content was replaced")
+	}
+	if err = os.WriteFile(manPath, exp.Manifest, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	// The same records exported again later: the same CSV, kept; a new
 	// manifest beside the first.

@@ -120,11 +120,17 @@ func walkObject(dec *json.Decoder, t reflect.Type, at string) error {
 // and names still tied are no field at all.
 func fieldByJSONName(t reflect.Type, name string) (reflect.Type, bool) {
 	level := []reflect.Type{t}
-	seen := map[reflect.Type]bool{}
+	shallower := map[reflect.Type]bool{}
 	for len(level) > 0 {
-		found, next := fieldsNamed(level, name, seen)
+		found, next := fieldsNamed(level, name, shallower)
 		if len(found) > 0 {
 			return dominant(found)
+		}
+		// A type reached again at the same depth by another path counts
+		// twice, so its fields tie as encoding/json's do; one already
+		// walked at a shallower depth is not walked again.
+		for _, st := range level {
+			shallower[st] = true
 		}
 		level = next
 	}
@@ -138,13 +144,13 @@ type candidate struct {
 }
 
 // fieldsNamed returns the fields of one depth's structs whose JSON name is
-// name, and the untagged embedded structs whose fields are the next depth.
-func fieldsNamed(level []reflect.Type, name string, seen map[reflect.Type]bool) (found []candidate, next []reflect.Type) {
+// name, and the untagged embedded structs whose fields are the next depth,
+// each once per path that reaches it.
+func fieldsNamed(level []reflect.Type, name string, shallower map[reflect.Type]bool) (found []candidate, next []reflect.Type) {
 	for _, st := range level {
-		if seen[st] {
+		if shallower[st] {
 			continue
 		}
-		seen[st] = true
 		for i := range st.NumField() {
 			f := st.Field(i)
 			n, _, _ := strings.Cut(f.Tag.Get("json"), ",")

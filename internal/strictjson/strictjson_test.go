@@ -74,3 +74,27 @@ func TestDecodeEmbedded(t *testing.T) {
 		})
 	}
 }
+
+// TestDecodeEmbeddedAmbiguity: one type embedded by two paths at the same
+// depth makes its fields ambiguous to encoding/json, which then drops
+// them and may match the key case-insensitively elsewhere; the strict
+// decoder refuses the key (PR #22, Copilot).
+func TestDecodeEmbeddedAmbiguity(t *testing.T) {
+	type inner struct {
+		Value string `json:"value"`
+	}
+	type left struct{ inner }
+	type right struct{ inner }
+	type doc struct {
+		left
+		right
+		Upper string `json:"VALUE"`
+	}
+	var d doc
+	if err := Decode([]byte(`{"value":"first","VALUE":"second"}`), &d); err == nil || !strings.Contains(err.Error(), `unknown field "value"`) {
+		t.Fatalf("ambiguous promoted key: %v (%+v)", err, d)
+	}
+	if err := Decode([]byte(`{"VALUE":"only"}`), &d); err != nil || d.Upper != "only" {
+		t.Fatalf("the root field: %+v %v", d, err)
+	}
+}

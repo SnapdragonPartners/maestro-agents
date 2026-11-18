@@ -22,11 +22,13 @@
 // Addepar CSV in -out and its evidence manifest in -manifests (the
 // workspace's hidden folder), named by the CSV's SHA-256:
 //
-//	addepar export -config FILE -by NAME -out DIR -manifests DIR (-approved | -record ID ...)
+//	addepar export -config FILE -out DIR -manifests DIR (-by NAME (-approved | -record ID ...) | -rewrite RUN)
 //
-// The configuration's store must not be in use by a running host. export
-// exits 0 when it wrote the files or nothing was waiting, 1 when the export
-// was refused or failed, and 2 on a usage error.
+// -rewrite writes the files of an export a run already stored, for a write
+// that failed after its commit. The configuration's store must not be in
+// use by a running host. export exits 0 when it wrote the files or nothing
+// was waiting, 1 when the export was refused or failed, and 2 on a usage
+// error.
 //
 // It also scores the agent against an answer key (ADR 0020):
 //
@@ -112,7 +114,7 @@ const usage = `usage:
   addepar config validate -config FILE
   addepar verify -pdf FILE -record FILE [-override-by NAME -override-reason TEXT]
   addepar score -config FILE -inputs DIR -key FILE -map FILE [-json]
-  addepar export -config FILE -by NAME -out DIR -manifests DIR (-approved | -record ID ...)
+  addepar export -config FILE -out DIR -manifests DIR (-by NAME (-approved | -record ID ...) | -rewrite RUN)
 `
 
 // run runs addepar's own commands, verify, score and export; p is the

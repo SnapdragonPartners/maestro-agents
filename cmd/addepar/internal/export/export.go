@@ -1,6 +1,7 @@
 // Package export writes approved valuation records as an Addepar
-// position-valuation CSV and, beside it, the evidence manifest (intake X-1,
-// X-2).
+// position-valuation CSV, into the operator's exports folder, and its
+// evidence manifest, into the workspace's hidden manifests folder, named by
+// the CSV's SHA-256 (intake X-1, X-2; ADR 0021, item 11).
 //
 // The CSV is the import template's 19 columns in order, UTF-8, plain
 // decimals and no formulas; the same records always give the same bytes
@@ -12,7 +13,7 @@
 // Export is the last gate before a value leaves the system: it refuses a
 // record that is not approved, whose approval predates a later review action
 // (R-4), that has a verification error, or that has a warning no named
-// person accepted.
+// person accepted since the latest correction or manual entry.
 package export
 
 import (
@@ -523,9 +524,10 @@ func (e *Export) ManifestName() string {
 
 // Write writes the CSV to csvDir and the manifest to manifestDir, each to
 // a temporary file and then linked into place. It never replaces a file:
-// an existing manifest is an error, and so is an existing CSV, unless it
-// holds exactly these bytes (a re-export of the same records, N-3), which
-// is kept. The manifest goes first: a manifest without its CSV is
+// an existing one is an error unless it holds exactly these bytes, which
+// is kept (a re-export of the same records gives the same CSV, N-3, and
+// writing a stored export again after a failed write finds what the
+// first attempt left, PR #22). The manifest goes first: a manifest without its CSV is
 // harmless, a CSV without its evidence is not.
 func (e *Export) Write(csvDir, manifestDir string) (csvPath, manifestPath string, err error) {
 	if len(e.CSVSHA256) != sha256.Size*2 {
@@ -533,17 +535,20 @@ func (e *Export) Write(csvDir, manifestDir string) (csvPath, manifestPath string
 	}
 	csvPath = filepath.Join(csvDir, e.CSVName())
 	manifestPath = filepath.Join(manifestDir, e.ManifestName())
-	if _, err = os.Lstat(manifestPath); err == nil {
-		return "", "", fmt.Errorf("export: %s already exists", manifestPath)
-	}
-	same, err := sameFile(csvPath, e.CSVSHA256)
+	sameMan, err := sameFile(manifestPath, e.ManifestSHA256)
 	if err != nil {
 		return "", "", err
 	}
-	if err := writeAtomic(manifestDir, manifestPath, e.Manifest); err != nil {
+	sameCSV, err := sameFile(csvPath, e.CSVSHA256)
+	if err != nil {
 		return "", "", err
 	}
-	if !same {
+	if !sameMan {
+		if err := writeAtomic(manifestDir, manifestPath, e.Manifest); err != nil {
+			return "", "", err
+		}
+	}
+	if !sameCSV {
 		if err := writeAtomic(csvDir, csvPath, e.CSV); err != nil {
 			return "", "", err
 		}

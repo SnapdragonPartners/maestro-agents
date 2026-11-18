@@ -217,10 +217,12 @@ Load-bearing decisions so far:
   record; a record's state is the log folded (`review.Current`), approved
   only while an approval is the last entry, whose snapshot is what an
   export exports (`exports/<run>`, files written after the commit: the CSV
-  in sight, the manifest hidden under the CSV's SHA-256); a manual record
+  in sight, the manifest hidden under the CSV's SHA-256; `addepar export
+  -rewrite RUN` writes a stored export's files again); a manual record
   is checked like any other but its failed checks are downgraded warnings
   to accept; a refusal is a completed run leaving `refusals/<run>`;
-  extraction records and every tool's arguments decode strictly (#21);
+  extraction records and every tool's arguments decode strictly (#21),
+  an absent or null amount is malformed, and the intake type is version 3;
   the operator's workspace is `Inbox/`, `Exports/` and a hidden `.agent/`
   ([ADR 0021](docs/adr/0021-review-writes-approval-and-export.md))
 

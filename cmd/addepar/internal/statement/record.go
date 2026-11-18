@@ -226,6 +226,10 @@ func (c *checker) need(ok bool, what string) {
 
 func (c *checker) amount(a *Amount, what string) {
 	c.need(!blank(a.Label) && a.Page > 0, what+" label and page")
+	// An absent or null amount decodes as the zero Decimal; it must not
+	// pass as zero (a manual record's failed checks are acceptable
+	// warnings, so this is the only thing that stops it).
+	c.need(a.Amount.IsSet(), what+" amount as a decimal string")
 }
 
 func blank(s string) bool { return strings.TrimSpace(s) == "" }

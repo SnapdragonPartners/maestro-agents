@@ -31,8 +31,11 @@ import (
 const TypeName = "addepar-intake"
 
 // Version is the agent type's version, recorded in every checkpoint and part
-// of every tool's content identity.
-const Version = "2"
+// of every tool's content identity. 3: every tool's arguments and the
+// submitted records decode strictly (ADR 0021, item 13), so a run started
+// under 2 is not recovered with the stricter tools under its old
+// permissions (ADR 0011, item 3).
+const Version = "3"
 
 // MaxAttempts is the most submissions a run accepts (intake E-6): when the
 // last fails, the statement goes to manual review.

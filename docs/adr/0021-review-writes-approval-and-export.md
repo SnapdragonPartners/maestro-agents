@@ -205,11 +205,16 @@ it has no way to start a run that has no file.
     CSV finds its evidence by hashing it, and a re-export of the same CSV
     bytes gets its own manifest. Neither replaces an existing file (ADR
     0015, item 9), except that an existing CSV holding exactly the export's
-    bytes is kept. `addepar export -config FILE -by NAME -out DIR -manifests DIR
-    (-record ID ... | -approved)`: `-approved` takes every approved record
-    not yet exported; naming an exported record exports it again,
-    deliberately (the same snapshots give the same CSV bytes, N-3). It
-    prints the paths and exits 0, 1 on a refusal, 2 on a usage error.
+    bytes is kept, so writing a stored export again after a failed write
+    finds what the first attempt left. `addepar export -config FILE -out
+    DIR -manifests DIR (-by NAME (-record ID ... | -approved) | -rewrite
+    RUN)`: `-approved` takes every approved record not yet exported;
+    naming an exported record exports it again, deliberately (the same
+    snapshots give the same CSV bytes, N-3); `-rewrite` writes the files of
+    the export a run stored, byte for byte, for a write that failed after
+    the commit (whose approvals already count as exported), and the
+    failure message names it. It prints the paths and the run, and exits 0,
+    1 on a refusal or failure, 2 on a usage error.
 12. **The workspace** (the UI's ADR builds it): one folder an operator
     sees, holding `Inbox/` (the watched folder), `Exports/` (the CSVs) and
     the hidden `.agent/`, which holds the store (`.agent/store/`) and the
@@ -229,7 +234,13 @@ it has no way to start a run that has no file.
     not be read two ways; every intake tool's arguments and every review
     action decode through `strictjson` too. `strictjson` follows
     `encoding/json`'s embedded-struct rules (an untagged embedded struct's
-    fields are promoted by JSON name), which the record's lines need.
+    fields are promoted by JSON name), which the record's lines need. An
+    amount that is absent or null is malformed, not zero: only `"0"` means
+    zero, since a manual record's failed checks are acceptable warnings
+    and nothing else would stop a missing value from being exported as 0.
+    The tools' behavior changes, so the intake type's version, part of
+    every tool's content identity, becomes `3` (ADR 0011, item 3): a run
+    recorded under version 2 is not recovered by the stricter tools.
 14. **The in-process host opens any configuration.** `standalone.Open`
     no longer refuses a trigger other than `one_shot`: `RunInput` does
     (`ErrNotOneShot`), and `Host.TriggerKind` tells a caller which it has
