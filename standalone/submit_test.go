@@ -379,3 +379,28 @@ func waitRuns(t *testing.T, n *note, want int) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// blindStore hides every instance's active run, as when another process
+// creates one between Submit's drain and its CreateRun.
+type blindStore struct{ store.Store }
+
+func (blindStore) ActiveRun(context.Context, string) (store.Run, bool, error) {
+	return store.Run{}, false, nil
+}
+
+// TestSubmitBusyAtCreate: a run that appears between the drain and the
+// create is ErrBusy, and the submission's trigger does not linger.
+func TestSubmitBusyAtCreate(t *testing.T) {
+	h := openNoteHost(t, &note{})
+	ctx := context.Background()
+	if _, _, err := h.h.st.CreateRun(ctx, store.Run{ID: "other", Instance: "inst", AgentType: "note", TriggerID: "t", TriggerKind: SubmittedKind, Trigger: payload("x")}); err != nil {
+		t.Fatal(err)
+	}
+	h.h.st = blindStore{h.h.st}
+	if _, err := h.Submit(ctx, Submission{AgentType: "note", Instance: "inst", Payload: payload("x")}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("err = %v, want ErrBusy", err)
+	}
+	if trig, err := h.h.st.Triggers(ctx, "inst"); err != nil || len(trig) != 0 {
+		t.Fatalf("triggers %v %v", trig, err)
+	}
+}

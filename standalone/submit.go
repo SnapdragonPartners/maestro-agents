@@ -83,6 +83,12 @@ func (h *host) submit(ctx context.Context, s Submission) (Report, error) {
 	}, s.Instance+"."+id, s.AgentType)
 	switch {
 	case errors.Is(err, store.ErrInstanceBusy):
+		// A submission's trigger is queued only until its run exists; a
+		// refused one never gets a run, so its trigger must not linger
+		// (a file trigger's stays, ADR 0017 item 12).
+		if rerr := h.st.RemoveTrigger(dctx, s.Instance, submittedTriggerPrefix+id); rerr != nil {
+			h.logger.Warn("standalone: cannot remove a refused submission's trigger", "instance", s.Instance, "error_class", errorClass(rerr))
+		}
 		return Report{}, fmt.Errorf("%w: %s", ErrBusy, s.Instance)
 	case err != nil:
 		return Report{}, err

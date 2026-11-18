@@ -87,11 +87,6 @@ func (h *host) makeRun(ctx context.Context, t *store.Trigger, runID, agentType s
 		TriggerID: t.ID, TriggerKind: t.Kind, Trigger: t.Payload,
 	})
 	if err != nil {
-		if errors.Is(err, store.ErrInstanceBusy) {
-			// The trigger stays queued only until its run exists; a refused
-			// submission never gets one, so it must not linger.
-			_ = h.st.RemoveTrigger(ctx, t.Instance, t.ID)
-		}
 		return store.Run{}, fmt.Errorf("create run: %w", err)
 	}
 	if err := h.st.RemoveTrigger(ctx, t.Instance, t.ID); err != nil {
