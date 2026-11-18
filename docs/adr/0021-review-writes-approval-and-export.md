@@ -56,7 +56,9 @@ it has no way to start a run that has no file.
    null, which its schema must accept) and its budgets are its manifest's
    defaults; it runs in the configuration's namespace, under its
    principal, with its model client. Validation (item 7 of ADR 0017)
-   checks all of this before anything runs.
+   checks all of this before anything runs, the model route included: a
+   submitted type with a model state needs `model` as the configured
+   type's would.
 2. **`Host.Submit` runs one submission to its end.** `Host.Submit(ctx,
    Submission{AgentType, Instance, Payload}) (Report, error)` makes a
    run and activates it, synchronously, and returns its report, as
@@ -65,7 +67,10 @@ it has no way to start a run that has no file.
    `<instance>.<hex>`, `<hex>` 16 random bytes, so a submission is never
    deduplicated against another; a repeat is the caller's to prevent
    (item 6 does it for reviews). The instance is the caller's: letters,
-   digits, `.`, `_` and `-`, at most 128 bytes, or `ErrInvalid`.
+   digits, `.`, `_` and `-`, at most 128 bytes, and short enough that the
+   derived run ID fits a store path component once encoded (the stores
+   write an uppercase letter or `.` in three bytes), else `ErrInvalid`,
+   before anything is enqueued.
 3. **One activation per instance, the submission's included.** The host
    serializes the scheduler and `Submit` on one per-instance lock in the
    process (ADR 0002). Under it, `Submit` first activates the instance's
@@ -181,7 +186,11 @@ it has no way to start a run that has no file.
     each keeping its finding ID, so the exporter's gate (ADR 0015, item 9)
     passes it only once a named person has accepted every one. The gate
     refuses a downgraded finding on a record whose origin is not
-    `manual`, and an unknown origin. The manifest (version 2) marks each
+    `manual`, and an unknown origin. A check that could not run because
+    the document's text was not read (a scan, or a restricted PDF read
+    under no acceptance: checks 3 to 6) becomes a downgraded `not_checked`
+    warning, which the person accepts by confirming it from the page; a
+    check skipped because the record is malformed still fails. The manifest (version 2) marks each
     row's `origin`, and each downgraded finding as such, with its
     acceptance, whose reason and the manual entry's are the notes. An extracted record,
     corrected or not, keeps its errors: its text was there to match, and
@@ -192,7 +201,7 @@ it has no way to start a run that has no file.
 11. **Files: the CSV in sight, the manifest hidden.** The CSV goes to the
     operator's exports folder as `addepar-<export date>-<first 8 of the
     CSV's SHA-256>.csv`; the manifest goes to a hidden folder as
-    `<CSV SHA-256>-<export time, UTC>.json`, so an auditor holding only the
+    `<CSV SHA-256>-<export time, UTC, to the nanosecond>.json`, so an auditor holding only the
     CSV finds its evidence by hashing it, and a re-export of the same CSV
     bytes gets its own manifest. Neither replaces an existing file (ADR
     0015, item 9), except that an existing CSV holding exactly the export's

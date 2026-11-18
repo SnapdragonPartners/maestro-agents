@@ -508,12 +508,17 @@ func (e *Export) CSVName() string {
 	return fmt.Sprintf("addepar-%s-%s.csv", e.At.UTC().Format(time.DateOnly), e.CSVSHA256[:8])
 }
 
+// manifestTimeLayout is the export time in a manifest's name, to the
+// nanosecond, so two exports of the same CSV bytes in one second still
+// get two manifests.
+const manifestTimeLayout = "20060102T150405.000000000Z"
+
 // ManifestName is the manifest's file name: <the CSV's SHA-256>-<export
 // time, UTC>.json, so a CSV leads to its evidence by its hash alone, and
 // a deliberate re-export of the same CSV bytes gets its own manifest (ADR
 // 0021, item 11).
 func (e *Export) ManifestName() string {
-	return e.CSVSHA256 + "-" + e.At.UTC().Format("20060102T150405Z") + ".json"
+	return e.CSVSHA256 + "-" + e.At.UTC().Format(manifestTimeLayout) + ".json"
 }
 
 // Write writes the CSV to csvDir and the manifest to manifestDir, each to

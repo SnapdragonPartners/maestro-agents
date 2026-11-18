@@ -127,6 +127,14 @@ func artifactPath(digest string) string     { return "artifacts/" + digest }
 func artifactMetaPath(d string) string      { return "artifacts/" + d + ".json" }
 func triggerDir(inst string) string         { return "triggers/" + inst }
 
+// CheckID reports whether id can name a record in either reference store:
+// valid text whose encoded form fits one path component. A host that
+// derives an ID checks it before writing anything under it.
+func CheckID(what, id string) error {
+	_, err := component(what, id)
+	return err
+}
+
 // CheckNamespace refuses a namespace the reference stores cannot hold:
 // empty, not valid UTF-8, or longer than a path component once encoded.
 // A host validating its configuration calls it before any run (ADR 0017,

@@ -244,7 +244,7 @@ func TestWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCSV := filepath.Join(csvDir, "addepar-"+t0.UTC().Format(time.DateOnly)+"-"+exp.CSVSHA256[:8]+".csv")
-	wantMan := filepath.Join(manDir, exp.CSVSHA256+"-"+t0.UTC().Format("20060102T150405Z")+".json")
+	wantMan := filepath.Join(manDir, exp.CSVSHA256+"-"+t0.UTC().Format("20060102T150405.000000000Z")+".json")
 	if csvPath != wantCSV || manPath != wantMan {
 		t.Fatalf("paths %s %s, want %s %s", csvPath, manPath, wantCSV, wantMan)
 	}
@@ -266,6 +266,14 @@ func TestWrite(t *testing.T) {
 	c2, m2, err := again.Write(csvDir, manDir)
 	if err != nil || c2 != csvPath || m2 == manPath {
 		t.Fatalf("re-export: %s %s %v", c2, m2, err)
+	}
+	// Again within the same second (Codex round 1): its own manifest.
+	soon, err := export.Build(recs, t0.Add(time.Hour+time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, m3, werr := soon.Write(csvDir, manDir); werr != nil || m3 == m2 {
+		t.Fatalf("same-second re-export: %s %v", m3, werr)
 	}
 	// A CSV of that name with other content is not replaced.
 	other, err := export.Build(recs, t0.Add(2*time.Hour))
@@ -387,5 +395,26 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(string(exp.Manifest), doc.SHA256) || !strings.Contains(string(exp.Manifest), `"6/not_stated/currency"`) {
 		t.Fatalf("manifest lacks the document hash or the acceptance")
+	}
+}
+
+// TestGateManualWithoutText: a person's record for a scanned PDF, verified
+// with its skipped checks as warnings, passes the gate once every warning
+// is accepted, and not before (ADR 0021, item 10; Codex round 1).
+func TestGateManualWithoutText(t *testing.T) {
+	doc := &document.Document{SHA256: strings.Repeat("ab", 32), Name: "scan.pdf", PageCount: 1, TextLayer: document.TextNone,
+		Pages: []document.Page{{Number: 1}}}
+	rec := record(t, "Owner", "Fund", "10", "USD")
+	res := verify.Verify(doc, rec)
+	r := approved(t, "r", rec)
+	r.Origin, r.Result = export.OriginManual, res.AsWarnings()
+	if got := export.Gate(&r); len(got) == 0 {
+		t.Fatal("unaccepted warnings passed")
+	}
+	for i, f := range r.Result.Findings(verify.Warning) {
+		r.Reviews = append(r.Reviews, export.ReviewAction{Kind: export.AcceptWarning, Finding: f.ID(), By: "p", Reason: "read off the scan", At: t0.Add(-time.Duration(i+1) * time.Second)})
+	}
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("an accepted manual record for a scan is refused: %v", got)
 	}
 }

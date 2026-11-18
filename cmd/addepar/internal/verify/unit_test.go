@@ -526,8 +526,53 @@ func TestAsWarnings(t *testing.T) {
 	if pass.AsWarnings().Verdict != verify.Pass {
 		t.Fatal("a passing result does not pass")
 	}
-	skipped := verify.Result{Checks: []verify.CheckResult{{Check: 1, Status: verify.Skipped}}}
+	skipped := verify.Result{Checks: []verify.CheckResult{
+		{Check: 1, Status: verify.Fail, Findings: []verify.Finding{{Check: 1, Code: "invalid_record", Severity: verify.Error}}},
+		{Check: 2, Status: verify.Skipped},
+	}}
 	if skipped.AsWarnings().Verdict != verify.Fail {
 		t.Fatal("a skipped check (a malformed record) became acceptable")
+	}
+}
+
+// TestAsWarningsWithoutText: a person's valid record for a document whose
+// text was not read (a scan, or a restricted PDF) has checks 3 to 6
+// skipped; as warnings each is a downgraded not_checked to accept, so the
+// manual fallback can be approved (ADR 0021, items 7 and 10). A malformed
+// record still fails.
+func TestAsWarningsWithoutText(t *testing.T) {
+	for _, layer := range []document.TextLayer{document.TextNone, document.TextNotRead} {
+		doc := simpleDoc("")
+		doc.TextLayer = layer
+		res := verify.Verify(doc, simpleRecord(t))
+		got := res.AsWarnings()
+		if got.Verdict != verify.Warn {
+			t.Fatalf("%s: verdict %s: %+v", layer, got.Verdict, got)
+		}
+		var notChecked int
+		for _, c := range got.Checks {
+			if c.Status != verify.Pass && c.Status != verify.Warn {
+				t.Fatalf("%s: check %d is %s", layer, c.Check, c.Status)
+			}
+			for _, f := range c.Findings {
+				if f.Severity != verify.Warning {
+					t.Fatalf("%s: finding %+v", layer, f)
+				}
+				if f.Code == "not_checked" {
+					notChecked++
+					if !f.Downgraded {
+						t.Fatalf("%s: not_checked not downgraded", layer)
+					}
+				}
+			}
+		}
+		if notChecked != 4 {
+			t.Fatalf("%s: %d not_checked warnings, want 4 (checks 3 to 6)", layer, notChecked)
+		}
+	}
+	bad := simpleRecord(t)
+	bad.Investor.Text = ""
+	if r := verify.Verify(simpleDoc("x"), bad); r.AsWarnings().Verdict != verify.Fail {
+		t.Fatal("a malformed record became acceptable")
 	}
 }

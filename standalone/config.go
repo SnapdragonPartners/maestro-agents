@@ -306,6 +306,12 @@ func (c *Config) validateSubmitted(p *Program) []error {
 		if !contains(m.Triggers, SubmittedKind) {
 			errs = append(errs, fmt.Errorf("submitted agent type %q does not declare the trigger kind %q", t, SubmittedKind))
 		}
+		if c.Model == nil {
+			// A submitted type with a model state needs the route as much
+			// as the configured type does; the route's own checks run once,
+			// for the configured type.
+			errs = append(errs, c.validateModel(p, &m)...)
+		}
 		if m.Config != nil {
 			s, err := jsonschema.Compile(m.Config)
 			if err == nil {

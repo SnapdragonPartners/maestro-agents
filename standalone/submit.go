@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
+	"github.com/SnapdragonPartners/maestro-agents/internal/storecore"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
@@ -20,6 +22,7 @@ const SubmittedKind = "submitted"
 const (
 	submittedTriggerPrefix = "submitted:"
 	maxInstanceID          = 128
+	runIDRandomBytes       = 16
 )
 
 // ErrBusy is Submit's error for an instance that has a run still
@@ -75,7 +78,7 @@ func (h *host) submit(ctx context.Context, s Submission) (Report, error) {
 	if err := h.drain(ctx, s.Instance); err != nil {
 		return Report{}, err
 	}
-	var b [16]byte
+	var b [runIDRandomBytes]byte
 	_, _ = rand.Read(b[:])
 	id := hex.EncodeToString(b[:])
 	run, err := h.makeRun(dctx, &store.Trigger{
@@ -146,6 +149,12 @@ func checkInstanceID(s string) error {
 		if !ok {
 			return fmt.Errorf("%w: instance %q: letters, digits, '.', '_' and '-' only", ErrInvalid, s)
 		}
+	}
+	// The stores encode an uppercase letter or '.' in three bytes, so the
+	// derived run ID, the longest name made from the instance, must fit a
+	// path component before anything is enqueued under it.
+	if err := storecore.CheckID("run ID", s+"."+strings.Repeat("0", 2*runIDRandomBytes)); err != nil {
+		return fmt.Errorf("%w: instance %q makes a run ID too long for the store", ErrInvalid, s)
 	}
 	return nil
 }

@@ -145,14 +145,17 @@ func TestSubmitRefuses(t *testing.T) {
 	h := openNoteHost(t, &note{})
 	ctx := context.Background()
 	for name, s := range map[string]Submission{
-		"configured type":    {AgentType: "probe", Instance: "i", Payload: payload("x")},
-		"unregistered type":  {AgentType: "other", Instance: "i", Payload: payload("x")},
-		"empty instance":     {AgentType: "note", Payload: payload("x")},
-		"slash in instance":  {AgentType: "note", Instance: "a/b", Payload: payload("x")},
-		"space in instance":  {AgentType: "note", Instance: "a b", Payload: payload("x")},
-		"long instance":      {AgentType: "note", Instance: strings.Repeat("a", maxInstanceID+1), Payload: payload("x")},
-		"payload not JSON":   {AgentType: "note", Instance: "i", Payload: json.RawMessage("{")},
-		"payload is missing": {AgentType: "note", Instance: "i"},
+		"configured type":   {AgentType: "probe", Instance: "i", Payload: payload("x")},
+		"unregistered type": {AgentType: "other", Instance: "i", Payload: payload("x")},
+		"empty instance":    {AgentType: "note", Payload: payload("x")},
+		"slash in instance": {AgentType: "note", Instance: "a/b", Payload: payload("x")},
+		"space in instance": {AgentType: "note", Instance: "a b", Payload: payload("x")},
+		"long instance":     {AgentType: "note", Instance: strings.Repeat("a", maxInstanceID+1), Payload: payload("x")},
+		// Codex round 1: the stores encode 'A' and '.' in three bytes; the
+		// derived run ID must fit a path component.
+		"run ID too long encoded": {AgentType: "note", Instance: strings.Repeat("A", 69), Payload: payload("x")},
+		"payload not JSON":        {AgentType: "note", Instance: "i", Payload: json.RawMessage("{")},
+		"payload is missing":      {AgentType: "note", Instance: "i"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := h.Submit(ctx, s); !errors.Is(err, ErrInvalid) {
@@ -162,6 +165,14 @@ func TestSubmitRefuses(t *testing.T) {
 	}
 	if _, err := h.Submit(ctx, Submission{AgentType: "note", Instance: strings.Repeat("a", maxInstanceID), Payload: payload("x")}); err != nil {
 		t.Fatalf("a %d-byte instance: %v", maxInstanceID, err)
+	}
+	// Nothing was enqueued for a refused instance.
+	if trig, err := h.h.st.Triggers(ctx, strings.Repeat("A", 69)); err == nil && len(trig) != 0 {
+		t.Fatalf("triggers %v", trig)
+	}
+	// The longest instance that encodes within the limit is accepted.
+	if _, err := h.Submit(ctx, Submission{AgentType: "note", Instance: strings.Repeat("A", 68), Payload: payload("x")}); err != nil {
+		t.Fatalf("68 uppercase letters: %v", err)
 	}
 }
 
@@ -344,6 +355,9 @@ func TestValidateSubmitted(t *testing.T) {
 		"configured type": {[]string{"probe"}, `"probe" is the configured agent_type`},
 		"no kind":         {[]string{"nokind"}, `does not declare the trigger kind "submitted"`},
 		"takes a config":  {[]string{"configured"}, `"configured" must take no configuration`},
+		// Codex round 1: a submitted model state needs the model route as
+		// the configured type's would.
+		"model state, no model": {[]string{"submodel"}, `agent type "submodel" has a model state ("think"), so model is required`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := noteProgram(t, newProbe(), &note{})
@@ -351,6 +365,11 @@ func TestValidateSubmitted(t *testing.T) {
 				if err := p.Registry.Register(typ); err != nil {
 					t.Fatal(err)
 				}
+			}
+			sub := modelType()
+			sub.Name, sub.Triggers = "submodel", []string{SubmittedKind}
+			if err := p.Registry.Register(sub); err != nil {
+				t.Fatal(err)
 			}
 			p.Submitted = tc.submitted
 			dir := t.TempDir()
