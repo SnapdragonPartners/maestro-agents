@@ -1,6 +1,6 @@
 # 0021. Review writes, approval and export
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0022
 - **Date:** 2026-11-17
 
 ## Context

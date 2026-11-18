@@ -1,0 +1,84 @@
+{{define "record"}}{{template "top" .}}{{$d := .Data}}{{$s := $d.Summary}}{{$seen := $d.State.Entries}}
+<p class="crumbs"><a href="/">Documents</a> › <a href="/documents/{{$s.SHA256}}">{{$d.Document.Name}}</a> ›</p>
+<h1>{{$s.Investor}} <span class="sub">in {{$s.Fund}}</span></h1>
+<p class="headline"><span class="num big">{{$s.Value}} {{$s.Currency}}</span> at {{$s.Period}} · {{$s.Origin}} · <span class="state state-{{$s.Kind}}">{{$s.Label}}</span></p>
+{{if $d.Blockers}}<div class="blockers"><strong>Before it can be approved:</strong><ul>{{range $d.Blockers}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+<div class="review">
+<section class="evidence">
+{{range $d.Pages}}
+<figure class="page" id="page-{{.Number}}">
+  <figcaption>Page {{.Number}}{{if not .Boxes}} (no highlights: the page's text was not read){{end}}</figcaption>
+  <div class="sheet">
+    <img src="/documents/{{$s.SHA256}}/pages/{{.Number}}" alt="Page {{.Number}} of the statement" loading="lazy">
+    {{if .Boxes}}<svg viewBox="0 0 {{.Width}} {{.Height}}" preserveAspectRatio="none" aria-hidden="true">{{range .Marks}}<rect class="mark mark-{{.Kind}}" data-field="{{.Field}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{end}}</svg>{{end}}
+  </div>
+</figure>
+{{else}}<p class="empty">The record cites no page.</p>{{end}}
+</section>
+<section class="facts-side">
+<h2>Values</h2>
+<table class="fields">
+{{range $d.Fields}}<tr data-field="{{.Key}}" tabindex="0"><th>{{.Name}}</th><td>{{if .IsAmount}}<span class="num">{{.Value}}</span> <span class="detail">{{.Label}}</span>{{else}}{{.Value}}{{end}}</td><td><a href="#page-{{.Page}}">p. {{.Page}}</a></td></tr>{{end}}
+</table>
+
+<h2>Checks</h2>
+<ul class="checks">{{range $d.Checks}}<li class="check check-{{.Status}}">{{.Check}}. {{.Name}}: {{.Status}}</li>{{end}}</ul>
+{{if $d.Findings}}
+<h3>Findings</h3>
+<ul class="findings">
+{{range $d.Findings}}
+<li class="finding finding-{{.Severity}}{{if .Accepted}} accepted{{end}}">
+  <strong>{{.Severity}}{{if .Downgraded}} (from a manual entry){{end}}</strong> {{.Message}}{{if .Page}} (p. {{.Page}}){{end}}
+  {{if .Accepted}}<span class="state state-done">accepted</span>
+  {{else if eq (print .Severity) "warning"}}
+  <form method="post" action="/records/{{$s.SHA256}}/{{$s.N}}/actions" class="inline">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="seen" value="{{$seen}}">
+    <input type="hidden" name="kind" value="accept_warning"><input type="hidden" name="finding" value="{{.ID}}">
+    <input name="reason" placeholder="Why it is right (required)" required>
+    <button type="submit">Accept</button>
+  </form>{{end}}
+</li>
+{{end}}
+</ul>
+{{end}}
+
+<h2>Addepar owner and asset</h2>
+<form method="post" action="/records/{{$s.SHA256}}/{{$s.N}}/actions" class="stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="seen" value="{{$seen}}">
+  <input type="hidden" name="kind" value="set_entities">
+  <div class="grid">
+    <label>Owner ID <input name="owner.id" value="{{$d.Owner.ID}}"></label>
+    <label>Owner name, exactly as in Addepar <input name="owner.name" value="{{$d.Owner.Name}}"></label>
+    <label>Asset ID <input name="asset.id" value="{{$d.Asset.ID}}"></label>
+    <label>Asset name, exactly as in Addepar <input name="asset.name" value="{{$d.Asset.Name}}"></label>
+  </div>
+  <label>Reason <input name="reason" required placeholder="Where these come from"></label>
+  <button type="submit">Save owner and asset</button>
+</form>
+
+{{if eq $s.State "approvable"}}
+<form method="post" action="/records/{{$s.SHA256}}/{{$s.N}}/actions" class="approve">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="seen" value="{{$seen}}">
+  <input type="hidden" name="kind" value="approve">
+  <button type="submit" class="primary">Approve as {{$.Operator}}</button>
+</form>
+{{end}}
+
+<details class="action">
+<summary>Correct the record</summary>
+<p>Change what is wrong, then give the reason. The record is verified again; an earlier approval or acceptance no longer counts.</p>
+<form method="post" action="/records/{{$s.SHA256}}/{{$s.N}}/actions" class="stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="seen" value="{{$seen}}">
+  <input type="hidden" name="kind" value="correct">
+  {{template "recordform" $d.Form}}
+  <label>Reason for the correction <input name="reason" required></label>
+  <button type="submit">Save the correction</button>
+</form>
+</details>
+
+<h2>History</h2>
+{{if $d.Log}}<ol class="log">{{range $d.Log}}<li><time>{{when .At}}</time> <strong>{{.By}}</strong> {{.Kind}}{{with .Finding}} {{.}}{{end}}{{with .Reason}}: “{{.}}”{{end}}{{with .Change}}<div class="detail">{{.}}</div>{{end}}</li>{{end}}</ol>{{else}}<p class="empty">No review actions yet.</p>{{end}}
+{{with $d.State.Record.Approval}}<p>Approved by <strong>{{.By}}</strong> at {{when .At}}.</p>{{end}}
+</section>
+</div>
+{{template "bottom" .}}{{end}}

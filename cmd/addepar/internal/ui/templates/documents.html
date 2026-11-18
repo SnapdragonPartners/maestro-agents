@@ -1,0 +1,23 @@
+{{define "documents"}}{{template "top" .}}
+<h1>Documents</h1>
+{{if not .Data}}
+<p class="empty">No statements yet. Drop PDF statements into the workspace's <strong>Inbox</strong> folder; they appear here as the agent reads them.</p>
+{{else}}
+<table class="list">
+<thead><tr><th>Document</th><th>Received</th><th>Status</th><th>Records</th></tr></thead>
+<tbody>
+{{range .Data}}
+<tr>
+  <td>{{if .SHA256}}<a href="/documents/{{.SHA256}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td>
+  <td>{{when .Received}}</td>
+  <td><span class="state state-{{.Kind}}">{{.Label}}</span>{{with .Detail}}<div class="detail">{{.}}</div>{{end}}</td>
+  <td>
+    {{range .Records}}<div class="rec"><a href="/records/{{.SHA256}}/{{.N}}">{{.Investor}} · {{.Fund}}</a> <span class="num">{{.Value}} {{.Currency}}</span> <span class="state state-{{.Kind}}">{{.Label}}</span></div>{{end}}
+    {{if and .SHA256 (not .Records) (ne .Kind "working")}}<a href="/documents/{{.SHA256}}">Enter a record</a>{{end}}
+  </td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+{{template "bottom" .}}{{end}}

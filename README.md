@@ -28,7 +28,10 @@ outputs with an answer key; `addepar score` scores the intake agent
 actions and approvals are runs of a second agent type, submitted in
 process through the standalone host, and `addepar export` exports
 approved records ([ADR
-0021](docs/adr/0021-review-writes-approval-and-export.md)). Design decisions
+0021](docs/adr/0021-review-writes-approval-and-export.md)). `addepar serve`
+watches an operator's workspace and serves the review UI on localhost in
+one process, with browser-based first-run setup ([ADR
+0022](docs/adr/0022-the-review-ui.md)). Design decisions
 are in the [ADRs](docs/adr/README.md).
 
 ## Layout

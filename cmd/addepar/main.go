@@ -30,6 +30,21 @@
 // was waiting, 1 when the export was refused or failed, and 2 on a usage
 // error.
 //
+// It serves the review UI (ADR 0022), watching the workspace's inbox in the
+// same process:
+//
+//	addepar serve [-workspace DIR] [-addr HOST:PORT] [-open=false]
+//
+// The workspace (default ~/Documents/Addepar Intake) holds Inbox/, where
+// statements are dropped, Exports/, where the CSVs go, and the hidden
+// .agent/: the store, the configuration and the manifests. Without a
+// configuration the UI opens on its setup page, which writes one; the API
+// key goes to the user's configuration folder, never the workspace. serve
+// listens on a loopback address only and prints the link that opens the
+// UI, with the session token from ADDEPAR_SESSION_TOKEN or a random one.
+// It exits 0 after a signal, 1 when the watch or the server failed, and 2
+// on a usage error.
+//
 // It also scores the agent against an answer key (ADR 0020):
 //
 //	addepar score -config FILE -inputs DIR -key FILE -map FILE [-json]
@@ -115,10 +130,11 @@ const usage = `usage:
   addepar verify -pdf FILE -record FILE [-override-by NAME -override-reason TEXT]
   addepar score -config FILE -inputs DIR -key FILE -map FILE [-json]
   addepar export -config FILE -out DIR -manifests DIR (-by NAME (-approved | -record ID ...) | -rewrite RUN)
+  addepar serve [-workspace DIR] [-addr HOST:PORT] [-open=false]
 `
 
-// run runs addepar's own commands, verify, score and export; p is the
-// program score and export run their agents with.
+// run runs addepar's own commands, verify, score, export and serve; p is
+// the program they run their agents with.
 func run(ctx context.Context, p standalone.Program, args []string, stdout, stderr io.Writer) int { //nolint:gocritic // hugeParam: called once
 	switch {
 	case len(args) > 0 && args[0] == "verify":
@@ -127,6 +143,8 @@ func run(ctx context.Context, p standalone.Program, args []string, stdout, stder
 		return scoreCommand(ctx, p, args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "export":
 		return exportCommand(ctx, p, args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "serve":
+		return serveCommand(ctx, p, args[1:], stdout, stderr, defaultServeEnv())
 	}
 	say(stderr, usage)
 	return exitUsage
