@@ -28,6 +28,11 @@ func TestDecodeValid(t *testing.T) {
 	if r.Ending.Amount.String() != "729211.40" || len(r.Lines) != 1 || r.Beginning == nil {
 		t.Fatalf("%+v", r)
 	}
+	// An explicit "0" is a value.
+	z, err := statement.DecodeBytes([]byte(strings.Replace(valid, `"amount": "125000.00"`, `"amount": "0"`, 1)))
+	if err != nil || !z.Lines[0].Amount.Amount.IsSet() || z.Lines[0].Amount.Amount.Sign() != 0 {
+		t.Fatalf("an explicit zero: %+v %v", z, err)
+	}
 	c := r.Clone()
 	c.Lines[0].Label = "changed"
 	if r.Lines[0].Label == "changed" {
@@ -54,6 +59,28 @@ func TestDecodeRejects(t *testing.T) {
 		},
 		"empty dash reason": func(s string) string { return strings.Replace(s, `"precision"`, `"dash_zero": "", "precision"`, 1) },
 		"no column reason":  func(s string) string { return strings.Replace(s, `"reason": "period to date"`, `"reason": ""`, 1) },
+		// Issue #21: encoding/json keeps the last of a repeated key and
+		// matches keys case-insensitively, so the record could be read
+		// two ways.
+		"repeated top-level key": func(s string) string {
+			return strings.Replace(s, `"precision": "cents",`, `"precision": "cents", "precision": "whole",`, 1)
+		},
+		"repeated nested key": func(s string) string {
+			return strings.Replace(s, `"amount": "729211.40"`, `"amount": "729211.40", "amount": "1.00"`, 1)
+		},
+		"case-mismatched key":  func(s string) string { return strings.Replace(s, `"ending"`, `"Ending"`, 1) },
+		"case-mismatched line": func(s string) string { return strings.Replace(s, `"kind": "movement"`, `"KIND": "movement"`, 1) },
+		"invalid UTF-8":        func(s string) string { return strings.Replace(s, `Opening`, "Open\xffing", 1) },
+		"oversized":            func(s string) string { return s + strings.Repeat(" ", statement.MaxRecordBytes) },
+		// PR #22: an absent or null amount is not zero.
+		"ending amount absent": func(s string) string {
+			return strings.Replace(s, `"ending": {"label": "Capital Balance", "amount": "729211.40", "page": 1}`, `"ending": {"label": "Capital Balance", "page": 1}`, 1)
+		},
+		"ending amount null": func(s string) string { return strings.Replace(s, `"amount": "729211.40"`, `"amount": null`, 1) },
+		"line amount null":   func(s string) string { return strings.Replace(s, `"amount": "125000.00"`, `"amount": null`, 1) },
+		"beginning amount absent": func(s string) string {
+			return strings.Replace(s, `"amount": "604211.40", `, ``, 1)
+		},
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {

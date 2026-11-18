@@ -1,6 +1,6 @@
 # 0015. The intake agent's verifier, exporter and test data
 
-- **Status:** Amended by ADR-0018
+- **Status:** Amended by ADR-0018, ADR-0021
 - **Date:** 2026-11-12
 
 ## Context

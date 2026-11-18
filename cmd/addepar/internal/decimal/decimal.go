@@ -73,6 +73,11 @@ func (d Decimal) c() *big.Int {
 	return d.coef
 }
 
+// IsSet reports whether d holds a value, from Parse, FromInt or
+// arithmetic. The zero Decimal, which a JSON amount that is absent or null
+// leaves behind, does not: a record must state "0" to mean zero (PR #22).
+func (d Decimal) IsSet() bool { return d.coef != nil }
+
 // Scale reports the digits after the point the number was written with.
 func (d Decimal) Scale() int { return d.scale }
 

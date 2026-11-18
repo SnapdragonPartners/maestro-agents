@@ -227,7 +227,12 @@ an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
    mapping until an LLM judge replaces it
    ([ADR 0020](adr/0020-the-scoring-harness.md)).
 6. **The review UI**, embedded and served on localhost, with evidence
-   highlighting from `maestro-cms#25`.
+   highlighting from `maestro-cms#25`. In two parts: the review writes it
+   stands on, built: each review action and approval is a run of a
+   second agent type submitted in process, appending to the record's
+   review log, and `addepar export` exports the approvals' snapshots
+   ([ADR 0021](adr/0021-review-writes-approval-and-export.md)); then the
+   UI, `addepar serve`, one process with the folder watch.
 7. **The trial** with the operators, for one reporting cycle.
 
 ## After the MVP

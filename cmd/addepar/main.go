@@ -18,6 +18,18 @@
 // with -override-by and -override-reason, the operator's recorded acceptance;
 // without them the record fails grounding and goes to manual entry.
 //
+// It exports approved records (ADR 0021), each approval's snapshot, as the
+// Addepar CSV in -out and its evidence manifest in -manifests (the
+// workspace's hidden folder), named by the CSV's SHA-256:
+//
+//	addepar export -config FILE -out DIR -manifests DIR (-by NAME (-approved | -record ID ...) | -rewrite RUN)
+//
+// -rewrite writes the files of an export a run already stored, for a write
+// that failed after its commit. The configuration's store must not be in
+// use by a running host. export exits 0 when it wrote the files or nothing
+// was waiting, 1 when the export was refused or failed, and 2 on a usage
+// error.
+//
 // It also scores the agent against an answer key (ADR 0020):
 //
 //	addepar score -config FILE -inputs DIR -key FILE -map FILE [-json]
@@ -47,6 +59,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/document"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/intake"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
 	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
@@ -101,16 +114,19 @@ const usage = `usage:
   addepar config validate -config FILE
   addepar verify -pdf FILE -record FILE [-override-by NAME -override-reason TEXT]
   addepar score -config FILE -inputs DIR -key FILE -map FILE [-json]
+  addepar export -config FILE -out DIR -manifests DIR (-by NAME (-approved | -record ID ...) | -rewrite RUN)
 `
 
-// run runs addepar's own commands, verify and score; p is the program
-// score runs the agent with.
+// run runs addepar's own commands, verify, score and export; p is the
+// program score and export run their agents with.
 func run(ctx context.Context, p standalone.Program, args []string, stdout, stderr io.Writer) int { //nolint:gocritic // hugeParam: called once
 	switch {
 	case len(args) > 0 && args[0] == "verify":
 		return verifyCommand(ctx, args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "score":
 		return scoreCommand(ctx, p, args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "export":
+		return exportCommand(ctx, p, args[1:], stdout, stderr)
 	}
 	say(stderr, usage)
 	return exitUsage
@@ -184,7 +200,10 @@ func program(providers map[llms.ProviderID]standalone.Provider) standalone.Progr
 	if err := reg.Register(intake.Type(intake.Options{})); err != nil {
 		panic(err) // the agent type's declaration is fixed; a test registers it
 	}
-	return standalone.Program{Name: "addepar", Registry: reg, Providers: providers}
+	if err := reg.Register(review.Type()); err != nil {
+		panic(err) // likewise
+	}
+	return standalone.Program{Name: "addepar", Registry: reg, Providers: providers, Submitted: []string{review.TypeName}}
 }
 
 // say writes a message for the operator; a failed write to stderr has

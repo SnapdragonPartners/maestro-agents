@@ -103,6 +103,10 @@ type Finding struct {
 	Message string `json:"message"`
 	Check   int    `json:"check"`
 	Page    int    `json:"page,omitempty"`
+	// Downgraded marks an error reported as a warning because a person,
+	// not the extractor, is the record's source (AsWarnings; ADR 0021,
+	// item 10).
+	Downgraded bool `json:"downgraded,omitempty"`
 }
 
 // ID identifies the finding for a warning's acceptance: the check, the code
@@ -140,6 +144,57 @@ func (r *Result) Findings(sev Severity) []Finding {
 			if f.Severity == sev { //nolint:gocritic // rangeValCopy: findings are few
 				out = append(out, f)
 			}
+		}
+	}
+	return out
+}
+
+// AsWarnings returns the result for a record a person entered (ADR 0021,
+// item 10): every error a warning marked Downgraded, every failed check
+// warn, and the verdict recomputed, so a named person can accept each one.
+// A check skipped because the document's text could not be read (checks 3
+// to 6 then) becomes a downgraded not_checked warning, which a person
+// accepts by confirming it themselves; a check skipped because the record
+// is malformed (an invalid_record finding) stays skipped, and the verdict
+// fails. r is not changed.
+func (r *Result) AsWarnings() Result {
+	malformed := false
+	for _, c := range r.Checks {
+		for _, f := range c.Findings {
+			if f.Code == "invalid_record" {
+				malformed = true
+			}
+		}
+	}
+	out := Result{Checks: make([]CheckResult, len(r.Checks))}
+	for i, c := range r.Checks {
+		if c.Status == Skipped && !malformed {
+			c.Status = Warn
+			c.Findings = []Finding{{
+				Check: c.Check, Code: "not_checked", Severity: Warning, Downgraded: true,
+				Message: fmt.Sprintf("check %d (%s) could not run: the document's text could not be read; a person confirms it from the page", c.Check, c.Name),
+			}}
+			out.Checks[i] = c
+			continue
+		}
+		c.Findings = append([]Finding(nil), c.Findings...)
+		for j := range c.Findings {
+			if c.Findings[j].Severity == Error {
+				c.Findings[j].Severity, c.Findings[j].Downgraded = Warning, true
+			}
+		}
+		if c.Status == Fail {
+			c.Status = Warn
+		}
+		out.Checks[i] = c
+	}
+	out.Verdict = Pass
+	for _, c := range out.Checks {
+		switch {
+		case c.Status == Skipped:
+			out.Verdict = Fail
+		case c.Status == Warn && out.Verdict == Pass:
+			out.Verdict = Warn
 		}
 	}
 	return out

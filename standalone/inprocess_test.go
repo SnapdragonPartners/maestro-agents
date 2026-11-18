@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -70,14 +71,36 @@ func TestOpenRunsInputsInProcess(t *testing.T) {
 	}
 }
 
+// TestOpenFolderConfiguration: a folder configuration opens in process,
+// to submit runs on its store while no watch holds it, but runs no input
+// (ADR 0021 amends ADR 0020, item 2).
+func TestOpenFolderConfiguration(t *testing.T) {
+	n := &note{}
+	p := noteProgram(t, newProbe(), n)
+	dir := t.TempDir()
+	inbox := filepath.Join(dir, "inbox")
+	if err := os.Mkdir(inbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	folder := writeConfigFile(t, dir, folderConfig(dir, inbox, 1))
+	h, err := Open(context.Background(), p, folder, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close() //nolint:errcheck // test
+	writeFile(t, filepath.Join(inbox, "a.txt"), "fine")
+	if _, err = h.RunInput(context.Background(), filepath.Join(inbox, "a.txt")); !errors.Is(err, ErrNotOneShot) {
+		t.Fatalf("RunInput on a folder configuration: %v", err)
+	}
+	rep, err := h.Submit(context.Background(), Submission{AgentType: "note", Instance: "i", Payload: payload("x")})
+	if err != nil || rep.Status != store.StatusSucceeded {
+		t.Fatalf("Submit: %+v %v", rep, err)
+	}
+}
+
 func TestOpenRefuses(t *testing.T) {
 	p := probeProgram(t, newProbe())
 	dir := t.TempDir()
-	inbox := filepath.Join(dir, "inbox")
-	folder := writeConfigFile(t, dir, folderConfig(dir, inbox, 1))
-	if _, err := Open(context.Background(), p, folder, io.Discard); !errors.Is(err, ErrNotOneShot) {
-		t.Fatalf("folder trigger: %v", err)
-	}
 	cfg := oneShotConfig(dir)
 	cfg["agent_type"] = "nope"
 	invalid := writeConfigFile(t, dir, cfg)

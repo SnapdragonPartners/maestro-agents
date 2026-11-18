@@ -73,3 +73,34 @@ func TestReading(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeSubmissionStrict: the submission envelope and each record
+// decode strictly (issue #21, ADR 0021 item 13), so a model's repeated or
+// case-mismatched key is a problem it is told about, not a value silently
+// chosen.
+func TestDecodeSubmissionStrict(t *testing.T) {
+	rec := `{"investor":{"text":"I","page":1},"fund":{"text":"F","page":1},` +
+		`"period":{"end":"2026-03-31","label":"March 31, 2026","page":1},"currency":{"code":"USD"},` +
+		`"precision":"cents","column":{"label":"QTD","reason":"r","page":1},` +
+		`"ending":{"label":"Ending","amount":"1.00","page":1}}`
+	if got, msg := decodeSubmission([]byte(`{"records":[` + rec + `]}`)); msg != "" || len(got) != 1 || got[0].problem != "" {
+		t.Fatalf("valid submission: %+v %q", got, msg)
+	}
+	if _, msg := decodeSubmission([]byte(`{"records":[],"records":[` + rec + `]}`)); !strings.Contains(msg, "repeated") {
+		t.Fatalf("repeated envelope key: %q", msg)
+	}
+	if _, msg := decodeSubmission([]byte(`{"Records":[` + rec + `]}`)); !strings.Contains(msg, "unknown field") {
+		t.Fatalf("case-mismatched envelope key: %q", msg)
+	}
+	dup := strings.Replace(rec, `"amount":"1.00"`, `"amount":"1.00","amount":"2.00"`, 1)
+	// A repeated key inside a record refuses the whole submission, naming
+	// the record by its path: the model resubmits.
+	if _, msg := decodeSubmission([]byte(`{"records":[` + rec + `,` + dup + `]}`)); !strings.Contains(msg, `/records/1/ending: key "amount" is repeated`) {
+		t.Fatalf("repeated record key: %q", msg)
+	}
+	ci := strings.Replace(rec, `"ending"`, `"Ending"`, 1)
+	got, msg := decodeSubmission([]byte(`{"records":[` + rec + `,` + ci + `]}`))
+	if msg != "" || len(got) != 2 || got[0].problem != "" || !strings.Contains(got[1].problem, "unknown field") {
+		t.Fatalf("case-mismatched record key: %+v %q", got, msg)
+	}
+}

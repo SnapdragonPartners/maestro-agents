@@ -501,3 +501,78 @@ func TestNameKey(t *testing.T) {
 		}
 	}
 }
+
+// TestAsWarnings: a person's record has every error reported as a
+// downgraded warning, failed checks warn, and the verdict follows; the
+// input is unchanged (ADR 0021, item 10).
+func TestAsWarnings(t *testing.T) {
+	r := verify.Result{Verdict: verify.Fail, Checks: []verify.CheckResult{
+		{Check: 1, Name: "grounding", Status: verify.Fail, Findings: []verify.Finding{{Check: 1, Code: "amount_not_printed", Severity: verify.Error}}},
+		{Check: 2, Name: "roll_forward", Status: verify.Warn, Findings: []verify.Finding{{Check: 2, Code: "rounding", Severity: verify.Warning}}},
+		{Check: 3, Name: "internal_consistency", Status: verify.Pass},
+	}}
+	got := r.AsWarnings()
+	if got.Verdict != verify.Warn || got.Checks[0].Status != verify.Warn || got.Checks[2].Status != verify.Pass {
+		t.Fatalf("%+v", got)
+	}
+	f := got.Checks[0].Findings[0]
+	if f.Severity != verify.Warning || !f.Downgraded || got.Checks[1].Findings[0].Downgraded {
+		t.Fatalf("findings %+v %+v", f, got.Checks[1].Findings[0])
+	}
+	if r.Checks[0].Findings[0].Severity != verify.Error || r.Checks[0].Status != verify.Fail {
+		t.Fatal("AsWarnings changed its input")
+	}
+	pass := verify.Result{Verdict: verify.Pass, Checks: []verify.CheckResult{{Check: 1, Status: verify.Pass}}}
+	if pass.AsWarnings().Verdict != verify.Pass {
+		t.Fatal("a passing result does not pass")
+	}
+	skipped := verify.Result{Checks: []verify.CheckResult{
+		{Check: 1, Status: verify.Fail, Findings: []verify.Finding{{Check: 1, Code: "invalid_record", Severity: verify.Error}}},
+		{Check: 2, Status: verify.Skipped},
+	}}
+	if skipped.AsWarnings().Verdict != verify.Fail {
+		t.Fatal("a skipped check (a malformed record) became acceptable")
+	}
+}
+
+// TestAsWarningsWithoutText: a person's valid record for a document whose
+// text was not read (a scan, or a restricted PDF) has checks 3 to 6
+// skipped; as warnings each is a downgraded not_checked to accept, so the
+// manual fallback can be approved (ADR 0021, items 7 and 10). A malformed
+// record still fails.
+func TestAsWarningsWithoutText(t *testing.T) {
+	for _, layer := range []document.TextLayer{document.TextNone, document.TextNotRead} {
+		doc := simpleDoc("")
+		doc.TextLayer = layer
+		res := verify.Verify(doc, simpleRecord(t))
+		got := res.AsWarnings()
+		if got.Verdict != verify.Warn {
+			t.Fatalf("%s: verdict %s: %+v", layer, got.Verdict, got)
+		}
+		var notChecked int
+		for _, c := range got.Checks {
+			if c.Status != verify.Pass && c.Status != verify.Warn {
+				t.Fatalf("%s: check %d is %s", layer, c.Check, c.Status)
+			}
+			for _, f := range c.Findings {
+				if f.Severity != verify.Warning {
+					t.Fatalf("%s: finding %+v", layer, f)
+				}
+				if f.Code == "not_checked" {
+					notChecked++
+					if !f.Downgraded {
+						t.Fatalf("%s: not_checked not downgraded", layer)
+					}
+				}
+			}
+		}
+		if notChecked != 4 {
+			t.Fatalf("%s: %d not_checked warnings, want 4 (checks 3 to 6)", layer, notChecked)
+		}
+	}
+	bad := simpleRecord(t)
+	bad.Investor.Text = ""
+	if r := verify.Verify(simpleDoc("x"), bad); r.AsWarnings().Verdict != verify.Fail {
+		t.Fatal("a malformed record became acceptable")
+	}
+}

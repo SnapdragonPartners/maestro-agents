@@ -31,10 +31,16 @@
 // Exit codes: ExitComplete (0), ExitIncomplete (1) and ExitUsage (2).
 //
 // An agent's own commands, or a harness such as the scoring package, can
-// open the host in process instead (ADR 0020, item 2): Open loads a
-// configuration with a one_shot trigger, Host.RunInput runs one input as
-// run -input does and returns its Report, and Host.Store and
-// Host.Namespace read what the runs wrote. SignalContext gives such a
+// open the host in process instead (ADR 0020, item 2; ADR 0021): Open
+// loads and validates any configuration, without watching a folder.
+// Host.RunInput runs one input as run -input does and returns its Report;
+// it needs a one_shot trigger (ErrNotOneShot otherwise), and
+// Host.TriggerKind says which the configuration has. Host.Submit runs one
+// of the program's submitted agent types (Program.Submitted, trigger kind
+// SubmittedKind) on a caller's instance, from a payload rather than a
+// file, serialized with every other run on that instance (ErrBusy while
+// one is unfinished). Host.Store and Host.Namespace read what the runs
+// wrote. SignalContext gives such a
 // command the host's signal lifecycle: the first SIGINT or SIGTERM cancels
 // its context, so a run shuts down at its next step boundary, and a second
 // ends the process.

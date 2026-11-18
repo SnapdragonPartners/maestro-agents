@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,13 +32,17 @@ var errAnotherConfiguration = errors.New("the store serves another configuration
 
 // host is one run command's state.
 type host struct {
-	st     store.Store
+	st store.Store
+	// locks serializes activations per instance in the process.
+	locks  instanceLocks
 	cfg    *Config
 	ctrl   *agent.Controller
 	client *agent.ModelClient
 	logger *slog.Logger
 	now    func() time.Time
-	owner  string
+	// submitted holds the program's submitted agent types (ADR 0021).
+	submitted map[string]bool
+	owner     string
 	// maxInput bounds an input file.
 	maxInput int64
 	// heartbeat is heartbeatInterval, shortened by tests.
@@ -69,31 +74,37 @@ type result struct {
 // interrupted reports whether the run was left unfinished.
 func (r *result) interrupted() bool { return !r.Status.Terminal() }
 
-// makeRun turns an input into its run (ADR 0017, item 12): enqueue the
+// makeRun turns a trigger into its run (ADR 0017, item 12): enqueue the
 // trigger, create the run, remove the trigger, each idempotent on the
-// trigger's identity.
-func (h *host) makeRun(ctx context.Context, in *input, kind string) (store.Run, error) {
-	t := store.Trigger{Instance: in.instance, ID: in.id, Kind: kind, Payload: in.payload}
-	if _, err := h.st.EnqueueTrigger(ctx, t); err != nil {
+// trigger's identity. A file trigger's run ID is its instance's; a
+// submitted one's is its own (ADR 0021, item 2).
+func (h *host) makeRun(ctx context.Context, t *store.Trigger, runID, agentType string) (store.Run, error) {
+	if _, err := h.st.EnqueueTrigger(ctx, *t); err != nil {
 		return store.Run{}, fmt.Errorf("enqueue trigger: %w", err)
 	}
 	run, created, err := h.st.CreateRun(ctx, store.Run{
-		ID: in.instance, Instance: in.instance, AgentType: h.cfg.AgentType,
-		TriggerID: in.id, TriggerKind: kind, Trigger: in.payload,
+		ID: runID, Instance: t.Instance, AgentType: agentType,
+		TriggerID: t.ID, TriggerKind: t.Kind, Trigger: t.Payload,
 	})
 	if err != nil {
 		return store.Run{}, fmt.Errorf("create run: %w", err)
 	}
-	if err := h.st.RemoveTrigger(ctx, in.instance, in.id); err != nil {
+	if err := h.st.RemoveTrigger(ctx, t.Instance, t.ID); err != nil {
 		return store.Run{}, fmt.Errorf("remove trigger: %w", err)
 	}
-	if run.AgentType != h.cfg.AgentType {
-		return store.Run{}, fmt.Errorf("%w: run %s is agent type %q's, not %q's", errAnotherConfiguration, run.ID, run.AgentType, h.cfg.AgentType)
+	if run.AgentType != agentType {
+		return store.Run{}, fmt.Errorf("%w: run %s is agent type %q's, not %q's", errAnotherConfiguration, run.ID, run.AgentType, agentType)
 	}
 	if created {
-		h.logger.Info("standalone: run created", "run", run.ID, "trigger_kind", kind)
+		h.logger.Info("standalone: run created", "run", run.ID, "agent_type", agentType, "trigger_kind", t.Kind)
 	}
 	return run, nil
+}
+
+// makeFileRun makes an input file's run, of the configured agent type.
+func (h *host) makeFileRun(ctx context.Context, in *input, kind string) (store.Run, error) {
+	t := store.Trigger{Instance: in.instance, ID: in.id, Kind: kind, Payload: in.payload}
+	return h.makeRun(ctx, &t, in.instance, h.cfg.AgentType)
 }
 
 // activate claims a run's instance and activates the run (ADR 0017, items
@@ -107,7 +118,7 @@ func (h *host) activate(ctx context.Context, run *store.Run) *result {
 	fence := own.Fence()
 	actx, cancel := context.WithCancelCause(ctx)
 	beat := h.startHeartbeat(actx, cancel, fence)
-	out, err := h.ctrl.Activate(actx, agent.ActivationInput{
+	in := agent.ActivationInput{
 		Client:    h.client,
 		Scope:     store.Scope{Kind: store.ScopeRun, ID: run.ID},
 		Fence:     fence,
@@ -115,7 +126,13 @@ func (h *host) activate(ctx context.Context, run *store.Run) *result {
 		Namespace: h.cfg.Namespace,
 		Principal: h.cfg.Principal,
 		Budgets:   h.cfg.Budgets.budgets(h.now()),
-	})
+	}
+	if run.AgentType != h.cfg.AgentType {
+		// A submitted type's configuration is absent and its budgets its
+		// manifest's defaults (ADR 0021, item 1).
+		in.Config, in.Budgets = json.RawMessage("null"), agent.Budgets{}
+	}
+	out, err := h.ctrl.Activate(actx, in)
 	cancel(nil)
 	if fatal := <-beat; fatal != nil {
 		// The store must be reopened: whatever the activation returned,

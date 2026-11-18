@@ -32,3 +32,69 @@ func TestDecode(t *testing.T) {
 		})
 	}
 }
+
+// Embedded structs follow encoding/json: an untagged one's fields are
+// promoted by JSON name (even when its Go name shadows them, as
+// statement.Line's Amount does), a tagged one is a named field, and the
+// strict checks apply inside both (ADR 0021, item 13).
+func TestDecodeEmbedded(t *testing.T) {
+	type amount struct {
+		Amount string `json:"amount"`
+		Label  string `json:"label"`
+	}
+	type line struct {
+		Kind string `json:"kind"`
+		amount
+	}
+	type named struct {
+		Kind   string `json:"kind"`
+		amount `json:"inner"`
+	}
+	var l line
+	if err := Decode([]byte(`{"kind":"m","amount":"1.00","label":"x"}`), &l); err != nil || l.Amount != "1.00" || l.Label != "x" {
+		t.Fatalf("promoted fields: %+v, %v", l, err)
+	}
+	var n named
+	if err := Decode([]byte(`{"kind":"m","inner":{"amount":"1.00"}}`), &n); err != nil || n.Amount != "1.00" {
+		t.Fatalf("tagged embedded: %+v, %v", n, err)
+	}
+	for name, tc := range map[string]struct {
+		in, want string
+		v        any
+	}{
+		"promoted repeated":      {`{"kind":"m","amount":"1","amount":"2"}`, `key "amount" is repeated`, &line{}},
+		"promoted case mismatch": {`{"kind":"m","Amount":"1"}`, `unknown field "Amount"`, &line{}},
+		"tagged not promoted":    {`{"kind":"m","amount":"1"}`, `unknown field "amount"`, &named{}},
+		"inside tagged repeated": {`{"inner":{"label":"a","label":"b"}}`, `key "label" is repeated`, &named{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := Decode([]byte(tc.in), tc.v); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestDecodeEmbeddedAmbiguity: one type embedded by two paths at the same
+// depth makes its fields ambiguous to encoding/json, which then drops
+// them and may match the key case-insensitively elsewhere; the strict
+// decoder refuses the key (PR #22, Copilot).
+func TestDecodeEmbeddedAmbiguity(t *testing.T) {
+	type inner struct {
+		Value string `json:"value"`
+	}
+	type left struct{ inner }
+	type right struct{ inner }
+	type doc struct {
+		left
+		right
+		Upper string `json:"VALUE"`
+	}
+	var d doc
+	if err := Decode([]byte(`{"value":"first","VALUE":"second"}`), &d); err == nil || !strings.Contains(err.Error(), `unknown field "value"`) {
+		t.Fatalf("ambiguous promoted key: %v (%+v)", err, d)
+	}
+	if err := Decode([]byte(`{"VALUE":"only"}`), &d); err != nil || d.Upper != "only" {
+		t.Fatalf("the root field: %+v %v", d, err)
+	}
+}

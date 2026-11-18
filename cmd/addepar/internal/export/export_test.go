@@ -228,33 +228,142 @@ func TestBuildRefuses(t *testing.T) {
 	})
 }
 
+// TestWrite: the CSV goes to the exports folder by date and hash, the
+// manifest to the manifests folder by the CSV's hash and the export time;
+// nothing is replaced, except that a re-export of the same bytes keeps the
+// CSV and adds its own manifest (ADR 0021, item 11).
 func TestWrite(t *testing.T) {
-	exp, err := export.Build([]export.Record{approved(t, "r", record(t, "Owner", "Fund", "10", "USD"))}, t0)
+	recs := []export.Record{approved(t, "r", record(t, "Owner", "Fund", "10", "USD"))}
+	exp, err := export.Build(recs, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	csvPath, manPath, err := exp.Write(dir, "valuations-2026-03-31")
+	csvDir, manDir := t.TempDir(), t.TempDir()
+	csvPath, manPath, err := exp.Write(csvDir, manDir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	wantCSV := filepath.Join(csvDir, "addepar-"+t0.UTC().Format(time.DateOnly)+"-"+exp.CSVSHA256[:8]+".csv")
+	wantMan := filepath.Join(manDir, exp.CSVSHA256+"-"+t0.UTC().Format("20060102T150405.000000000Z")+".json")
+	if csvPath != wantCSV || manPath != wantMan {
+		t.Fatalf("paths %s %s, want %s %s", csvPath, manPath, wantCSV, wantMan)
 	}
 	for path, want := range map[string][]byte{csvPath: exp.CSV, manPath: exp.Manifest} {
-		got, err := os.ReadFile(path) //nolint:gosec // test temp dir
-		if err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("%s: %v", path, err)
+		got, rerr := os.ReadFile(path) //nolint:gosec // test temp dir
+		if rerr != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s: %v", path, rerr)
 		}
 	}
-	if _, _, err := exp.Write(dir, "valuations-2026-03-31"); err == nil {
-		t.Fatal("an existing export was replaced")
+	// Writing the same export again (a rewrite after a failed write, PR
+	// #22) keeps both identical files; a manifest of that name with other
+	// content is refused, never replaced.
+	if c, m, werr := exp.Write(csvDir, manDir); werr != nil || c != csvPath || m != manPath {
+		t.Fatalf("rewrite: %s %s %v", c, m, werr)
 	}
-	for _, bad := range []string{"", "..", "a/b"} {
-		if _, _, err := exp.Write(dir, bad); err == nil {
-			t.Fatalf("name %q accepted", bad)
+	if err = os.WriteFile(manPath, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = exp.Write(csvDir, manDir); err == nil || !strings.Contains(err.Error(), "other content") {
+		t.Fatalf("a changed manifest: %v", err)
+	}
+	if got, _ := os.ReadFile(manPath); string(got) != "changed" { //nolint:gosec // test temp dir
+		t.Fatal("a manifest with other content was replaced")
+	}
+	if err = os.WriteFile(manPath, exp.Manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The same records exported again later: the same CSV, kept; a new
+	// manifest beside the first.
+	again, err := export.Build(recs, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, m2, err := again.Write(csvDir, manDir)
+	if err != nil || c2 != csvPath || m2 == manPath {
+		t.Fatalf("re-export: %s %s %v", c2, m2, err)
+	}
+	// Again within the same second (Codex round 1): its own manifest.
+	soon, err := export.Build(recs, t0.Add(time.Hour+time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, m3, werr := soon.Write(csvDir, manDir); werr != nil || m3 == m2 {
+		t.Fatalf("same-second re-export: %s %v", m3, werr)
+	}
+	// A CSV of that name with other content is not replaced.
+	other, err := export.Build(recs, t0.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(csvPath, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := other.Write(csvDir, manDir); err == nil || !strings.Contains(err.Error(), "other content") {
+		t.Fatalf("a changed CSV: %v", err)
+	}
+	if _, _, err := (&export.Export{}).Write(csvDir, manDir); err == nil {
+		t.Fatal("an export with no hash was written")
+	}
+	// Bytes that do not hash to their recorded digests are refused, not
+	// written under names that lie (PR #22, buggrit).
+	for name, corrupt := range map[string]func(*export.Export){
+		"csv":      func(e *export.Export) { e.CSV = append([]byte(nil), "changed"...) },
+		"manifest": func(e *export.Export) { e.Manifest = append([]byte(nil), "changed"...) },
+	} {
+		bad := *exp
+		bad.At = t0.Add(5 * time.Hour)
+		corrupt(&bad)
+		if _, _, err := bad.Write(csvDir, manDir); err == nil || !strings.Contains(err.Error(), "do not match") {
+			t.Fatalf("corrupt %s: %v", name, err)
 		}
 	}
-	left, _ := filepath.Glob(filepath.Join(dir, ".export-*"))
-	if len(left) != 0 {
-		t.Fatalf("temporary files left: %v", left)
+	for _, d := range []string{csvDir, manDir} {
+		if left, _ := filepath.Glob(filepath.Join(d, ".export-*")); len(left) != 0 {
+			t.Fatalf("temporary files left: %v", left)
+		}
+	}
+}
+
+// TestGateReviewOrder: an acceptance before a correction or manual entry
+// no longer counts (ADR 0021, item 8), and a downgraded error passes only
+// on a record a person entered (item 10).
+func TestGateReviewOrder(t *testing.T) {
+	r := approved(t, "r", record(t, "Owner", "Fund", "10", "USD"))
+	w := verify.Finding{Check: verify.CheckCurrency, Code: "not_stated", Subject: "currency", Severity: verify.Warning, Message: "m"}
+	r.Result.Checks[verify.CheckCurrency-1] = verify.CheckResult{Check: verify.CheckCurrency, Name: "currency", Status: verify.Warn, Findings: []verify.Finding{w}}
+	r.Result.Verdict = verify.Warn
+	accept := export.ReviewAction{Kind: export.AcceptWarning, Finding: w.ID(), By: "p", Reason: "ok", At: r.Approval.At.Add(-3 * time.Minute)}
+	correct := export.ReviewAction{Kind: export.Correct, By: "p", Reason: "typo", Change: "ending.amount", At: r.Approval.At.Add(-2 * time.Minute)}
+	r.Reviews = []export.ReviewAction{accept}
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("accepted warning refused: %v", got)
+	}
+	r.Reviews = []export.ReviewAction{accept, correct}
+	if got := export.Gate(&r); len(got) != 1 || !strings.Contains(got[0], "not accepted") {
+		t.Fatalf("acceptance before a correction counted: %v", got)
+	}
+	accept2 := accept
+	accept2.At = r.Approval.At.Add(-time.Minute)
+	r.Reviews = []export.ReviewAction{accept, correct, accept2}
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("acceptance after the correction refused: %v", got)
+	}
+
+	d := w
+	d.Code, d.Subject, d.Check, d.Downgraded = "amount_not_printed", "ending", verify.CheckGrounding, true
+	r.Result.Checks[0] = verify.CheckResult{Check: 1, Name: "grounding", Status: verify.Warn, Findings: []verify.Finding{d}}
+	acc := export.ReviewAction{Kind: export.AcceptWarning, Finding: d.ID(), By: "p", Reason: "read it off page 2", At: accept2.At}
+	r.Reviews = append(r.Reviews, acc)
+	if got := export.Gate(&r); len(got) != 1 || !strings.Contains(got[0], "downgraded") {
+		t.Fatalf("downgraded error on an extracted record: %v", got)
+	}
+	r.Origin = export.OriginManual
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("accepted downgraded error on a manual record: %v", got)
+	}
+	r.Origin = "guessed"
+	if got := export.Gate(&r); len(got) != 2 || !strings.Contains(got[0], "unknown origin") || !strings.Contains(got[1], "downgraded") {
+		t.Fatalf("unknown origin: %v", got)
 	}
 }
 
@@ -314,5 +423,26 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(string(exp.Manifest), doc.SHA256) || !strings.Contains(string(exp.Manifest), `"6/not_stated/currency"`) {
 		t.Fatalf("manifest lacks the document hash or the acceptance")
+	}
+}
+
+// TestGateManualWithoutText: a person's record for a scanned PDF, verified
+// with its skipped checks as warnings, passes the gate once every warning
+// is accepted, and not before (ADR 0021, item 10; Codex round 1).
+func TestGateManualWithoutText(t *testing.T) {
+	doc := &document.Document{SHA256: strings.Repeat("ab", 32), Name: "scan.pdf", PageCount: 1, TextLayer: document.TextNone,
+		Pages: []document.Page{{Number: 1}}}
+	rec := record(t, "Owner", "Fund", "10", "USD")
+	res := verify.Verify(doc, rec)
+	r := approved(t, "r", rec)
+	r.Origin, r.Result = export.OriginManual, res.AsWarnings()
+	if got := export.Gate(&r); len(got) == 0 {
+		t.Fatal("unaccepted warnings passed")
+	}
+	for i, f := range r.Result.Findings(verify.Warning) {
+		r.Reviews = append(r.Reviews, export.ReviewAction{Kind: export.AcceptWarning, Finding: f.ID(), By: "p", Reason: "read off the scan", At: t0.Add(-time.Duration(i+1) * time.Second)})
+	}
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("an accepted manual record for a scan is refused: %v", got)
 	}
 }

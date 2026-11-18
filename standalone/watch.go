@@ -180,7 +180,7 @@ func (w *watcher) scanOnce(ctx context.Context) {
 			w.logger.Warn("standalone: input refused", "error_class", inputErrorClass(err))
 			continue
 		}
-		if _, err := w.makeRun(context.WithoutCancel(ctx), in, agent.TriggerFolder); err != nil {
+		if _, err := w.makeFileRun(context.WithoutCancel(ctx), in, agent.TriggerFolder); err != nil {
 			w.logger.Error("standalone: cannot make the input's run", "instance", in.instance, "error_class", errorClass(err))
 			switch {
 			case errors.Is(err, store.ErrUnusable):
@@ -223,9 +223,12 @@ func (w *watcher) dispatch(ctx context.Context) {
 			}
 			continue
 		}
-		if run.AgentType != w.cfg.AgentType {
-			w.refused[c.Run] = true // another configuration's (ADR 0017, item 9)
+		if !w.serves(run.AgentType) {
+			w.refused[c.Run] = true // another configuration's (ADR 0017 item 9, ADR 0021 item 4)
 			continue
+		}
+		if !w.locks.tryLock(c.Instance) {
+			continue // a submission is running on it (ADR 0021, item 3)
 		}
 		w.inflight[c.Instance] = true
 		go func() { w.results <- w.activate(ctx, &run) }()
@@ -238,6 +241,7 @@ func (w *watcher) dispatch(ctx context.Context) {
 func (w *watcher) done(r *result, shuttingDown bool) {
 	instance := r.Instance
 	delete(w.inflight, instance)
+	w.locks.unlock(instance)
 	if r.Fatal {
 		w.fatal = true
 	}

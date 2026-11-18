@@ -24,7 +24,11 @@ model reading the PDF itself beside its text ([ADR
 0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md)). The scoring
 harness, `scoring/`, runs an agent over a set of inputs and compares its
 outputs with an answer key; `addepar score` scores the intake agent
-([ADR 0020](docs/adr/0020-the-scoring-harness.md)). Design decisions
+([ADR 0020](docs/adr/0020-the-scoring-harness.md)). People's review
+actions and approvals are runs of a second agent type, submitted in
+process through the standalone host, and `addepar export` exports
+approved records ([ADR
+0021](docs/adr/0021-review-writes-approval-and-export.md)). Design decisions
 are in the [ADRs](docs/adr/README.md).
 
 ## Layout

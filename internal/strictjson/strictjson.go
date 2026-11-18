@@ -1,7 +1,8 @@
 // Package strictjson decodes JSON more strictly than encoding/json, for
 // files an operator writes: the standalone host's configuration and
 // secrets (ADR 0017, item 5) and the intake agent's scoring mapping
-// (ADR 0020, item 7).
+// (ADR 0020, item 7); and for the intake agent's extraction records,
+// from a model or a person (ADR 0021, item 13).
 package strictjson
 
 import (
@@ -113,26 +114,85 @@ func walkObject(dec *json.Decoder, t reflect.Type, at string) error {
 }
 
 // fieldByJSONName returns the type of t's field whose JSON name is exactly
-// name.
+// name, following encoding/json's rules for embedded structs: an untagged
+// embedded struct's fields are promoted (by JSON name, not Go name), the
+// shallowest wins, a tagged one beats an untagged one at the same depth,
+// and names still tied are no field at all.
 func fieldByJSONName(t reflect.Type, name string) (reflect.Type, bool) {
-	for i := range t.NumField() {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
+	level := []reflect.Type{t}
+	shallower := map[reflect.Type]bool{}
+	for len(level) > 0 {
+		found, next := fieldsNamed(level, name, shallower)
+		if len(found) > 0 {
+			return dominant(found)
 		}
-		tag := f.Tag.Get("json")
-		n, _, _ := strings.Cut(tag, ",")
-		if n == "-" {
-			continue
+		// A type reached again at the same depth by another path counts
+		// twice, so its fields tie as encoding/json's do; one already
+		// walked at a shallower depth is not walked again.
+		for _, st := range level {
+			shallower[st] = true
 		}
-		if n == "" {
-			n = f.Name
-		}
-		if n == name {
-			return f.Type, true
-		}
+		level = next
 	}
 	return nil, false
+}
+
+// candidate is a field whose JSON name matched, and whether it is tagged.
+type candidate struct {
+	t      reflect.Type
+	tagged bool
+}
+
+// fieldsNamed returns the fields of one depth's structs whose JSON name is
+// name, and the untagged embedded structs whose fields are the next depth,
+// each once per path that reaches it.
+func fieldsNamed(level []reflect.Type, name string, shallower map[reflect.Type]bool) (found []candidate, next []reflect.Type) {
+	for _, st := range level {
+		if shallower[st] {
+			continue
+		}
+		for i := range st.NumField() {
+			f := st.Field(i)
+			n, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if n == "-" {
+				continue
+			}
+			ft := f.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			embedded := f.Anonymous && ft.Kind() == reflect.Struct
+			switch {
+			case embedded && n == "":
+				next = append(next, ft) // promoted, even if unexported
+			case !f.IsExported() && !embedded:
+				// encoding/json keeps a tagged, unexported embedded struct
+			case n == name:
+				found = append(found, candidate{f.Type, true})
+			case n == "" && f.Name == name:
+				found = append(found, candidate{f.Type, false})
+			}
+		}
+	}
+	return found, next
+}
+
+// dominant picks encoding/json's field among one depth's matches: the one
+// tagged field, else the one untagged field; a tie is no field.
+func dominant(found []candidate) (reflect.Type, bool) {
+	var tagged []candidate
+	for _, c := range found {
+		if c.tagged {
+			tagged = append(tagged, c)
+		}
+	}
+	if len(tagged) == 0 {
+		tagged = found
+	}
+	if len(tagged) != 1 {
+		return nil, false
+	}
+	return tagged[0].t, true
 }
 
 func escapePointer(s string) string {

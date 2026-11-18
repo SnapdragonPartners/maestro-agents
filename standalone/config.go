@@ -242,6 +242,7 @@ func (c *Config) Validate(p *Program) error {
 	if m.Name != "" {
 		errs = append(errs, c.validateAgainst(&m)...)
 	}
+	errs = append(errs, c.validateSubmitted(p)...)
 	errs = append(errs, c.Budgets.validate()...)
 	errs = append(errs, c.validateModel(p, &m)...)
 	errs = append(errs, c.Store.validate()...)
@@ -273,6 +274,52 @@ func (c *Config) validateAgainst(m *agent.Manifest) []error {
 		}
 		if err := s.Validate(c.instanceConfig()); err != nil {
 			errs = append(errs, fmt.Errorf("config: %w", err))
+		}
+	}
+	return errs
+}
+
+// validateSubmitted checks the program's submitted agent types (ADR 0021,
+// item 1): each registered once, not the configured type, declaring
+// SubmittedKind, and taking the absent configuration.
+func (c *Config) validateSubmitted(p *Program) []error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, t := range p.Submitted {
+		switch {
+		case seen[t]:
+			errs = append(errs, fmt.Errorf("submitted agent type %q is listed twice", t))
+			continue
+		case t == c.AgentType:
+			errs = append(errs, fmt.Errorf("submitted agent type %q is the configured agent_type", t))
+			continue
+		}
+		seen[t] = true
+		if p.Registry == nil {
+			continue // reported once, above
+		}
+		m, ok := p.Registry.Manifest(t)
+		if !ok {
+			errs = append(errs, fmt.Errorf("submitted agent type %q is not registered", t))
+			continue
+		}
+		if !contains(m.Triggers, SubmittedKind) {
+			errs = append(errs, fmt.Errorf("submitted agent type %q does not declare the trigger kind %q", t, SubmittedKind))
+		}
+		if c.Model == nil {
+			// A submitted type with a model state needs the route as much
+			// as the configured type does; the route's own checks run once,
+			// for the configured type.
+			errs = append(errs, c.validateModel(p, &m)...)
+		}
+		if m.Config != nil {
+			s, err := jsonschema.Compile(m.Config)
+			if err == nil {
+				err = s.Validate(json.RawMessage("null"))
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("submitted agent type %q must take no configuration: %w", t, err))
+			}
 		}
 	}
 	return errs
