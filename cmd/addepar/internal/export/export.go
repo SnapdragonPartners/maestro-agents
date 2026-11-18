@@ -530,8 +530,15 @@ func (e *Export) ManifestName() string {
 // first attempt left, PR #22). The manifest goes first: a manifest without its CSV is
 // harmless, a CSV without its evidence is not.
 func (e *Export) Write(csvDir, manifestDir string) (csvPath, manifestPath string, err error) {
-	if len(e.CSVSHA256) != sha256.Size*2 {
-		return "", "", errors.New("export: the export has no CSV hash")
+	// The files are named by these hashes and an auditor finds the
+	// evidence by them, so they must be the bytes' own: a stored export
+	// whose bytes do not match is refused, not written under a false name
+	// (PR #22, buggrit).
+	if got := sha256.Sum256(e.CSV); hex.EncodeToString(got[:]) != e.CSVSHA256 {
+		return "", "", errors.New("export: the CSV's bytes do not match its recorded SHA-256")
+	}
+	if got := sha256.Sum256(e.Manifest); hex.EncodeToString(got[:]) != e.ManifestSHA256 {
+		return "", "", errors.New("export: the manifest's bytes do not match its recorded SHA-256")
 	}
 	csvPath = filepath.Join(csvDir, e.CSVName())
 	manifestPath = filepath.Join(manifestDir, e.ManifestName())

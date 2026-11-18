@@ -304,6 +304,19 @@ func TestWrite(t *testing.T) {
 	if _, _, err := (&export.Export{}).Write(csvDir, manDir); err == nil {
 		t.Fatal("an export with no hash was written")
 	}
+	// Bytes that do not hash to their recorded digests are refused, not
+	// written under names that lie (PR #22, buggrit).
+	for name, corrupt := range map[string]func(*export.Export){
+		"csv":      func(e *export.Export) { e.CSV = append([]byte(nil), "changed"...) },
+		"manifest": func(e *export.Export) { e.Manifest = append([]byte(nil), "changed"...) },
+	} {
+		bad := *exp
+		bad.At = t0.Add(5 * time.Hour)
+		corrupt(&bad)
+		if _, _, err := bad.Write(csvDir, manDir); err == nil || !strings.Contains(err.Error(), "do not match") {
+			t.Fatalf("corrupt %s: %v", name, err)
+		}
+	}
 	for _, d := range []string{csvDir, manDir} {
 		if left, _ := filepath.Glob(filepath.Join(d, ".export-*")); len(left) != 0 {
 			t.Fatalf("temporary files left: %v", left)
