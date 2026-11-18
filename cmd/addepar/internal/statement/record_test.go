@@ -54,6 +54,19 @@ func TestDecodeRejects(t *testing.T) {
 		},
 		"empty dash reason": func(s string) string { return strings.Replace(s, `"precision"`, `"dash_zero": "", "precision"`, 1) },
 		"no column reason":  func(s string) string { return strings.Replace(s, `"reason": "period to date"`, `"reason": ""`, 1) },
+		// Issue #21: encoding/json keeps the last of a repeated key and
+		// matches keys case-insensitively, so the record could be read
+		// two ways.
+		"repeated top-level key": func(s string) string {
+			return strings.Replace(s, `"precision": "cents",`, `"precision": "cents", "precision": "whole",`, 1)
+		},
+		"repeated nested key": func(s string) string {
+			return strings.Replace(s, `"amount": "729211.40"`, `"amount": "729211.40", "amount": "1.00"`, 1)
+		},
+		"case-mismatched key":  func(s string) string { return strings.Replace(s, `"ending"`, `"Ending"`, 1) },
+		"case-mismatched line": func(s string) string { return strings.Replace(s, `"kind": "movement"`, `"KIND": "movement"`, 1) },
+		"invalid UTF-8":        func(s string) string { return strings.Replace(s, `Opening`, "Open\xffing", 1) },
+		"oversized":            func(s string) string { return s + strings.Repeat(" ", statement.MaxRecordBytes) },
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {

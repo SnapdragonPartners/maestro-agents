@@ -8,7 +8,6 @@
 package statement
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/decimal"
+	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
 )
 
 // Precision is how a statement prints its amounts.
@@ -136,26 +136,40 @@ type Record struct {
 // field, an unknown enumeration value, a page below 1.
 var ErrInvalid = errors.New("statement: invalid record")
 
-// Decode reads one record from JSON, refusing unknown fields and trailing
-// data.
+// MaxRecordBytes bounds one record's JSON.
+const MaxRecordBytes = 1 << 20
+
+// Decode reads one record from JSON, at most MaxRecordBytes, strictly
+// (ADR 0021, item 13): it refuses unknown fields, a key repeated in any
+// object, a key that matches a field only case-insensitively, invalid
+// UTF-8 and trailing data. Every reader of an extraction record, the
+// model's submission, a person's correction and verify -record, uses it,
+// so a record is never read two ways.
 func Decode(r io.Reader) (*Record, error) {
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-	var rec Record
-	if err := dec.Decode(&rec); err != nil {
+	b, err := io.ReadAll(io.LimitReader(r, MaxRecordBytes+1))
+	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
-	if dec.More() {
-		return nil, fmt.Errorf("%w: trailing data after the record", ErrInvalid)
+	if len(b) > MaxRecordBytes {
+		return nil, fmt.Errorf("%w: larger than %d bytes", ErrInvalid, MaxRecordBytes)
+	}
+	return DecodeBytes(b)
+}
+
+// DecodeBytes is Decode over a byte slice.
+func DecodeBytes(b []byte) (*Record, error) {
+	if len(b) > MaxRecordBytes {
+		return nil, fmt.Errorf("%w: larger than %d bytes", ErrInvalid, MaxRecordBytes)
+	}
+	var rec Record
+	if err := strictjson.Decode(b, &rec); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if err := rec.Validate(); err != nil {
 		return nil, err
 	}
 	return &rec, nil
 }
-
-// DecodeBytes is Decode over a byte slice.
-func DecodeBytes(b []byte) (*Record, error) { return Decode(bytes.NewReader(b)) }
 
 // Validate checks the record's shape: every required field present, pages
 // positive, enumerations known. It checks nothing against the document.

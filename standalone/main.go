@@ -84,6 +84,11 @@ type Program struct {
 	// Redactor edits each telemetry event before it leaves (HOST-2); nil
 	// clears each event's Detail.
 	Redactor agent.Redactor
+	// Submitted lists agent types, besides the configured one, that the
+	// host runs on a trigger submitted in process (Host.Submit, ADR 0021
+	// item 1). Each must be registered and declare SubmittedKind; it runs
+	// with no configuration and its manifest's default budgets.
+	Submitted []string
 	// getenv reads the environment; nil is os.Getenv. Tests set it.
 	getenv func(string) string
 	// goos overrides runtime.GOOS in tests.
@@ -286,6 +291,10 @@ func setup(_ context.Context, p *Program, cfg *Config, stderr io.Writer) (h *hos
 		cfg: cfg, st: st, ctrl: agent.NewController(st, p.Registry, controllerOptions(p, logger, creds, sink)...), client: client,
 		logger: logger, owner: newOwnerID(), maxInput: cmp.Or(cfg.MaxInputBytes, DefaultMaxInputBytes),
 		heartbeat: cmp.Or(p.heartbeat, heartbeatInterval), now: time.Now,
+		submitted: map[string]bool{},
+	}
+	for _, t := range p.Submitted {
+		h.submitted[t] = true
 	}
 	return h, cleanup, nil
 }
@@ -464,7 +473,11 @@ func (h *host) runInput(ctx context.Context, path string) (Report, error) {
 		return Report{}, &inputError{err}
 	}
 	dctx := context.WithoutCancel(ctx)
-	run, err := h.makeRun(dctx, in, agent.TriggerOneShot)
+	if err := h.locks.lock(ctx, in.instance); err != nil {
+		return Report{}, fmt.Errorf("waiting for instance %s: %w", in.instance, err)
+	}
+	defer h.locks.unlock(in.instance)
+	run, err := h.makeFileRun(dctx, in, agent.TriggerOneShot)
 	if err != nil {
 		return Report{}, err
 	}
@@ -474,16 +487,7 @@ func (h *host) runInput(ctx context.Context, path string) (Report, error) {
 		if ctx.Err() != nil {
 			break // shut down before the run started: it stays runnable
 		}
-		r := h.activate(ctx, &run)
-		rep.Activated = true
-		rep.Status, rep.Reason = r.Status, r.Reason
-		if r.Err != nil {
-			rep.Error = r.Err.Error()
-		} else {
-			rep.Detail, rep.Steps = r.Outcome.Detail, r.Outcome.Steps
-			c := r.Outcome.Consumed
-			rep.Consumed = &c
-		}
+		h.fill(&rep, h.activate(ctx, &run))
 	case store.StatusWaiting:
 		rep.Error = "the run is waiting for input, which this host cannot deliver"
 	default:

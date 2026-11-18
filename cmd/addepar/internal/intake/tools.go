@@ -1,7 +1,6 @@
 package intake
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/export"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
+	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
@@ -322,10 +322,8 @@ func decodeSubmission(raw json.RawMessage) ([]submitted, string) {
 	var args struct {
 		Records []json.RawMessage `json:"records"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&args); err != nil {
-		return nil, "the arguments are not {\"records\": [...]}: " + err.Error()
+	if msg := decodeArgs(raw, &args); msg != "" {
+		return nil, msg
 	}
 	if len(args.Records) == 0 {
 		return nil, "no records: submit one record per investor and fund"
@@ -461,12 +459,11 @@ func (a *intake) finish(ctx context.Context, c *agent.Call[Data], out *Outcome, 
 	return agent.Result[Data]{Content: msg, To: to, Data: d, Ops: []store.Op{op}}, nil
 }
 
-// decodeArgs decodes a tool's arguments strictly, returning a message for
+// decodeArgs decodes a tool's arguments strictly (ADR 0021, item 13: no
+// repeated or case-mismatched keys, no unknown fields), returning a message for
 // the model when they do not fit.
 func decodeArgs(raw json.RawMessage, v any) string {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
+	if err := strictjson.Decode(raw, v); err != nil {
 		return "the arguments do not match the tool's schema: " + err.Error()
 	}
 	return ""

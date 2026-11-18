@@ -1,7 +1,8 @@
 // Package strictjson decodes JSON more strictly than encoding/json, for
 // files an operator writes: the standalone host's configuration and
 // secrets (ADR 0017, item 5) and the intake agent's scoring mapping
-// (ADR 0020, item 7).
+// (ADR 0020, item 7); and for the intake agent's extraction records,
+// from a model or a person (ADR 0021, item 13).
 package strictjson
 
 import (
@@ -113,24 +114,68 @@ func walkObject(dec *json.Decoder, t reflect.Type, at string) error {
 }
 
 // fieldByJSONName returns the type of t's field whose JSON name is exactly
-// name.
+// name, following encoding/json's rules for embedded structs: an untagged
+// embedded struct's fields are promoted (by JSON name, not Go name), the
+// shallowest wins, a tagged one beats an untagged one at the same depth,
+// and names still tied are no field at all.
 func fieldByJSONName(t reflect.Type, name string) (reflect.Type, bool) {
-	for i := range t.NumField() {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
+	type cand struct {
+		t      reflect.Type
+		tagged bool
+	}
+	level := []reflect.Type{t}
+	seen := map[reflect.Type]bool{}
+	for len(level) > 0 {
+		var found []cand
+		var next []reflect.Type
+		for _, st := range level {
+			if seen[st] {
+				continue
+			}
+			seen[st] = true
+			for i := range st.NumField() {
+				f := st.Field(i)
+				tag := f.Tag.Get("json")
+				n, _, _ := strings.Cut(tag, ",")
+				if n == "-" {
+					continue
+				}
+				ft := f.Type
+				if ft.Kind() == reflect.Pointer {
+					ft = ft.Elem()
+				}
+				if f.Anonymous && n == "" && ft.Kind() == reflect.Struct {
+					next = append(next, ft) // promoted, even if unexported
+					continue
+				}
+				if !f.IsExported() && (!f.Anonymous || ft.Kind() != reflect.Struct) {
+					continue // encoding/json keeps a tagged, unexported embedded struct
+				}
+				tagged := n != ""
+				if !tagged {
+					n = f.Name
+				}
+				if n == name {
+					found = append(found, cand{f.Type, tagged})
+				}
+			}
 		}
-		tag := f.Tag.Get("json")
-		n, _, _ := strings.Cut(tag, ",")
-		if n == "-" {
-			continue
+		if len(found) > 0 {
+			var winners []cand
+			for _, c := range found {
+				if c.tagged {
+					winners = append(winners, c)
+				}
+			}
+			if len(winners) == 0 {
+				winners = found
+			}
+			if len(winners) != 1 {
+				return nil, false
+			}
+			return winners[0].t, true
 		}
-		if n == "" {
-			n = f.Name
-		}
-		if n == name {
-			return f.Type, true
-		}
+		level = next
 	}
 	return nil, false
 }
