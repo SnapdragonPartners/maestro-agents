@@ -1,6 +1,6 @@
 # 0021. Review writes, approval and export
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-17
 
 ## Context
@@ -88,34 +88,42 @@ it has no way to start a run that has no file.
    `cmd/addepar/internal/review`), registered beside the intake agent
    and listed in `Program.Submitted`. It has code states only: `apply`
    decodes the action from the trigger payload, strictly, reads what it
-   needs, and transitions to `applied` with the action's object
-   operations, or to `refused` with no operations and the refusal's code
-   and reason as the outcome's detail, which `Report.Detail` carries
-   (code first, then a sentence, never statement content). A refusal is
-   a completed run, not a failure: it is the person's mistake or a stale
-   view, not the system's. A review of a record runs on its document's
+   needs, and transitions to `applied` (reason `changed`) with the
+   action's object operations, or to `refused` (reason `no_change`)
+   putting only `refusals/<run>`: who tried what, the refusal's code and a
+   sentence for the person, which the caller reads (a terminal state
+   cannot set the outcome's detail, and the refusal is worth keeping for
+   an auditor). An action that does not decode strictly is refused as
+   `malformed`, its refusal recording who and what as far as a lenient
+   reading shows. A refusal is a completed run, not a failure: it is the
+   person's mistake or a stale view, not the system's. A review of a record runs on its document's
    instance (`sha256-<hex>`), so it is serialized with the intake run and
    every other review of that document.
 6. **The review log is append-only, numbered, and claims its number.**
-   Each action on a record is one object, `reviews/<sha>/<NN>/<MM>` for
-   record `<sha>/<NN>`, `<MM>` counted from 01, put at expected version
+   Each action on a record is one object, `reviews/<sha>/<NN>/<MMM>` for
+   record `<sha>/<NN>`, `<MMM>` counted from 001, put at expected version
    zero. The action carries `seen`, the number of entries the person was
    shown; `apply` refuses with `stale` when the log has another length,
    and a concurrent action that slips past the read loses at the commit
    (`object_conflict`, ADR 0006). Either way nothing is overwritten, and
    the person reloads. Every entry records the action, who (`by`, never
-   empty), when (`at`, the submitting process's clock), why (`reason`,
-   never empty, except for an approval), and the record's verification
-   result after the action.
+   empty), when (`at`, the submitting process's clock, refused as `clock`
+   when it is before the log's last entry, since the approval's voiding is
+   decided by time), why (`reason`, never empty, except for an approval),
+   what changed (`change`: a correction's or manual entry's fields, old
+   and new, or the entities), and the record's verification result after
+   the action.
 7. **The actions** (R-2 to R-4):
    - `correct`: the whole corrected extraction record, strictly decoded
      (item 13), verified again against the
      stored layout text under the document's recorded override; the entry
      holds the record and its result. A correction may fail checks: it is
-     stored, and the record stays unapprovable until it passes.
+     stored, and the record stays unapprovable until it passes. A
+     correction of a manual record is verified as a manual record (item
+     10); one that changes nothing is refused.
    - `manual`: a record a person read off the page, for a record or for
      a document with none (sent to manual review, set aside, or with no
-     text layer), with a note. It has the extraction record's shape and
+     text layer), its reason the note. It has the extraction record's shape and
      its required fields (investor and fund as printed, period, currency,
      column, the ending balance with its page and label); the
      roll-forward lines are optional, and without a beginning balance the
@@ -128,15 +136,16 @@ it has no way to start a run that has no file.
      layer to ground against) is a warning too, saying so. A malformed
      record (a missing field, an amount that is not a decimal) is still
      refused. On a document with no record, the action also puts a new
-     record, `records/<sha>/<NN>` at the next number, whose source is
-     `manual`.
+     record, `records/<sha>/<NN>` at the next number (`seen` is then the
+     number of records the person was shown), whose origin is `manual`.
    - `accept_warning`: one warning of the current result, by its finding
-     ID (ADR 0015, item 7).
+     ID (ADR 0015, item 7), refused if there is no such warning or it is
+     already accepted.
    - `set_entities`: the Addepar owner and asset, each an ID, an exact
-     name or both, or cleared (R-3).
+     name or both, without surrounding spaces, or cleared (R-3).
    - `approve`: refused with `not_approvable` unless the record passes
-     the exporter's gate as it stands (item 9's gate, one function), so
-     every approval is exportable. The entry holds the **snapshot**: the
+     the exporter's gate as it stands (`export.Gate`, the one gate), so
+     every approval is exportable, and with `already_approved` when it is. The entry holds the **snapshot**: the
      complete record as approved, in the exporter's shape (`export.Record`:
      extraction, result, source, owner, asset, every review action), and
      its SHA-256.
@@ -145,7 +154,9 @@ it has no way to start a run that has no file.
    or `manual` gives the extraction and result, the latest `set_entities`
    the owner and asset, and every `accept_warning` since the latest
    extraction-changing entry the accepted warnings (a correction resets
-   them: its warnings are new findings). The record is **approved** only
+   them: its warnings are new findings, even when an ID repeats). That
+   ordering is the exporter's gate's own rule, so a snapshot that carries
+   every review action cannot pass on an acceptance a correction voided. The record is **approved** only
    when its last entry is an approval (R-4: any later entry voids it), and
    **exported** when an export (item 9) holds that approval. The UI shows
    this state; nothing stores it.
@@ -165,12 +176,14 @@ it has no way to start a run that has no file.
    store is the authority: the files are written after the commit, and
    can be written again from it, byte for byte.
 10. **A manual record's failed checks are warnings.** For a record whose
-    source is `manual`, the verifier's errors are reported as warnings,
-    each with its finding ID and the check's original severity, so the
-    exporter's gate (ADR 0015, item 9) passes it only once a named person
-    has accepted every one; nothing else in the gate changes. The
-    manifest marks the row `source: manual` with the note, and each
-    downgraded finding as such, with its acceptance. An extracted record,
+    origin is `manual` (`export.Record.Origin`), the verifier's errors are
+    reported as warnings marked `downgraded` (`verify.Result.AsWarnings`),
+    each keeping its finding ID, so the exporter's gate (ADR 0015, item 9)
+    passes it only once a named person has accepted every one. The gate
+    refuses a downgraded finding on a record whose origin is not
+    `manual`, and an unknown origin. The manifest (version 2) marks each
+    row's `origin`, and each downgraded finding as such, with its
+    acceptance, whose reason and the manual entry's are the notes. An extracted record,
     corrected or not, keeps its errors: its text was there to match, and
     a person who cannot make a correction pass enters a manual record,
     which says so in the manifest. The approval in the
@@ -179,9 +192,11 @@ it has no way to start a run that has no file.
 11. **Files: the CSV in sight, the manifest hidden.** The CSV goes to the
     operator's exports folder as `addepar-<export date>-<first 8 of the
     CSV's SHA-256>.csv`; the manifest goes to a hidden folder as
-    `<CSV SHA-256>.json`, so an auditor holding only the CSV finds its
-    evidence by hashing it. Neither replaces an existing file (ADR 0015,
-    item 9). `addepar export -config FILE -by NAME -out DIR -manifests DIR
+    `<CSV SHA-256>-<export time, UTC>.json`, so an auditor holding only the
+    CSV finds its evidence by hashing it, and a re-export of the same CSV
+    bytes gets its own manifest. Neither replaces an existing file (ADR
+    0015, item 9), except that an existing CSV holding exactly the export's
+    bytes is kept. `addepar export -config FILE -by NAME -out DIR -manifests DIR
     (-record ID ... | -approved)`: `-approved` takes every approved record
     not yet exported; naming an exported record exports it again,
     deliberately (the same snapshots give the same CSV bytes, N-3). It
@@ -198,26 +213,41 @@ it has no way to start a run that has no file.
 13. **Extraction records decode strictly everywhere** (issue #21): a
     repeated key, or a key that matches a field only case-insensitively,
     is refused, as `internal/strictjson` refuses them in operators' files
-    (ADR 0017, item 5), and so are unknown fields and trailing data, as
-    before. One decoder, `statement.Decode`, serves `verify -record`,
-    `submit_extraction` and the `correct` and `manual` actions, since a
-    person's correction and a model's submission must not be read two
-    ways.
+    (ADR 0017, item 5), and so are invalid UTF-8, unknown fields, trailing
+    data and a record over 1 MiB. One decoder, `statement.Decode`, serves
+    `verify -record`, `submit_extraction` and the `correct` and `manual`
+    actions, since a person's correction and a model's submission must
+    not be read two ways; every intake tool's arguments and every review
+    action decode through `strictjson` too. `strictjson` follows
+    `encoding/json`'s embedded-struct rules (an untagged embedded struct's
+    fields are promoted by JSON name), which the record's lines need.
+14. **The in-process host opens any configuration.** `standalone.Open`
+    no longer refuses a trigger other than `one_shot`: `RunInput` does
+    (`ErrNotOneShot`), and `Host.TriggerKind` tells a caller which it has
+    (`addepar score` still refuses a folder configuration as a usage
+    error). `addepar export` opens the operator's configuration, a folder
+    watch's included, to submit its run; while `addepar run` watches,
+    the file store's lock keeps it out, which `addepar serve` (the UI's
+    ADR) resolves by being one process.
 
 ### Amendments
 
 - **ADR 0015, item 9:** the manifest is written to the hidden manifests
   folder, named by the CSV's SHA-256, not beside the CSV (the human
-  operator, 2026-11-17, after reviewing a sample); a manual record's
-  failed checks are warnings (item 10, the human operator's choice the
-  same day); the approval exported is a snapshot (item 7).
+  operator, 2026-11-17, after reviewing a sample), and is version 2
+  (origin and snapshot hash per row); a manual record's failed checks are
+  warnings (item 10, the human operator's choice the same day); an
+  acceptance counts only after the latest correction or manual entry
+  (item 8); the approval exported is a snapshot (item 7).
   The intake requirements' X-2 is reworded to match.
 - **ADR 0017, items 9 and 14:** a store serves the configured agent type
   and the program's submitted types (item 4); **item 11:** a submitted
   run's ID is not its instance's (item 2).
-- **ADR 0018, item 5:** the review type writes `reviews/`, `exports/`
+- **ADR 0018, item 5:** the review type writes `reviews/`, `refusals/`, `exports/`
   and, for a manual entry on a document with none, `records/`; every
   object is still written once.
+- **ADR 0020, item 2:** `standalone.Open` accepts any trigger, and
+  `RunInput` refuses one other than `one_shot` (item 14).
 
 ## Consequences
 

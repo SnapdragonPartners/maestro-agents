@@ -1,6 +1,6 @@
 # 0020. The scoring harness
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0021
 - **Date:** 2026-11-16
 
 ## Context

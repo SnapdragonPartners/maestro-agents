@@ -78,7 +78,7 @@ func (h *host) submit(ctx context.Context, s Submission) (Report, error) {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	id := hex.EncodeToString(b[:])
-	run, err := h.makeRun(dctx, store.Trigger{
+	run, err := h.makeRun(dctx, &store.Trigger{
 		Instance: s.Instance, ID: submittedTriggerPrefix + id, Kind: SubmittedKind, Payload: s.Payload,
 	}, s.Instance+"."+id, s.AgentType)
 	switch {
@@ -149,8 +149,8 @@ func checkInstanceID(s string) error {
 // without waiting, Submit and RunInput wait for it. The zero value is
 // ready to use.
 type instanceLocks struct {
-	mu   sync.Mutex
 	held map[string]chan struct{}
+	mu   sync.Mutex
 }
 
 // take marks the instance held; l.mu is held by the caller.

@@ -119,65 +119,74 @@ func walkObject(dec *json.Decoder, t reflect.Type, at string) error {
 // shallowest wins, a tagged one beats an untagged one at the same depth,
 // and names still tied are no field at all.
 func fieldByJSONName(t reflect.Type, name string) (reflect.Type, bool) {
-	type cand struct {
-		t      reflect.Type
-		tagged bool
-	}
 	level := []reflect.Type{t}
 	seen := map[reflect.Type]bool{}
 	for len(level) > 0 {
-		var found []cand
-		var next []reflect.Type
-		for _, st := range level {
-			if seen[st] {
-				continue
-			}
-			seen[st] = true
-			for i := range st.NumField() {
-				f := st.Field(i)
-				tag := f.Tag.Get("json")
-				n, _, _ := strings.Cut(tag, ",")
-				if n == "-" {
-					continue
-				}
-				ft := f.Type
-				if ft.Kind() == reflect.Pointer {
-					ft = ft.Elem()
-				}
-				if f.Anonymous && n == "" && ft.Kind() == reflect.Struct {
-					next = append(next, ft) // promoted, even if unexported
-					continue
-				}
-				if !f.IsExported() && (!f.Anonymous || ft.Kind() != reflect.Struct) {
-					continue // encoding/json keeps a tagged, unexported embedded struct
-				}
-				tagged := n != ""
-				if !tagged {
-					n = f.Name
-				}
-				if n == name {
-					found = append(found, cand{f.Type, tagged})
-				}
-			}
-		}
+		found, next := fieldsNamed(level, name, seen)
 		if len(found) > 0 {
-			var winners []cand
-			for _, c := range found {
-				if c.tagged {
-					winners = append(winners, c)
-				}
-			}
-			if len(winners) == 0 {
-				winners = found
-			}
-			if len(winners) != 1 {
-				return nil, false
-			}
-			return winners[0].t, true
+			return dominant(found)
 		}
 		level = next
 	}
 	return nil, false
+}
+
+// candidate is a field whose JSON name matched, and whether it is tagged.
+type candidate struct {
+	t      reflect.Type
+	tagged bool
+}
+
+// fieldsNamed returns the fields of one depth's structs whose JSON name is
+// name, and the untagged embedded structs whose fields are the next depth.
+func fieldsNamed(level []reflect.Type, name string, seen map[reflect.Type]bool) (found []candidate, next []reflect.Type) {
+	for _, st := range level {
+		if seen[st] {
+			continue
+		}
+		seen[st] = true
+		for i := range st.NumField() {
+			f := st.Field(i)
+			n, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if n == "-" {
+				continue
+			}
+			ft := f.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			embedded := f.Anonymous && ft.Kind() == reflect.Struct
+			switch {
+			case embedded && n == "":
+				next = append(next, ft) // promoted, even if unexported
+			case !f.IsExported() && !embedded:
+				// encoding/json keeps a tagged, unexported embedded struct
+			case n == name:
+				found = append(found, candidate{f.Type, true})
+			case n == "" && f.Name == name:
+				found = append(found, candidate{f.Type, false})
+			}
+		}
+	}
+	return found, next
+}
+
+// dominant picks encoding/json's field among one depth's matches: the one
+// tagged field, else the one untagged field; a tie is no field.
+func dominant(found []candidate) (reflect.Type, bool) {
+	var tagged []candidate
+	for _, c := range found {
+		if c.tagged {
+			tagged = append(tagged, c)
+		}
+	}
+	if len(tagged) == 0 {
+		tagged = found
+	}
+	if len(tagged) != 1 {
+		return nil, false
+	}
+	return tagged[0].t, true
 }
 
 func escapePointer(s string) string {

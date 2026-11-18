@@ -17,12 +17,14 @@ package export
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -55,8 +57,9 @@ const OwnershipType = "Value Based"
 // intake requirements); one constant to change.
 const TradeDateLayout = time.DateOnly
 
-// ManifestVersion is the manifest's schema version.
-const ManifestVersion = 1
+// ManifestVersion is the manifest's schema version: 2 adds each row's
+// origin and snapshot hash (ADR 0021).
+const ManifestVersion = 2
 
 // Entity is an Addepar owner or asset as a person entered it (R-3): its
 // entity ID, its exact Addepar name, or both.
@@ -68,11 +71,30 @@ type Entity struct {
 // ReviewKind is the kind of a review action.
 type ReviewKind string
 
-// The review kinds the exporter reads. The review UI records others
-// (corrections, manual entry); every one counts for the approval's date.
+// The review kinds (ADR 0021, item 7). Every one counts for the
+// approval's date (R-4); an approval is not a review action but the
+// record's Approval.
 const (
 	// AcceptWarning accepts one warning, named by its Finding ID.
 	AcceptWarning ReviewKind = "accept_warning"
+	// Correct replaces the extraction record with a person's correction,
+	// verified again. Acceptances before it no longer count.
+	Correct ReviewKind = "correct"
+	// Manual replaces it with a record a person entered (Origin manual).
+	// Acceptances before it no longer count.
+	Manual ReviewKind = "manual"
+	// SetEntities sets or clears the Addepar owner and asset (R-3).
+	SetEntities ReviewKind = "set_entities"
+)
+
+// The origins of a record's extraction (ADR 0021, items 7 and 10).
+const (
+	// OriginExtracted: the extractor's record, as submitted or corrected.
+	// Empty means extracted.
+	OriginExtracted = "extracted"
+	// OriginManual: a record a person entered; its failed checks are
+	// downgraded to warnings.
+	OriginManual = "manual"
 )
 
 // ReviewAction is one human action on a record: who, when, what and why.
@@ -113,7 +135,10 @@ type Record struct {
 	Approval *Approval         `json:"approval,omitempty"`
 	Record   *statement.Record `json:"record"`
 	// ID is the store's identifier for the record.
-	ID      string         `json:"id"`
+	ID string `json:"id"`
+	// Origin is OriginManual for a record a person entered; empty or
+	// OriginExtracted otherwise.
+	Origin  string         `json:"origin,omitempty"`
 	Source  Source         `json:"source"`
 	Result  verify.Result  `json:"result"`
 	Reviews []ReviewAction `json:"reviews,omitempty"`
@@ -121,10 +146,12 @@ type Record struct {
 
 // Export is a written CSV and its manifest.
 type Export struct {
-	CSVSHA256      string
-	ManifestSHA256 string
-	CSV            []byte
-	Manifest       []byte
+	// At is when it was exported, as the manifest records it.
+	At             time.Time `json:"at"`
+	CSVSHA256      string    `json:"csv_sha256"`
+	ManifestSHA256 string    `json:"manifest_sha256"`
+	CSV            []byte    `json:"csv"`
+	Manifest       []byte    `json:"manifest"`
 }
 
 // ErrRefused reports records the exporter will not export; the message
@@ -173,8 +200,12 @@ func Build(recs []Record, at time.Time) (*Export, error) {
 		return nil, err
 	}
 	msum := sha256.Sum256(man)
-	return &Export{CSV: csvBytes, CSVSHA256: csvHash, Manifest: man, ManifestSHA256: hex.EncodeToString(msum[:])}, nil
+	return &Export{At: at.UTC(), CSV: csvBytes, CSVSHA256: csvHash, Manifest: man, ManifestSHA256: hex.EncodeToString(msum[:])}, nil
 }
+
+// Gate returns every reason the exporter would refuse r, or nothing: the
+// one gate, which an approval also passes (ADR 0021, item 7).
+func Gate(r *Record) []string { return gate(r) }
 
 // gate returns why a record cannot be exported, or nothing.
 func gate(r *Record) []string {
@@ -187,6 +218,11 @@ func gate(r *Record) []string {
 	}
 	if err := r.Record.Validate(); err != nil {
 		return append(out, err.Error())
+	}
+	switch r.Origin {
+	case "", OriginExtracted, OriginManual:
+	default:
+		out = append(out, fmt.Sprintf("has unknown origin %q", r.Origin))
 	}
 	out = append(out, gateReviews(r)...)
 	out = append(out, gateVerified(r)...)
@@ -213,13 +249,25 @@ func gateVerified(r *Record) []string {
 	for _, f := range errs {
 		out = append(out, fmt.Sprintf("verification error %s", f.ID()))
 	}
+	// An acceptance counts only after the latest correction or manual
+	// entry: those rerun verification, and their warnings are new findings
+	// even when an ID repeats (ADR 0021, item 8).
 	accepted := map[string]bool{}
 	for _, a := range r.Reviews {
-		if a.Kind == AcceptWarning && reviewFault(a) == "" {
+		switch {
+		case a.Kind == Correct || a.Kind == Manual:
+			clear(accepted)
+		case a.Kind == AcceptWarning && reviewFault(a) == "":
 			accepted[a.Finding] = true
 		}
 	}
 	for _, f := range r.Result.Findings(verify.Warning) {
+		if f.Downgraded && r.Origin != OriginManual {
+			// Only a person's record has its errors downgraded (ADR 0021,
+			// item 10); on any other it is an error.
+			out = append(out, fmt.Sprintf("verification error %s is downgraded on a record a person did not enter", f.ID()))
+			continue
+		}
 		if !accepted[f.ID()] {
 			out = append(out, fmt.Sprintf("warning %s not accepted", f.ID()))
 		}
@@ -362,7 +410,8 @@ func writeCSV(recs []*Record) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// Manifest is the evidence manifest written beside a CSV.
+// Manifest is the evidence manifest of a CSV, written to the hidden
+// manifests folder under the CSV's SHA-256 (ADR 0021, item 11).
 type Manifest struct {
 	ExportedAt time.Time     `json:"exported_at"`
 	CSVSHA256  string        `json:"csv_sha256"`
@@ -380,16 +429,22 @@ type ManifestRow struct {
 	Evidence *statement.Record `json:"evidence"`
 	RecordID string            `json:"record_id"`
 	// ExtractionSHA256 is the SHA-256 of Evidence's canonical JSON.
-	ExtractionSHA256 string               `json:"extraction_sha256"`
-	TradeDate        string               `json:"trade_date"`
-	Value            string               `json:"value"`
-	Currency         string               `json:"currency"`
-	Source           Source               `json:"source"`
-	Checks           []verify.CheckResult `json:"checks"`
-	Reviews          []ReviewAction       `json:"reviews"`
-	Row              int                  `json:"row"`
-	Page             int                  `json:"page"`
-	NamesOnly        bool                 `json:"names_only"`
+	ExtractionSHA256 string `json:"extraction_sha256"`
+	// SnapshotSHA256 is the SHA-256 of the record exported, as JSON: the
+	// approval's snapshot, whose hash the review log records (ADR 0021,
+	// item 7).
+	SnapshotSHA256 string `json:"snapshot_sha256"`
+	// Origin is extracted or manual (ADR 0021, item 10).
+	Origin    string               `json:"origin"`
+	TradeDate string               `json:"trade_date"`
+	Value     string               `json:"value"`
+	Currency  string               `json:"currency"`
+	Source    Source               `json:"source"`
+	Checks    []verify.CheckResult `json:"checks"`
+	Reviews   []ReviewAction       `json:"reviews"`
+	Row       int                  `json:"row"`
+	Page      int                  `json:"page"`
+	NamesOnly bool                 `json:"names_only"`
 }
 
 func writeManifest(recs []*Record, csvHash string, at time.Time) ([]byte, error) {
@@ -400,6 +455,10 @@ func writeManifest(recs []*Record, csvHash string, at time.Time) ([]byte, error)
 			return nil, fmt.Errorf("export: manifest: %w", err)
 		}
 		sum := sha256.Sum256(ext)
+		snap, err := SnapshotSHA256(r)
+		if err != nil {
+			return nil, err
+		}
 		c := rowOf(r)
 		reviews := r.Reviews
 		if reviews == nil {
@@ -418,6 +477,8 @@ func writeManifest(recs []*Record, csvHash string, at time.Time) ([]byte, error)
 			Page:             r.Record.Ending.Page,
 			Evidence:         r.Record,
 			ExtractionSHA256: hex.EncodeToString(sum[:]),
+			SnapshotSHA256:   snap,
+			Origin:           cmp.Or(r.Origin, OriginExtracted),
 			Checks:           r.Result.Checks,
 			Reviews:          reviews,
 			Approval:         r.Approval,
@@ -430,29 +491,82 @@ func writeManifest(recs []*Record, csvHash string, at time.Time) ([]byte, error)
 	return append(b, '\n'), nil
 }
 
-// Write writes the CSV as <name>.csv and the manifest as
-// <name>.manifest.json in dir, each written to a temporary file and then
-// linked into place, and refuses to replace an existing export.
-func (e *Export) Write(dir, name string) (csvPath, manifestPath string, err error) {
-	if name == "" || strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
-		return "", "", fmt.Errorf("export: bad export name %q", name)
+// SnapshotSHA256 is the SHA-256 of r's JSON: an approval's snapshot hash
+// (ADR 0021, item 7), which the manifest repeats.
+func SnapshotSHA256(r *Record) (string, error) {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return "", fmt.Errorf("export: snapshot: %w", err)
 	}
-	csvPath = filepath.Join(dir, name+".csv")
-	manifestPath = filepath.Join(dir, name+".manifest.json")
-	for _, p := range []string{csvPath, manifestPath} {
-		if _, err := os.Lstat(p); err == nil {
-			return "", "", fmt.Errorf("export: %s already exists", p)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// CSVName is the CSV's file name: addepar-<export date>-<first 8 of its
+// SHA-256>.csv (ADR 0021, item 11).
+func (e *Export) CSVName() string {
+	return fmt.Sprintf("addepar-%s-%s.csv", e.At.UTC().Format(time.DateOnly), e.CSVSHA256[:8])
+}
+
+// ManifestName is the manifest's file name: <the CSV's SHA-256>-<export
+// time, UTC>.json, so a CSV leads to its evidence by its hash alone, and
+// a deliberate re-export of the same CSV bytes gets its own manifest (ADR
+// 0021, item 11).
+func (e *Export) ManifestName() string {
+	return e.CSVSHA256 + "-" + e.At.UTC().Format("20060102T150405Z") + ".json"
+}
+
+// Write writes the CSV to csvDir and the manifest to manifestDir, each to
+// a temporary file and then linked into place. It never replaces a file:
+// an existing manifest is an error, and so is an existing CSV, unless it
+// holds exactly these bytes (a re-export of the same records, N-3), which
+// is kept. The manifest goes first: a manifest without its CSV is
+// harmless, a CSV without its evidence is not.
+func (e *Export) Write(csvDir, manifestDir string) (csvPath, manifestPath string, err error) {
+	if len(e.CSVSHA256) != sha256.Size*2 {
+		return "", "", errors.New("export: the export has no CSV hash")
+	}
+	csvPath = filepath.Join(csvDir, e.CSVName())
+	manifestPath = filepath.Join(manifestDir, e.ManifestName())
+	if _, err = os.Lstat(manifestPath); err == nil {
+		return "", "", fmt.Errorf("export: %s already exists", manifestPath)
+	}
+	same, err := sameFile(csvPath, e.CSVSHA256)
+	if err != nil {
+		return "", "", err
+	}
+	if err := writeAtomic(manifestDir, manifestPath, e.Manifest); err != nil {
+		return "", "", err
+	}
+	if !same {
+		if err := writeAtomic(csvDir, csvPath, e.CSV); err != nil {
+			return "", "", err
 		}
 	}
-	// The manifest goes first: a manifest without its CSV is harmless, a CSV
-	// without its evidence is not.
-	if err := writeAtomic(dir, manifestPath, e.Manifest); err != nil {
-		return "", "", err
-	}
-	if err := writeAtomic(dir, csvPath, e.CSV); err != nil {
-		return "", "", err
-	}
 	return csvPath, manifestPath, nil
+}
+
+// sameFile reports whether path is a regular file whose SHA-256 is sum; a
+// missing file is false, and any other file there an error.
+func sameFile(path, sum string) (bool, error) {
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("export: %w", err)
+	case !fi.Mode().IsRegular():
+		return false, fmt.Errorf("export: %s already exists and is not a regular file", path)
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // G304: the operator's export folder
+	if err != nil {
+		return false, fmt.Errorf("export: %w", err)
+	}
+	got := sha256.Sum256(b)
+	if hex.EncodeToString(got[:]) != sum {
+		return false, fmt.Errorf("export: %s already exists with other content", path)
+	}
+	return true, nil
 }
 
 func writeAtomic(dir, path string, data []byte) error {

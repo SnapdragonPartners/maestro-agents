@@ -79,7 +79,7 @@ func noteProgram(t testing.TB, pr *probe, n *note) Program {
 	return p
 }
 
-func openNoteHost(t *testing.T, n *note) (*Host, string) {
+func openNoteHost(t *testing.T, n *note) *Host {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := oneShotConfig(dir)
@@ -89,7 +89,7 @@ func openNoteHost(t *testing.T, n *note) (*Host, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = h.Close() })
-	return h, dir
+	return h
 }
 
 func payload(text string) json.RawMessage {
@@ -103,7 +103,7 @@ func payload(text string) json.RawMessage {
 // (ADR 0021, items 1 and 2).
 func TestSubmitRunsASubmittedType(t *testing.T) {
 	n := &note{}
-	h, _ := openNoteHost(t, n)
+	h := openNoteHost(t, n)
 	ctx := context.Background()
 	var ids []string
 	for _, text := range []string{"one", "two"} {
@@ -142,7 +142,7 @@ func TestSubmitRunsASubmittedType(t *testing.T) {
 }
 
 func TestSubmitRefuses(t *testing.T) {
-	h, _ := openNoteHost(t, &note{})
+	h := openNoteHost(t, &note{})
 	ctx := context.Background()
 	for name, s := range map[string]Submission{
 		"configured type":    {AgentType: "probe", Instance: "i", Payload: payload("x")},
@@ -168,7 +168,7 @@ func TestSubmitRefuses(t *testing.T) {
 // TestSubmitBusy: an instance whose run another owner holds is ErrBusy,
 // and the refused submission leaves no trigger queued (ADR 0021, item 3).
 func TestSubmitBusy(t *testing.T) {
-	h, _ := openNoteHost(t, &note{})
+	h := openNoteHost(t, &note{})
 	ctx := context.Background()
 	st := h.h.st
 	if _, _, err := st.CreateRun(ctx, store.Run{ID: "held", Instance: "inst", AgentType: "note", TriggerID: "t", TriggerKind: SubmittedKind, Trigger: payload("x")}); err != nil {
@@ -198,7 +198,7 @@ func TestSubmitBusy(t *testing.T) {
 // (ADR 0021, item 3).
 func TestSubmitDrainsALeftoverRun(t *testing.T) {
 	n := &note{}
-	h, _ := openNoteHost(t, n)
+	h := openNoteHost(t, n)
 	ctx := context.Background()
 	if _, _, err := h.h.st.CreateRun(ctx, store.Run{ID: "left.1", Instance: "inst", AgentType: "note", TriggerID: "submitted:1", TriggerKind: SubmittedKind, Trigger: payload("left")}); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestSubmitDrainsALeftoverRun(t *testing.T) {
 // runnable, and the next submission on the instance finishes it first.
 func TestSubmitCancelled(t *testing.T) {
 	n := &note{}
-	h, _ := openNoteHost(t, n)
+	h := openNoteHost(t, n)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan Report)
 	go func() {
@@ -245,7 +245,7 @@ func TestSubmitCancelled(t *testing.T) {
 // run one at a time, each to its end; on different instances they overlap.
 func TestSubmitSerializesAnInstance(t *testing.T) {
 	n := &note{gate: make(chan struct{})}
-	h, _ := openNoteHost(t, n)
+	h := openNoteHost(t, n)
 	ctx := context.Background()
 	errs := make(chan error, 3)
 	for _, inst := range []string{"a", "a", "b"} {

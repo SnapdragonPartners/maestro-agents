@@ -2,9 +2,9 @@ package standalone
 
 import (
 	"context"
-	"encoding/json"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,21 +32,21 @@ var errAnotherConfiguration = errors.New("the store serves another configuration
 
 // host is one run command's state.
 type host struct {
-	st     store.Store
+	st store.Store
+	// locks serializes activations per instance in the process.
+	locks  instanceLocks
 	cfg    *Config
 	ctrl   *agent.Controller
 	client *agent.ModelClient
 	logger *slog.Logger
 	now    func() time.Time
-	owner  string
+	// submitted holds the program's submitted agent types (ADR 0021).
+	submitted map[string]bool
+	owner     string
 	// maxInput bounds an input file.
 	maxInput int64
 	// heartbeat is heartbeatInterval, shortened by tests.
 	heartbeat time.Duration
-	// submitted holds the program's submitted agent types (ADR 0021).
-	submitted map[string]bool
-	// locks serializes activations per instance in the process.
-	locks instanceLocks
 }
 
 func newOwnerID() string {
@@ -78,8 +78,8 @@ func (r *result) interrupted() bool { return !r.Status.Terminal() }
 // trigger, create the run, remove the trigger, each idempotent on the
 // trigger's identity. A file trigger's run ID is its instance's; a
 // submitted one's is its own (ADR 0021, item 2).
-func (h *host) makeRun(ctx context.Context, t store.Trigger, runID, agentType string) (store.Run, error) {
-	if _, err := h.st.EnqueueTrigger(ctx, t); err != nil {
+func (h *host) makeRun(ctx context.Context, t *store.Trigger, runID, agentType string) (store.Run, error) {
+	if _, err := h.st.EnqueueTrigger(ctx, *t); err != nil {
 		return store.Run{}, fmt.Errorf("enqueue trigger: %w", err)
 	}
 	run, created, err := h.st.CreateRun(ctx, store.Run{
@@ -109,7 +109,7 @@ func (h *host) makeRun(ctx context.Context, t store.Trigger, runID, agentType st
 // makeFileRun makes an input file's run, of the configured agent type.
 func (h *host) makeFileRun(ctx context.Context, in *input, kind string) (store.Run, error) {
 	t := store.Trigger{Instance: in.instance, ID: in.id, Kind: kind, Payload: in.payload}
-	return h.makeRun(ctx, t, in.instance, h.cfg.AgentType)
+	return h.makeRun(ctx, &t, in.instance, h.cfg.AgentType)
 }
 
 // activate claims a run's instance and activates the run (ADR 0017, items

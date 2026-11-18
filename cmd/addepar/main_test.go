@@ -25,7 +25,7 @@ import (
 )
 
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{nil, {"export"}, {"config"}, {"config", "check"}, {"verify"}, {"verify", "-pdf", "x"}, {"verify", "-bogus"}} {
+	for _, args := range [][]string{nil, {"export"}, {"bogus"}, {"config"}, {"config", "check"}, {"verify"}, {"verify", "-pdf", "x"}, {"verify", "-bogus"}} {
 		var out, errb bytes.Buffer
 		if code := run(context.Background(), program(nil), args, &out, &errb); code != exitUsage {
 			t.Errorf("%v: exit %d, want %d", args, code, exitUsage)
@@ -35,10 +35,10 @@ func TestUsage(t *testing.T) {
 		}
 	}
 	// With no command, or an unknown one, the usage lists every command.
-	for _, args := range [][]string{nil, {"export"}, {"config"}, {"config", "check"}} {
+	for _, args := range [][]string{nil, {"bogus"}, {"config"}, {"config", "check"}} {
 		var errb bytes.Buffer
 		run(context.Background(), program(nil), args, io.Discard, &errb)
-		for _, cmd := range []string{"addepar run ", "addepar config validate ", "addepar verify ", "addepar score "} {
+		for _, cmd := range []string{"addepar run ", "addepar config validate ", "addepar verify ", "addepar score ", "addepar export "} {
 			if !strings.Contains(errb.String(), cmd) {
 				t.Errorf("%v: usage %q does not list %q", args, errb.String(), cmd)
 			}

@@ -103,6 +103,10 @@ type Finding struct {
 	Message string `json:"message"`
 	Check   int    `json:"check"`
 	Page    int    `json:"page,omitempty"`
+	// Downgraded marks an error reported as a warning because a person,
+	// not the extractor, is the record's source (AsWarnings; ADR 0021,
+	// item 10).
+	Downgraded bool `json:"downgraded,omitempty"`
 }
 
 // ID identifies the finding for a warning's acceptance: the check, the code
@@ -140,6 +144,37 @@ func (r *Result) Findings(sev Severity) []Finding {
 			if f.Severity == sev { //nolint:gocritic // rangeValCopy: findings are few
 				out = append(out, f)
 			}
+		}
+	}
+	return out
+}
+
+// AsWarnings returns the result for a record a person entered (ADR 0021,
+// item 10): every error a warning marked Downgraded, every failed check
+// warn, and the verdict recomputed, so a named person can accept each one.
+// A skipped check stays skipped (it means the record was malformed). r is
+// not changed.
+func (r *Result) AsWarnings() Result {
+	out := Result{Checks: make([]CheckResult, len(r.Checks))}
+	for i, c := range r.Checks {
+		c.Findings = append([]Finding(nil), c.Findings...)
+		for j := range c.Findings {
+			if c.Findings[j].Severity == Error {
+				c.Findings[j].Severity, c.Findings[j].Downgraded = Warning, true
+			}
+		}
+		if c.Status == Fail {
+			c.Status = Warn
+		}
+		out.Checks[i] = c
+	}
+	out.Verdict = Pass
+	for _, c := range out.Checks {
+		switch {
+		case c.Status == Skipped:
+			out.Verdict = Fail
+		case c.Status == Warn && out.Verdict == Pass:
+			out.Verdict = Warn
 		}
 	}
 	return out

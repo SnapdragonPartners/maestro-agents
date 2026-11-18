@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/score"
 	"github.com/SnapdragonPartners/maestro-agents/scoring"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
@@ -53,6 +54,10 @@ func scoreCommand(ctx context.Context, p standalone.Program, args []string, stdo
 		return exitUsage
 	}
 	defer h.Close() //nolint:errcheck // Close logs its own failures
+	if k := h.TriggerKind(); k != agent.TriggerOneShot {
+		say(stderr, "score: %v (config %s has %q)\n", standalone.ErrNotOneShot, *cfgPath, k)
+		return exitUsage
+	}
 	rep := scoring.Run(ctx, h, in, cmp, nil)
 	write := rep.WriteText
 	if *asJSON {

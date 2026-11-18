@@ -501,3 +501,33 @@ func TestNameKey(t *testing.T) {
 		}
 	}
 }
+
+// TestAsWarnings: a person's record has every error reported as a
+// downgraded warning, failed checks warn, and the verdict follows; the
+// input is unchanged (ADR 0021, item 10).
+func TestAsWarnings(t *testing.T) {
+	r := verify.Result{Verdict: verify.Fail, Checks: []verify.CheckResult{
+		{Check: 1, Name: "grounding", Status: verify.Fail, Findings: []verify.Finding{{Check: 1, Code: "amount_not_printed", Severity: verify.Error}}},
+		{Check: 2, Name: "roll_forward", Status: verify.Warn, Findings: []verify.Finding{{Check: 2, Code: "rounding", Severity: verify.Warning}}},
+		{Check: 3, Name: "internal_consistency", Status: verify.Pass},
+	}}
+	got := r.AsWarnings()
+	if got.Verdict != verify.Warn || got.Checks[0].Status != verify.Warn || got.Checks[2].Status != verify.Pass {
+		t.Fatalf("%+v", got)
+	}
+	f := got.Checks[0].Findings[0]
+	if f.Severity != verify.Warning || !f.Downgraded || got.Checks[1].Findings[0].Downgraded {
+		t.Fatalf("findings %+v %+v", f, got.Checks[1].Findings[0])
+	}
+	if r.Checks[0].Findings[0].Severity != verify.Error || r.Checks[0].Status != verify.Fail {
+		t.Fatal("AsWarnings changed its input")
+	}
+	pass := verify.Result{Verdict: verify.Pass, Checks: []verify.CheckResult{{Check: 1, Status: verify.Pass}}}
+	if pass.AsWarnings().Verdict != verify.Pass {
+		t.Fatal("a passing result does not pass")
+	}
+	skipped := verify.Result{Checks: []verify.CheckResult{{Check: 1, Status: verify.Skipped}}}
+	if skipped.AsWarnings().Verdict != verify.Fail {
+		t.Fatal("a skipped check (a malformed record) became acceptable")
+	}
+}

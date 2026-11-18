@@ -84,17 +84,17 @@ type Program struct {
 	// Redactor edits each telemetry event before it leaves (HOST-2); nil
 	// clears each event's Detail.
 	Redactor agent.Redactor
-	// Submitted lists agent types, besides the configured one, that the
-	// host runs on a trigger submitted in process (Host.Submit, ADR 0021
-	// item 1). Each must be registered and declare SubmittedKind; it runs
-	// with no configuration and its manifest's default budgets.
-	Submitted []string
 	// getenv reads the environment; nil is os.Getenv. Tests set it.
 	getenv func(string) string
 	// goos overrides runtime.GOOS in tests.
 	goos string
 	// Name is the executable's name, for usage messages.
 	Name string
+	// Submitted lists agent types, besides the configured one, that the
+	// host runs on a trigger submitted in process (Host.Submit, ADR 0021
+	// item 1). Each must be registered and declare SubmittedKind; it runs
+	// with no configuration and its manifest's default budgets.
+	Submitted []string
 	// heartbeat overrides heartbeatInterval in tests.
 	heartbeat time.Duration
 }
@@ -473,7 +473,7 @@ func (h *host) runInput(ctx context.Context, path string) (Report, error) {
 		return Report{}, &inputError{err}
 	}
 	dctx := context.WithoutCancel(ctx)
-	if err := h.locks.lock(ctx, in.instance); err != nil {
+	if err = h.locks.lock(ctx, in.instance); err != nil {
 		return Report{}, fmt.Errorf("waiting for instance %s: %w", in.instance, err)
 	}
 	defer h.locks.unlock(in.instance)

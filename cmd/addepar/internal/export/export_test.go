@@ -228,33 +228,106 @@ func TestBuildRefuses(t *testing.T) {
 	})
 }
 
+// TestWrite: the CSV goes to the exports folder by date and hash, the
+// manifest to the manifests folder by the CSV's hash and the export time;
+// nothing is replaced, except that a re-export of the same bytes keeps the
+// CSV and adds its own manifest (ADR 0021, item 11).
 func TestWrite(t *testing.T) {
-	exp, err := export.Build([]export.Record{approved(t, "r", record(t, "Owner", "Fund", "10", "USD"))}, t0)
+	recs := []export.Record{approved(t, "r", record(t, "Owner", "Fund", "10", "USD"))}
+	exp, err := export.Build(recs, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	csvPath, manPath, err := exp.Write(dir, "valuations-2026-03-31")
+	csvDir, manDir := t.TempDir(), t.TempDir()
+	csvPath, manPath, err := exp.Write(csvDir, manDir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	wantCSV := filepath.Join(csvDir, "addepar-"+t0.UTC().Format(time.DateOnly)+"-"+exp.CSVSHA256[:8]+".csv")
+	wantMan := filepath.Join(manDir, exp.CSVSHA256+"-"+t0.UTC().Format("20060102T150405Z")+".json")
+	if csvPath != wantCSV || manPath != wantMan {
+		t.Fatalf("paths %s %s, want %s %s", csvPath, manPath, wantCSV, wantMan)
 	}
 	for path, want := range map[string][]byte{csvPath: exp.CSV, manPath: exp.Manifest} {
-		got, err := os.ReadFile(path) //nolint:gosec // test temp dir
-		if err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("%s: %v", path, err)
+		got, rerr := os.ReadFile(path) //nolint:gosec // test temp dir
+		if rerr != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s: %v", path, rerr)
 		}
 	}
-	if _, _, err := exp.Write(dir, "valuations-2026-03-31"); err == nil {
-		t.Fatal("an existing export was replaced")
+	if _, _, err = exp.Write(csvDir, manDir); err == nil {
+		t.Fatal("an existing manifest was replaced")
 	}
-	for _, bad := range []string{"", "..", "a/b"} {
-		if _, _, err := exp.Write(dir, bad); err == nil {
-			t.Fatalf("name %q accepted", bad)
+	// The same records exported again later: the same CSV, kept; a new
+	// manifest beside the first.
+	again, err := export.Build(recs, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, m2, err := again.Write(csvDir, manDir)
+	if err != nil || c2 != csvPath || m2 == manPath {
+		t.Fatalf("re-export: %s %s %v", c2, m2, err)
+	}
+	// A CSV of that name with other content is not replaced.
+	other, err := export.Build(recs, t0.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(csvPath, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := other.Write(csvDir, manDir); err == nil || !strings.Contains(err.Error(), "other content") {
+		t.Fatalf("a changed CSV: %v", err)
+	}
+	if _, _, err := (&export.Export{}).Write(csvDir, manDir); err == nil {
+		t.Fatal("an export with no hash was written")
+	}
+	for _, d := range []string{csvDir, manDir} {
+		if left, _ := filepath.Glob(filepath.Join(d, ".export-*")); len(left) != 0 {
+			t.Fatalf("temporary files left: %v", left)
 		}
 	}
-	left, _ := filepath.Glob(filepath.Join(dir, ".export-*"))
-	if len(left) != 0 {
-		t.Fatalf("temporary files left: %v", left)
+}
+
+// TestGateReviewOrder: an acceptance before a correction or manual entry
+// no longer counts (ADR 0021, item 8), and a downgraded error passes only
+// on a record a person entered (item 10).
+func TestGateReviewOrder(t *testing.T) {
+	r := approved(t, "r", record(t, "Owner", "Fund", "10", "USD"))
+	w := verify.Finding{Check: verify.CheckCurrency, Code: "not_stated", Subject: "currency", Severity: verify.Warning, Message: "m"}
+	r.Result.Checks[verify.CheckCurrency-1] = verify.CheckResult{Check: verify.CheckCurrency, Name: "currency", Status: verify.Warn, Findings: []verify.Finding{w}}
+	r.Result.Verdict = verify.Warn
+	accept := export.ReviewAction{Kind: export.AcceptWarning, Finding: w.ID(), By: "p", Reason: "ok", At: r.Approval.At.Add(-3 * time.Minute)}
+	correct := export.ReviewAction{Kind: export.Correct, By: "p", Reason: "typo", Change: "ending.amount", At: r.Approval.At.Add(-2 * time.Minute)}
+	r.Reviews = []export.ReviewAction{accept}
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("accepted warning refused: %v", got)
+	}
+	r.Reviews = []export.ReviewAction{accept, correct}
+	if got := export.Gate(&r); len(got) != 1 || !strings.Contains(got[0], "not accepted") {
+		t.Fatalf("acceptance before a correction counted: %v", got)
+	}
+	accept2 := accept
+	accept2.At = r.Approval.At.Add(-time.Minute)
+	r.Reviews = []export.ReviewAction{accept, correct, accept2}
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("acceptance after the correction refused: %v", got)
+	}
+
+	d := w
+	d.Code, d.Subject, d.Check, d.Downgraded = "amount_not_printed", "ending", verify.CheckGrounding, true
+	r.Result.Checks[0] = verify.CheckResult{Check: 1, Name: "grounding", Status: verify.Warn, Findings: []verify.Finding{d}}
+	acc := export.ReviewAction{Kind: export.AcceptWarning, Finding: d.ID(), By: "p", Reason: "read it off page 2", At: accept2.At}
+	r.Reviews = append(r.Reviews, acc)
+	if got := export.Gate(&r); len(got) != 1 || !strings.Contains(got[0], "downgraded") {
+		t.Fatalf("downgraded error on an extracted record: %v", got)
+	}
+	r.Origin = export.OriginManual
+	if got := export.Gate(&r); len(got) != 0 {
+		t.Fatalf("accepted downgraded error on a manual record: %v", got)
+	}
+	r.Origin = "guessed"
+	if got := export.Gate(&r); len(got) != 2 || !strings.Contains(got[0], "unknown origin") || !strings.Contains(got[1], "downgraded") {
+		t.Fatalf("unknown origin: %v", got)
 	}
 }
 
