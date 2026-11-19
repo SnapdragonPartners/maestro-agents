@@ -59,18 +59,31 @@ type Options struct {
 	Now func() time.Time
 	// Pages renders page images and reads word boxes; nil is Poppler's.
 	Pages Pages
-	// Setup completes first-run setup and returns the backend, or the
-	// errors to show; nil when the workspace is configured.
-	Setup func(ctx context.Context, in SetupInput) (Backend, error)
+	// Setup completes first-run setup and returns the backend and its
+	// inbox, or the errors to show; nil when the workspace is configured.
+	Setup func(ctx context.Context, in SetupInput) (Backend, Inbox, error)
 	// Token opens a session (/auth/session?token=) and authorizes a JSON
 	// request as a bearer token. Required.
 	Token string
 	// Addr is the address the server listens on, host and port: requests
 	// for any other Host are refused.
 	Addr string
-	// Inbox is the watched folder, Exports the CSVs' folder and Manifests
-	// the manifests' (ADR 0021, item 11).
-	Inbox, Exports, Manifests string
+	// Exports is the CSVs' folder and Manifests the manifests' (ADR 0021,
+	// item 11).
+	Exports, Manifests string
+	// Inbox is the watched folder as the host watches it.
+	Inbox Inbox
+}
+
+// Inbox is the watched folder as the host's watch sees it, so the UI
+// lists only files the watch would take, and says when it refuses one
+// (ADR 0017, item 16).
+type Inbox struct {
+	// Dir is the folder; Pattern selects its files by name
+	// (filepath.Match, empty is "*").
+	Dir, Pattern string
+	// MaxBytes is the host's input bound: a larger file is refused.
+	MaxBytes int64
 }
 
 // Server is the review UI's handler.
@@ -86,7 +99,10 @@ type Server struct {
 	setupMu sync.Mutex
 }
 
-type backendBox struct{ b Backend }
+type backendBox struct {
+	b     Backend
+	inbox Inbox
+}
 
 // New builds the server. backend is nil until setup completes.
 func New(opts Options, backend Backend) (*Server, error) { //nolint:gocritic // hugeParam: called once
@@ -113,14 +129,23 @@ func New(opts Options, backend Backend) (*Server, error) { //nolint:gocritic // 
 	_, port, _ := net.SplitHostPort(opts.Addr)
 	s := &Server{opts: opts, pages: t, hosts: hosts, sessions: sessions{m: map[string]*session{}, cookie: cookiePrefix + port}}
 	if backend != nil {
-		s.SetBackend(backend)
+		s.SetBackend(backend, opts.Inbox)
 	}
 	s.routes()
 	return s, nil
 }
 
-// SetBackend makes the UI serve backend, after setup.
-func (s *Server) SetBackend(b Backend) { s.backend.Store(&backendBox{b: b}) }
+// SetBackend makes the UI serve backend and its inbox, after setup.
+func (s *Server) SetBackend(b Backend, inbox Inbox) {
+	s.backend.Store(&backendBox{b: b, inbox: inbox})
+}
+
+func (s *Server) inboxConfig() Inbox {
+	if box := s.backend.Load(); box != nil {
+		return box.inbox
+	}
+	return Inbox{}
+}
 
 func (s *Server) current() Backend {
 	if box := s.backend.Load(); box != nil {
@@ -239,8 +264,11 @@ func safeNext(p string) string {
 	// Browsers drop tabs and newlines from a URL, so "/\t/host" would
 	// become "//host": every control character is refused first.
 	if strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) ||
-		!strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsRune(p, '\\') {
+		strings.ContainsRune(p, '\\') || p == "" || p[0] != '/' {
 		return "/"
+	}
+	if len(p) > 1 && (p[1] == '/' || p[1] == '\\') {
+		return "/" // "//host" or "/\host" is another site
 	}
 	return p
 }

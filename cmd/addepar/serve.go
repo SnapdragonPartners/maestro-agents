@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -49,6 +51,8 @@ type serveEnv struct {
 	open func(link string) error
 	// ready is told the link once the server listens.
 	ready func(link string)
+	// wrap, when set, wraps the UI's handler: a test's hook.
+	wrap func(http.Handler) http.Handler
 }
 
 func defaultServeEnv() serveEnv {
@@ -158,13 +162,21 @@ type server struct {
 
 func (s *server) run(ctx context.Context, ln net.Listener, token string, open bool, stdout io.Writer) int {
 	defer s.close()
+	// The watch stops at the signal; requests have their own context,
+	// cancelled only after the grace period (ADR 0022, item 2).
 	wctx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
 	defer cancel()
+	rctx, rcancel := context.WithCancel(context.WithoutCancel(ctx))
+	defer rcancel()
 	srv, err := s.newUI(wctx, token, ln.Addr().String())
 	if err != nil {
 		say(s.stderr, "serve: %v\n", err)
 		return exitUsage
+	}
+	var h http.Handler = srv
+	if s.env.wrap != nil {
+		h = s.env.wrap(h)
 	}
 	inflight := newGate()
 	hs := &http.Server{
@@ -174,12 +186,12 @@ func (s *server) run(ctx context.Context, ln net.Listener, token string, open bo
 				return
 			}
 			defer inflight.leave()
-			srv.ServeHTTP(w, r)
+			h.ServeHTTP(w, r)
 		}),
 		ReadHeaderTimeout: readHeaderLimit,
-		// Requests run under the watch's context: cancelling it at
-		// shutdown stops a submission at its next step boundary.
-		BaseContext: func(net.Listener) context.Context { return wctx },
+		// Requests outlive the signal by the grace period: shutdown then
+		// cancels rctx, stopping a submission at its next step boundary.
+		BaseContext: func(net.Listener) context.Context { return rctx },
 	}
 	served := make(chan error, 1)
 	go func() { served <- hs.Serve(ln) }()
@@ -206,7 +218,7 @@ func (s *server) run(ctx context.Context, ln net.Listener, token string, open bo
 			code = exitFail
 		}
 	}
-	s.shutdown(ctx, hs, cancel, inflight)
+	s.shutdown(ctx, hs, rcancel, inflight)
 	if s.host != nil {
 		if c := <-s.watchDone; c != standalone.ExitComplete && code == exitOK {
 			code = c
@@ -219,22 +231,26 @@ func (s *server) run(ctx context.Context, ln net.Listener, token string, open bo
 // UI on it, or, with no configuration yet, builds the UI in setup mode,
 // whose setup starts them (ADR 0022, item 4).
 func (s *server) newUI(wctx context.Context, token, addr string) (*ui.Server, error) {
-	opts := ui.Options{Token: token, Addr: addr, Inbox: s.ws.inbox, Exports: s.ws.exports, Manifests: s.ws.manifests}
+	opts := ui.Options{
+		Token: token, Addr: addr, Exports: s.ws.exports, Manifests: s.ws.manifests,
+		Logger: slog.New(slog.NewTextHandler(s.stderr, nil)),
+	}
 	if _, err := os.Stat(s.ws.config); err == nil {
 		if opts.Inbox, err = s.start(wctx); err != nil {
 			return nil, err
 		}
 		return ui.New(opts, s.host) //nolint:wrapcheck // ui names it
 	}
-	opts.Setup = func(_ context.Context, in ui.SetupInput) (ui.Backend, error) {
+	opts.Setup = func(_ context.Context, in ui.SetupInput) (ui.Backend, ui.Inbox, error) {
 		if err := s.setup(in); err != nil {
-			return nil, err
+			return nil, ui.Inbox{}, err
 		}
-		if _, err := s.start(wctx); err != nil {
+		inbox, err := s.start(wctx)
+		if err != nil {
 			_ = os.Remove(s.ws.config) // setup runs again with the person's next try
-			return nil, err
+			return nil, ui.Inbox{}, err
 		}
-		return s.host, nil
+		return s.host, inbox, nil
 	}
 	return ui.New(opts, nil) //nolint:wrapcheck // ui names it
 }
@@ -295,18 +311,18 @@ func (g *gate) closeAndWait() {
 }
 
 // start opens the host on the workspace's configuration and starts its
-// watch, and returns the watched folder.
-func (s *server) start(ctx context.Context) (string, error) {
+// watch, and returns the watched folder as the watch sees it.
+func (s *server) start(ctx context.Context) (ui.Inbox, error) {
 	cfg, err := standalone.LoadConfig(s.ws.config)
 	if err != nil {
-		return "", err //nolint:wrapcheck // names the file
+		return ui.Inbox{}, err //nolint:wrapcheck // names the file
 	}
 	if cfg.Trigger.Kind != "folder" {
-		return "", fmt.Errorf("config %s: serve needs a folder trigger, not %q", s.ws.config, cfg.Trigger.Kind)
+		return ui.Inbox{}, fmt.Errorf("config %s: serve needs a folder trigger, not %q", s.ws.config, cfg.Trigger.Kind)
 	}
 	h, err := standalone.Open(ctx, s.p, s.ws.config, s.stderr)
 	if err != nil {
-		return "", err //nolint:wrapcheck // standalone names it
+		return ui.Inbox{}, err //nolint:wrapcheck // standalone names it
 	}
 	s.host = h
 	go func() {
@@ -316,7 +332,7 @@ func (s *server) start(ctx context.Context) (string, error) {
 		}
 		s.watchDone <- code
 	}()
-	return cfg.Trigger.Dir, nil
+	return ui.Inbox{Dir: cfg.Trigger.Dir, Pattern: cfg.Trigger.Pattern, MaxBytes: cmp.Or(cfg.MaxInputBytes, standalone.DefaultMaxInputBytes)}, nil
 }
 
 func (s *server) close() {

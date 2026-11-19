@@ -21,9 +21,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const provider = document.querySelector('select[name="provider"]');
   const model = document.querySelector('input[name="model"]');
   if (provider && model) {
+    // A model that is some provider's default is the page's own choice,
+    // replaced when the provider changes; anything else the person typed.
+    const defaults = Array.from(provider.options, (o) => o.dataset.model);
+    model.dataset.auto = !model.value || defaults.includes(model.value) ? "1" : "0";
     const fill = () => {
       const opt = provider.selectedOptions[0];
-      if (opt && (!model.value || model.dataset.auto === "1")) {
+      if (opt && model.dataset.auto === "1") {
         model.value = opt.dataset.model;
         model.dataset.auto = "1";
       }

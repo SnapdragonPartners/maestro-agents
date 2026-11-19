@@ -136,12 +136,18 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
      being read, verified, set aside, sent to manual review, or failed
      (the intake run's reason code), from the intake run (`sha256-<hex>`,
      ADR 0017 item 11) and its outcome; under each, its records with
-     their state (item 10). The page refreshes itself while a document
-     is queued or being read.
+     their state (item 10). Inbox files the agent has not stored yet are
+     listed too, but only those the watch would take (its pattern; dot
+     files and links skipped), and one over the host's input bound shows
+     as refused, never as waiting. The page refreshes itself while a
+     document is queued or being read.
    - `/documents/{sha}`: the document, its outcome and attempts, its
      records, and the form to add a manual record (ADR 0021, item 7),
-     which is how a document sent to manual review, set aside, or failed
-     gets a record.
+     offered once the intake run has finished, whatever its outcome: it
+     is how a document sent to manual review, set aside, or failed gets a
+     record, and how a record a verified document's extraction missed is
+     added. The record forms offer more rows on request, keeping what was
+     typed (a submit button, so it works without JavaScript).
    - `/records/{sha}/{nn}`: one record (R-1): the page image with the
      evidence highlighted (item 11), the fields with their pages, the
      seven checks with their findings, the owner and asset, the review
@@ -187,7 +193,8 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
     `at`, which the server sets from the session and its clock; a bearer
     request names `by` in the body), `GET /api/exports` and `POST
     /api/exports`. A refusal is `409` with the refusal, an unknown record
-    `404`, a malformed body `400`, a busy instance (`ErrBusy`) `503` with
+    or document `404` (a POST's `no_record` or `no_document` refusal
+    included, as a GET answers), a malformed body `400`, a busy instance (`ErrBusy`) `503` with
     `Retry-After`.
 
 ### Amendments

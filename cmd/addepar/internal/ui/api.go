@@ -85,7 +85,11 @@ func (s *Server) apiFailed(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusServiceUnavailable, apiError{Error: busyMessage})
 	default:
 		if r, ok := review.Refused(err); ok {
-			writeJSON(w, http.StatusConflict, apiError{Error: "refused", Refusal: r})
+			status := http.StatusConflict
+			if r.Code == review.RefuseNoRecord || r.Code == review.RefuseNoDocument {
+				status = http.StatusNotFound // as GET answers an unknown record
+			}
+			writeJSON(w, status, apiError{Error: "refused", Refusal: r})
 			return
 		}
 		var fe *formError

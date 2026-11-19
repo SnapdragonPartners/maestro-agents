@@ -295,7 +295,7 @@ func TestServe(t *testing.T) {
 		states[d.SHA256] = d.State
 	}
 	if states[halyard] != intake.DispositionVerified || states[keelson] != intake.DispositionManual {
-		t.Fatalf("documents %+v", docs)
+		t.Fatalf("documents %+v\n%s", docs, s.stderr.String())
 	}
 	page := s.get("/")
 	for _, want := range []string{"halyard-ii.pdf", "Needs manual entry", "Needs review", "/records/" + halyard + "/01"} {
@@ -384,6 +384,20 @@ func TestServe(t *testing.T) {
 		t.Fatalf("manual: %d %v", code, out)
 	}
 	ke := intake.RecordID(keelson, 1)
+	// An unknown record is 404 on a POST too, as on a GET.
+	var nf map[string]any
+	if code := s.api(http.MethodPost, "/api/records/"+keelson+"/09/actions", map[string]any{"kind": "approve", "seen": 0}, &nf); code != http.StatusNotFound {
+		t.Fatalf("POST to an unknown record: %d %v", code, nf)
+	}
+	// More rows for a manual draft keeps what was typed (no JavaScript).
+	draft := s.post("/documents/"+keelson+"/manual", url.Values{
+		"seen": {"1"}, "more": {"1"}, "investor.text": {"Typed Investor"},
+		"lines.0.label": {"Contributions"}, "lines.0.amount": {"5"}, "lines.0.kind": {"movement"},
+		"lines.1.label": {""}, "lines.2.label": {""},
+	})
+	if !strings.Contains(draft.body, `value="Typed Investor"`) || !strings.Contains(draft.body, `name="lines.5.label"`) || !strings.Contains(draft.body, `value="Contributions"`) {
+		t.Fatalf("more rows:\n%s", draft.body)
+	}
 	var apiErr struct {
 		Error   string          `json:"error"`
 		Refusal *review.Refusal `json:"refusal"`
@@ -712,6 +726,64 @@ func TestServeCancelDuringOpen(t *testing.T) {
 	}
 	var out, errb bytes.Buffer
 	if code := serveCommand(ctx, scriptedProgram(nil), []string{"-workspace", ws, "-addr", "127.0.0.1:0"}, &out, &errb, env); code != exitOK {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+}
+
+// TestServeSignalKeepsRequests: a request in flight at the signal keeps a
+// live context through the grace period and completes, while the watch
+// stops (buggrit f-9cf446).
+func TestServeSignalKeepsRequests(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the file store does not support Windows")
+	}
+	ws := filepath.Join(t.TempDir(), "ws")
+	writeServeConfig(t, ws)
+	ctx, cancel := context.WithCancel(context.Background())
+	inside, release := make(chan struct{}), make(chan struct{})
+	var ctxErr error
+	links := make(chan string, 1)
+	env := defaultServeEnv()
+	env.getenv = func(string) string { return testToken }
+	env.open = func(string) error { return nil }
+	env.ready = func(l string) { links <- l }
+	env.wrap = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/slow" {
+				close(inside)
+				<-release
+				ctxErr = r.Context().Err()
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+	done := make(chan int, 1)
+	var out, errb bytes.Buffer
+	go func() {
+		done <- serveCommand(ctx, scriptedProgram(nil), []string{"-workspace", ws, "-addr", "127.0.0.1:0"}, &out, &errb, env)
+	}()
+	u, _ := url.Parse(<-links)
+	got := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+u.Host+"/slow", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			got <- 0
+			return
+		}
+		resp.Body.Close()
+		got <- resp.StatusCode
+	}()
+	<-inside
+	cancel() // the signal
+	time.Sleep(200 * time.Millisecond)
+	close(release)
+	if code := <-got; code != http.StatusNoContent || ctxErr != nil {
+		t.Fatalf("request at the signal: %d, context %v", code, ctxErr)
+	}
+	if code := <-done; code != exitOK {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 }

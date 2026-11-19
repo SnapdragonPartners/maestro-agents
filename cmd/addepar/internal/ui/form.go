@@ -89,6 +89,41 @@ func formOf(r *statement.Record) RecordForm {
 	return f
 }
 
+// formFromValues rebuilds the form from posted values, keeping a draft
+// when the person asks for more rows, and adds blankRows empty ones.
+func formFromValues(v url.Values) RecordForm {
+	t := func(name string) string { return v.Get(name) }
+	amt := func(p string) AmountForm {
+		return AmountForm{Label: t(p + ".label"), Amount: t(p + ".amount"), Page: t(p + ".page")}
+	}
+	f := RecordForm{
+		InvestorText: t("investor.text"), InvestorPage: t("investor.page"),
+		FundText: t("fund.text"), FundPage: t("fund.page"),
+		PeriodEnd: t("period.end"), PeriodLabel: t("period.label"), PeriodPage: t("period.page"),
+		CurrencyCode: t("currency.code"), CurrencyEvidence: t("currency.evidence"), CurrencyPage: t("currency.page"),
+		Precision:   t("precision"),
+		ColumnLabel: t("column.label"), ColumnSection: t("column.section"), ColumnReason: t("column.reason"), ColumnPage: t("column.page"),
+		DashZero:  t("dash_zero"),
+		Beginning: amt("beginning"), Ending: amt("ending"), FundTotal: amt("fund_total"),
+	}
+	for i := 0; i < maxRows && v.Has(fmt.Sprintf("lines.%d.label", i)); i++ {
+		p := fmt.Sprintf("lines.%d", i)
+		f.Lines = append(f.Lines, LineForm{Kind: t(p + ".kind"), AmountForm: amt(p)})
+	}
+	for i := 0; i < maxRows && v.Has(fmt.Sprintf("repeats.%d.label", i)); i++ {
+		f.Repeats = append(f.Repeats, amt(fmt.Sprintf("repeats.%d", i)))
+	}
+	for range blankRows {
+		f.Lines = append(f.Lines, LineForm{Kind: string(statement.Movement)})
+		f.Repeats = append(f.Repeats, AmountForm{})
+	}
+	return f
+}
+
+// wantsRows reports whether the person asked for more rows rather than
+// submitting.
+func wantsRows(v url.Values) bool { return v.Get("more") != "" }
+
 // formError is a form a person filled in wrongly: the message is theirs.
 type formError struct{ msg string }
 

@@ -64,11 +64,11 @@
 </form>
 {{end}}
 
-<details class="action">
+<details class="action"{{if $d.CorrectOpen}} open{{end}}>
 <summary>Correct the record</summary>
 <p>Change what is wrong, then give the reason. The record is verified again; an earlier approval or acceptance no longer counts.</p>
 <form method="post" action="/records/{{$s.SHA256}}/{{$s.N}}/actions" class="stack">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="seen" value="{{$seen}}">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="seen" value="{{$d.CorrectSeen}}">
   <input type="hidden" name="kind" value="correct">
   {{template "recordform" $d.Form}}
   <label>Reason for the correction <input name="reason" required></label>

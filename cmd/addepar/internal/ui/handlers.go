@@ -34,9 +34,17 @@ type documentData struct {
 	Doc  *DocumentView
 	Form RecordForm
 	Seen int
+	// Open shows the manual form open: a draft being extended.
+	Open bool
 }
 
 func (s *Server) documentPage(w http.ResponseWriter, r *http.Request, sess *session) {
+	s.renderDocument(w, r, sess, nil)
+}
+
+// renderDocument shows the document page; draft, when set, is the manual
+// form's posted values to show again with more rows.
+func (s *Server) renderDocument(w http.ResponseWriter, r *http.Request, sess *session, draft url.Values) {
 	sha := r.PathValue("sha")
 	if !shaOK(sha) {
 		s.fail(w, sess, http.StatusNotFound, "There is no such document.")
@@ -56,7 +64,14 @@ func (s *Server) documentPage(w http.ResponseWriter, r *http.Request, sess *sess
 		s.storeFailed(w, sess, err)
 		return
 	}
-	s.render(w, sess, "document", &view{Title: doc.Name, Data: &documentData{Doc: doc, Form: formOf(nil), Seen: len(doc.Records)}, Refresh: doc.Kind == kindWorking})
+	d := &documentData{Doc: doc, Form: formOf(nil), Seen: len(doc.Records)}
+	if draft != nil {
+		d.Form, d.Open = formFromValues(draft), true
+		if n, err := strconv.Atoi(draft.Get("seen")); err == nil {
+			d.Seen = n
+		}
+	}
+	s.render(w, sess, "document", &view{Title: doc.Name, Data: d, Refresh: doc.Kind == kindWorking && draft == nil})
 }
 
 func shaOK(sha string) bool {
@@ -65,6 +80,12 @@ func shaOK(sha string) bool {
 }
 
 func (s *Server) recordPage(w http.ResponseWriter, r *http.Request, sess *session) {
+	s.renderRecord(w, r, sess, nil)
+}
+
+// renderRecord shows the record page; draft, when set, is the correction
+// form's posted values to show again with more rows.
+func (s *Server) renderRecord(w http.ResponseWriter, r *http.Request, sess *session, draft url.Values) {
 	d, err := s.record(r.Context(), r.PathValue("sha"), r.PathValue("nn"))
 	switch {
 	case errors.Is(err, errNotFound):
@@ -73,6 +94,12 @@ func (s *Server) recordPage(w http.ResponseWriter, r *http.Request, sess *sessio
 	case err != nil:
 		s.storeFailed(w, sess, err)
 		return
+	}
+	if draft != nil {
+		d.Form, d.CorrectOpen = formFromValues(draft), true
+		if n, err := strconv.Atoi(draft.Get("seen")); err == nil {
+			d.CorrectSeen = n
+		}
 	}
 	s.render(w, sess, "record", &view{Title: d.Summary.Investor + " · " + d.Summary.Fund, Data: d})
 }
@@ -141,6 +168,10 @@ func (s *Server) actionSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 		s.fail(w, sess, http.StatusNotFound, "There is no such record.")
 		return
 	}
+	if r.PostFormValue("kind") == string(review.Correct) && wantsRows(r.PostForm) {
+		s.renderRecord(w, r, sess, r.PostForm)
+		return
+	}
 	a, err := actionOf(r.PostForm, id)
 	if err != nil {
 		sess.say("error", err.Error())
@@ -161,7 +192,7 @@ func (s *Server) submit(ctx context.Context, sess *session, a *review.Action) bo
 		if refused {
 			kind = "refused"
 		} else {
-			s.opts.Logger.Error("ui: action failed", "kind", string(a.Kind), "error", err.Error())
+			s.opts.Logger.Error("ui: action failed", "kind", kindName(a.Kind), "error", oneLine(err.Error()))
 		}
 		sess.say(kind, msg)
 		return false
@@ -169,6 +200,19 @@ func (s *Server) submit(ctx context.Context, sess *session, a *review.Action) bo
 	sess.say("ok", doneMessage(a.Kind))
 	return true
 }
+
+// kindName names a known action kind for a log line, never the request's
+// own text.
+func kindName(k review.Kind) string {
+	switch k {
+	case review.Correct, review.Manual, review.AcceptWarning, review.SetEntities, review.Approve, review.Export:
+		return string(k)
+	}
+	return "unknown"
+}
+
+// oneLine keeps a logged value on one line.
+func oneLine(s string) string { return strings.NewReplacer("\n", " ", "\r", " ").Replace(s) }
 
 func doneMessage(k review.Kind) string {
 	switch k {
@@ -190,6 +234,10 @@ func (s *Server) manualSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 	sha := r.PathValue("sha")
 	if !shaOK(sha) {
 		s.fail(w, sess, http.StatusNotFound, "There is no such document.")
+		return
+	}
+	if wantsRows(r.PostForm) {
+		s.renderDocument(w, r, sess, r.PostForm)
 		return
 	}
 	back := "/documents/" + sha

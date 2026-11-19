@@ -14,10 +14,10 @@
 {{range $d.Records}}<tr><td><a href="/records/{{.SHA256}}/{{.N}}">{{.Investor}}</a></td><td>{{.Fund}}</td><td>{{.Period}}</td><td class="num">{{.Value}} {{.Currency}}</td><td>{{.Origin}}</td><td><span class="state state-{{.Kind}}">{{.Label}}</span></td></tr>{{end}}
 </tbody></table>
 {{else}}<p class="empty">No records.</p>{{end}}
-{{if and (ne $d.Kind "working") (ne $d.State "verified")}}
-<details class="action"{{if not $d.Records}} open{{end}}>
+{{if ne $d.Kind "working"}}
+<details class="action"{{if or (not $d.Records) .Data.Open}} open{{end}}>
 <summary>Enter a record by hand</summary>
-<p>Read the values off the statement. The checks still run, to catch a slip; anything they flag must be accepted, with a reason, before approval.</p>
+<p>Read the values off the statement: for a document the agent could not read, or a record it missed. The checks still run, to catch a slip; anything they flag must be accepted, with a reason, before approval.</p>
 <form method="post" action="/documents/{{$d.SHA256}}/manual" class="stack">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="seen" value="{{.Data.Seen}}">

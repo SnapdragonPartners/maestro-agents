@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -204,11 +206,44 @@ func TestParseRecordForm(t *testing.T) {
 	}
 }
 
+// TestInboxFilters: the inbox lists only what the watch would take (the
+// pattern) and shows a file over the host's bound as refused, not queued.
+func TestInboxFilters(t *testing.T) {
+	dir := t.TempDir()
+	for name, size := range map[string]int{"notes.txt": 10, "big.pdf": 2048, ".hidden.pdf": 10} {
+		if err := os.WriteFile(filepath.Join(dir, name), make([]byte, size), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv, err := New(Options{Token: "0123456789abcdef", Addr: "127.0.0.1:8741"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetBackend(nil, Inbox{Dir: dir, Pattern: "*.pdf", MaxBytes: 1024})
+	docs, err := srv.inboxWaiting(context.Background(), nil, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 || docs[0].Name != "big.pdf" || docs[0].State != stateFailed || docs[0].Label != "Too large to read" {
+		t.Fatalf("inbox %+v", docs)
+	}
+}
+
+// TestFormFromValues: a draft's values come back with more empty rows.
+func TestFormFromValues(t *testing.T) {
+	v := url.Values{"investor.text": {"A"}, "lines.0.label": {"x"}, "lines.0.amount": {"1"}, "lines.0.kind": {"subtotal"},
+		"lines.1.label": {""}, "repeats.0.label": {"r"}}
+	f := formFromValues(v)
+	if f.InvestorText != "A" || len(f.Lines) != 2+blankRows || f.Lines[0].Kind != "subtotal" || f.Lines[0].Amount != "1" || len(f.Repeats) != 1+blankRows {
+		t.Fatalf("form %+v", f)
+	}
+}
+
 // TestServerGuards: without a session nothing is served, an unknown Host
 // is refused, and without a backend the pages send the person to setup.
 func TestServerGuards(t *testing.T) {
 	srv, err := New(Options{Token: "0123456789abcdef", Addr: "127.0.0.1:8741",
-		Setup: func(context.Context, SetupInput) (Backend, error) { return nil, errors.New("no") }}, nil)
+		Setup: func(context.Context, SetupInput) (Backend, Inbox, error) { return nil, Inbox{}, errors.New("no") }}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,10 +17,6 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
-
-// maxInboxHash bounds a file the inbox listing hashes; a larger one is
-// shown unread (the host refuses it too, past its own bound).
-const maxInboxHash = 256 << 20
 
 // inboxCache remembers each inbox file's SHA-256 by name, size and
 // modification time, so listing the inbox does not hash every file on
@@ -48,7 +45,7 @@ func (c *inboxCache) hash(path string, fi os.FileInfo) (string, error) {
 	}
 	defer f.Close() //nolint:errcheck // read-only
 	h := sha256.New()
-	if _, err = io.Copy(h, io.LimitReader(f, maxInboxHash)); err != nil {
+	if _, err = io.Copy(h, f); err != nil {
 		return "", err //nolint:wrapcheck // names the file
 	}
 	sha := hex.EncodeToString(h.Sum(nil))
@@ -62,14 +59,20 @@ func (c *inboxCache) hash(path string, fi os.FileInfo) (string, error) {
 }
 
 // inboxWaiting lists the inbox's files whose document is not stored yet:
-// waiting to be picked up, queued, or failed before the document was
-// stored. Dot files and symbolic links are skipped, as the watch skips
-// them (ADR 0017, item 16).
+// waiting to be picked up, queued, refused for their size, or failed
+// before the document was stored. It lists only what the watch would
+// take: dot files, symbolic links and names the pattern does not match
+// are skipped, as the watch skips them (ADR 0017, item 16).
 func (s *Server) inboxWaiting(ctx context.Context, reader store.Reader, stored map[string]bool) ([]DocumentView, error) {
-	if s.opts.Inbox == "" {
+	in := s.inboxConfig()
+	if in.Dir == "" {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(s.opts.Inbox)
+	pattern := in.Pattern
+	if pattern == "" {
+		pattern = "*"
+	}
+	entries, err := os.ReadDir(in.Dir)
 	if err != nil {
 		s.opts.Logger.Warn("ui: cannot list the inbox", "error", err.Error())
 		return nil, nil
@@ -79,37 +82,50 @@ func (s *Server) inboxWaiting(ctx context.Context, reader store.Reader, stored m
 		if strings.HasPrefix(e.Name(), ".") || !e.Type().IsRegular() {
 			continue
 		}
+		if ok, _ := filepath.Match(pattern, e.Name()); !ok {
+			continue
+		}
 		fi, err := e.Info()
 		if err != nil {
 			continue
 		}
 		v := DocumentView{Name: e.Name(), Received: fi.ModTime(), Records: []RecordView{}}
-		if fi.Size() > maxInboxHash {
+		if in.MaxBytes > 0 && fi.Size() > in.MaxBytes {
 			v.State, v.Label, v.Kind = stateFailed, "Too large to read", kindFailed
+			v.Detail = fmt.Sprintf("over the %d MiB limit", in.MaxBytes>>20)
 			out = append(out, v)
 			continue
 		}
-		sha, err := s.inbox.hash(filepath.Join(s.opts.Inbox, e.Name()), fi)
+		sha, err := s.inbox.hash(filepath.Join(in.Dir, e.Name()), fi)
 		if err != nil {
 			continue // gone, or being written: the next listing sees it
 		}
 		if stored[sha] {
 			continue
 		}
-		run, err := reader.Run(ctx, review.DocumentInstance(sha))
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			v.State, v.Label, v.Kind = stateQueued, "Waiting to be picked up", kindWorking
-		case err != nil:
-			return nil, err //nolint:wrapcheck // the store names it
-		case run.Status == store.StatusFailed:
-			v.State, v.Label, v.Kind, v.Detail = stateFailed, "The agent could not read it", kindFailed, failureDetail(&run)
-		case run.Status.Terminal():
-			v.State, v.Label, v.Kind = stateFailed, "Stopped", kindFailed
-		default:
-			v.State, v.Label, v.Kind = stateQueued, "Queued", kindWorking
+		if err := unstoredState(ctx, reader, sha, &v); err != nil {
+			return nil, err
 		}
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+// unstoredState sets the state of an inbox file whose document is not
+// stored, from its run: none yet, runnable, or ended without the document.
+func unstoredState(ctx context.Context, reader store.Reader, sha string, v *DocumentView) error {
+	run, err := reader.Run(ctx, review.DocumentInstance(sha))
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		v.State, v.Label, v.Kind = stateQueued, "Waiting to be picked up", kindWorking
+	case err != nil:
+		return err //nolint:wrapcheck // the store names it
+	case run.Status == store.StatusFailed:
+		v.State, v.Label, v.Kind, v.Detail = stateFailed, "The agent could not read it", kindFailed, failureDetail(&run)
+	case run.Status.Terminal():
+		v.State, v.Label, v.Kind = stateFailed, "Stopped", kindFailed
+	default:
+		v.State, v.Label, v.Kind = stateQueued, "Queued", kindWorking
+	}
+	return nil
 }

@@ -75,9 +75,9 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request, sess *sessi
 		problems = append(problems, "Paste the API key.")
 	}
 	if len(problems) == 0 {
-		b, err := s.opts.Setup(r.Context(), in)
+		b, inbox, err := s.opts.Setup(r.Context(), in)
 		if err == nil {
-			s.SetBackend(b)
+			s.SetBackend(b, inbox)
 			sess.say("ok", "The agent is running. Drop statements into the Inbox folder.")
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return

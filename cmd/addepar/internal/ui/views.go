@@ -290,6 +290,10 @@ type RecordDetail struct {
 	Log      []review.Entry
 	Form     RecordForm
 	State    review.State
+	// CorrectSeen is the correction form's seen: the log's length, or a
+	// draft's own; CorrectOpen shows the form open.
+	CorrectSeen int
+	CorrectOpen bool
 }
 
 // FindingView is a finding with whether a person has accepted it.
@@ -352,7 +356,7 @@ func (s *Server) record(ctx context.Context, sha, nn string) (*RecordDetail, err
 		}
 	}
 	d.Fields = fields(d.Record)
-	d.Form = formOf(d.Record)
+	d.Form, d.CorrectSeen = formOf(d.Record), st.Entries
 	d.Pages = s.evidencePages(ctx, sha, stored, d.Fields)
 	return d, nil
 }
