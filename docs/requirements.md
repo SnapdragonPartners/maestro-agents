@@ -899,8 +899,9 @@ two differ, it governs.
 issue): image and document content and non-text tool results in
 `maestro-llms`; attempt-level admission and a safe input bound in
 `maestro-llms`; layout mode, word positions and page rendering in
-`maestro-cms`. These gate LLM-2, TOOL-11, BUD-3 and the review UI's
-evidence highlighting. Layout mode, a one-flag option and the first of the
+`maestro-cms`. These gate LLM-2, TOOL-11 and BUD-3; the `maestro-cms`
+ones have landed (v0.9.0), and the review UI's evidence highlighting
+uses them (ADR 0022). Layout mode, a one-flag option and the first of the
 three, also gates step 1 below.
 
 **Prove the difficult vertical slice first**, before the Postgres store
@@ -953,7 +954,7 @@ to agents stays here.
 | Non-text tool results | `maestro-llms`' `ToolResult.Content` is a string, in `llms` and in `toolloop` | TOOL-11 | [maestro-llms#148](https://github.com/SnapdragonPartners/maestro-llms/issues/148) |
 | Budget admission before each provider attempt, including retries, and a known-safe input bound | Landed in `maestro-llms` v1.3.0 (`ratelimit.Rollbacker`, `ReservationRequest.BoundUnits`, `middleware.InputBounder`); used by ADR 0014 | BUD-3 | [maestro-llms#149](https://github.com/SnapdragonPartners/maestro-llms/issues/149) |
 | An MCP client that turns an MCP server's tools into `toolloop` tools | None. `maestro-llms` ADR 0011 excludes MCP adapters from `toolloop` itself, so this is a proposal for a separate leaf package with its own ADR there (the official Go MCP SDK is the likely dependency) | TOOL-6 | [maestro-llms#150](https://github.com/SnapdragonPartners/maestro-llms/issues/150) |
-| PDF word positions and page rendering | Layout-mode text landed in `maestro-cms` v0.9.0 (`pdftotext.WithLayout`), used by ADR 0015; word positions and page rendering are still outstanding | The verification checks and the vertical slice's step 1 (layout mode); the intake review UI's evidence highlighting (section 6) | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
+| PDF word positions and page rendering | Landed in `maestro-cms` v0.9.0: layout-mode text (`pdftotext.WithLayout`), used by ADR 0015, and word positions (`pdftotext` `Layout`) and page rendering (`pdftoppm`), used by the review UI's evidence boxes (ADR 0022) | The verification checks and the vertical slice's step 1 (layout mode); the intake review UI's evidence highlighting (section 6) | [maestro-cms#25](https://github.com/SnapdragonPartners/maestro-cms/issues/25) |
 
 **Not upstream work.** Three loop needs that an earlier draft listed here
 are met without changes to `maestro-llms`: ending a turn at a

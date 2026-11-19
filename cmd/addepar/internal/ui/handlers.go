@@ -178,12 +178,19 @@ func (s *Server) actionSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 		return
 	}
 	a, err := actionOf(r.PostForm, id)
-	if err != nil {
+	switch {
+	case err != nil:
 		sess.say("error", err.Error())
+	case s.submit(r.Context(), sess, a):
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
-	s.submit(r.Context(), sess, a)
+	// A correction that failed keeps the person's draft: the page comes
+	// back with what they typed, never an empty form.
+	if r.PostFormValue("kind") == string(review.Correct) {
+		s.renderRecord(w, r, sess, r.PostForm)
+		return
+	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
@@ -210,8 +217,18 @@ func (s *Server) submit(ctx context.Context, sess *session, a *review.Action) bo
 // own text.
 func kindName(k review.Kind) string {
 	switch k {
-	case review.Correct, review.Manual, review.AcceptWarning, review.SetEntities, review.Approve, review.Export:
-		return string(k)
+	case review.Correct:
+		return "correct"
+	case review.Manual:
+		return "manual"
+	case review.AcceptWarning:
+		return "accept_warning"
+	case review.SetEntities:
+		return "set_entities"
+	case review.Approve:
+		return "approve"
+	case review.Export:
+		return "export"
 	}
 	return "unknown"
 }
@@ -260,14 +277,15 @@ func (s *Server) manualSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 	ext, err := parseRecordForm(r.PostForm)
 	if err != nil {
 		sess.say("error", err.Error())
-		http.Redirect(w, r, back, http.StatusSeeOther)
+		s.renderDocument(w, r, sess, r.PostForm) // keeps the draft
 		return
 	}
 	a := &review.Action{Kind: review.Manual, Document: sha, Seen: seen, Extraction: ext, Reason: strings.TrimSpace(r.PostFormValue("reason"))}
-	if s.submit(r.Context(), sess, a) {
-		back = fmt.Sprintf("/records/%s/%02d", sha, seen+1)
+	if !s.submit(r.Context(), sess, a) {
+		s.renderDocument(w, r, sess, r.PostForm) // keeps the draft
+		return
 	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/records/%s/%02d", sha, seen+1), http.StatusSeeOther)
 }
 
 // ExportView is a past export.

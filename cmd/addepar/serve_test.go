@@ -399,6 +399,15 @@ func TestServe(t *testing.T) {
 	if !strings.Contains(draft.body, `value="Typed Investor"`) || !strings.Contains(draft.body, `name="lines.5.label"`) || !strings.Contains(draft.body, `value="Contributions"`) {
 		t.Fatalf("more rows:\n%s", draft.body)
 	}
+	// A manual entry that fails (a page that is not a number) keeps the
+	// draft and says why (buggrit f-94c4c4).
+	bad := s.post("/documents/"+keelson+"/manual", url.Values{
+		"seen": {"1"}, "investor.text": {"Typed Investor"}, "investor.page": {"one"}, "reason": {"x"},
+		"lines.0.label": {""},
+	})
+	if !strings.Contains(bad.body, `value="Typed Investor"`) || !strings.Contains(bad.body, "must be a page number") {
+		t.Fatalf("failed manual entry:\n%s", bad.body)
+	}
 	var apiErr struct {
 		Error   string          `json:"error"`
 		Refusal *review.Refusal `json:"refusal"`
@@ -895,6 +904,12 @@ func TestServeUsage(t *testing.T) {
 			t.Fatalf("%v: exit %d", args, code)
 		}
 	}
+	env.goos = "windows"
+	var wout, werr bytes.Buffer
+	if code := serveCommand(context.Background(), program(nil), []string{"-workspace", ws, "-addr", "127.0.0.1:0"}, &wout, &werr, env); code != exitUsage || !strings.Contains(werr.String(), "Windows") {
+		t.Fatalf("windows: %d %s", code, werr.String())
+	}
+	env.goos = ""
 	env.getenv = func(string) string { return "short" }
 	var out, errb bytes.Buffer
 	if code := serveCommand(context.Background(), program(nil), []string{"-workspace", ws, "-addr", "127.0.0.1:0"}, &out, &errb, env); code != exitUsage || !strings.Contains(errb.String(), tokenEnv) {

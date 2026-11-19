@@ -156,9 +156,6 @@ func Blockers(s *State) []string {
 	return export.Gate(&snap)
 }
 
-// Busy reports whether err is a busy instance's: retry later.
-func Busy(err error) bool { return errors.Is(err, standalone.ErrBusy) }
-
 // Refused returns the refusal err carries, if any.
 func Refused(err error) (*Refusal, bool) {
 	var r *RefusedError

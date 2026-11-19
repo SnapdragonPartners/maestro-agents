@@ -57,7 +57,8 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    `.agent/config.json` with `standalone.Open`, starts `Host.Watch` and
    serves the UI on `-addr`, which must be a loopback address
    (`127.0.0.1`, `::1` or `localhost`; anything else is a usage error)
-   and defaults to `127.0.0.1:8741`. The first SIGINT or SIGTERM stops
+   and defaults to `127.0.0.1:8741`. `serve` refuses to start on Windows, whose file store cannot lock
+   (ADR 0017, item 9), rather than failing after setup. The first SIGINT or SIGTERM stops
    the server (requests in flight get five seconds, then their context is
    cancelled, a submission stopping at its next step boundary, and every
    handler is joined before the host closes) and the watch at its next step
@@ -147,7 +148,9 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
      is how a document sent to manual review, set aside, or failed gets a
      record, and how a record a verified document's extraction missed is
      added. The record forms offer more rows on request, keeping what was
-     typed (a submit button, so it works without JavaScript).
+     typed (a submit button, so it works without JavaScript), and a
+     correction or manual entry that fails or is refused comes back with
+     the person's draft, never an empty form.
    - `/records/{sha}/{nn}`: one record (R-1): the page image with the
      evidence highlighted (item 11), the fields with their pages, the
      seven checks with their findings, the owner and asset, the review

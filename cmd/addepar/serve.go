@@ -53,6 +53,8 @@ type serveEnv struct {
 	ready func(link string)
 	// wrap, when set, wraps the UI's handler: a test's hook.
 	wrap func(http.Handler) http.Handler
+	// goos is the operating system; empty is runtime.GOOS.
+	goos string
 }
 
 func defaultServeEnv() serveEnv {
@@ -109,6 +111,12 @@ func serveCommand(ctx context.Context, p standalone.Program, args []string, stdo
 	}
 	if fs.NArg() != 0 {
 		say(stderr, "serve: unexpected arguments\n")
+		return exitUsage
+	}
+	// The workspace's store is the file store, which locks only on Unix
+	// systems: serve would fail later on Windows, after setup.
+	if cmp.Or(env.goos, runtime.GOOS) == "windows" {
+		say(stderr, "serve: not supported on Windows: the workspace's file store needs a Unix system (macOS or Linux)\n")
 		return exitUsage
 	}
 	if host, _, err := net.SplitHostPort(*addr); err != nil || !ui.Loopback(host) {
