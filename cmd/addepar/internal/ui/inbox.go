@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
-	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
+	"github.com/SnapdragonPartners/maestro-agents/regularfile"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 

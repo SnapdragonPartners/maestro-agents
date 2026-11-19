@@ -1,6 +1,8 @@
 package strictjson
 
 import (
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -96,5 +98,22 @@ func TestDecodeEmbeddedAmbiguity(t *testing.T) {
 	}
 	if err := Decode([]byte(`{"VALUE":"only"}`), &d); err != nil || d.Upper != "only" {
 		t.Fatalf("the root field: %+v %v", d, err)
+	}
+}
+
+// TestDecodeInvalidTarget: a destination that is not a non-nil pointer is
+// an error, as with encoding/json, never a panic.
+func TestDecodeInvalidTarget(t *testing.T) {
+	type d struct {
+		N int `json:"n"`
+	}
+	var nilPtr *d
+	for name, v := range map[string]any{"untyped nil": nil, "struct": d{}, "nil pointer": nilPtr} {
+		t.Run(name, func(t *testing.T) {
+			var invalid *json.InvalidUnmarshalError
+			if err := Decode([]byte(`{"n":1}`), v); !errors.As(err, &invalid) {
+				t.Fatalf("Decode(%s) = %v, want *json.InvalidUnmarshalError", name, err)
+			}
+		})
 	}
 }

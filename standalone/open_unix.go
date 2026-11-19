@@ -6,7 +6,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
+	"github.com/SnapdragonPartners/maestro-agents/regularfile"
 )
 
 // openAppend opens a regular file for appending, creating it owner-only,

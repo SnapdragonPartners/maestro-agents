@@ -15,8 +15,8 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/export"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
-	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
 	"github.com/SnapdragonPartners/maestro-agents/store"
+	"github.com/SnapdragonPartners/maestro-agents/strictjson"
 )
 
 // prompt renders the extraction state's request from the type's templates.

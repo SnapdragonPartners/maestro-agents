@@ -1,6 +1,6 @@
 package standalone
 
-import "github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
+import "github.com/SnapdragonPartners/maestro-agents/strictjson"
 
 // decodeStrict decodes an operator's file strictly (ADR 0017, item 5): no
 // invalid UTF-8, no key that is not exactly a field's JSON name, no key

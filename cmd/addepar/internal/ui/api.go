@@ -7,8 +7,8 @@ import (
 	"net/http"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
-	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
+	"github.com/SnapdragonPartners/maestro-agents/strictjson"
 )
 
 // maxBody bounds a request body: a record is at most 1 MiB.

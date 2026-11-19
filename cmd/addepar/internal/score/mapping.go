@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
-	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
+	"github.com/SnapdragonPartners/maestro-agents/strictjson"
 )
 
 // Mapping pairs each statement's positions with answer rows. It is written

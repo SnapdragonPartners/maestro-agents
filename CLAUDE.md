@@ -16,8 +16,10 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 - Agent executables live in this repository under `cmd/<agent>/`, beside the
   library
 
-Current state: **MVP, step 6 (the review UI) built; next, the release
-and the trial**. The store interface,
+Current state: **MVP, step 6 (the review UI) built; now splitting the
+agents out**: each agent moves to `SnapdragonPartners/morris-agents` as
+its own Go module, and this repository keeps the shared library (step 1,
+ADR 0023: `strictjson` and `regularfile` made public for them). The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
@@ -38,7 +40,8 @@ the review pages in one process (`Host.Watch`, ADR 0022). The requirements are i
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
 0014 and 0016, the standalone host ADR 0017, the scoring harness ADR 0020, the intake
-agent's own design ADRs 0015, 0018, 0019, 0021 and 0022; further design
+agent's own design ADRs 0015, 0018, 0019, 0021 and 0022, the public
+helpers for agents in other modules ADR 0023; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -242,6 +245,15 @@ Load-bearing decisions so far:
   per session is every action's `by`; evidence boxes from maestro-cms
   word boxes on the pdftoppm-rendered page, every copy on the cited page
   ([ADR 0022](docs/adr/0022-the-review-ui.md))
+- `strictjson` and `regularfile` are public packages at the module root
+  (ADR 0023), moved from `internal/` so agents in their own modules
+  (morris-agents) decode operators' files and tools' arguments, and open
+  operators' files, exactly as the host does; `strictjson.Decode` refuses
+  a destination that is not a non-nil pointer with
+  `*json.InvalidUnmarshalError` rather than panicking; the rest of
+  `internal/` stays internal; before v1 a minor release may change an
+  API, noted in its release notes; `v0.1.0` is the first tag
+  ([ADR 0023](docs/adr/0023-public-strictjson-and-regularfile.md))
 
 ### Related repositories
 
@@ -317,8 +329,8 @@ store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
-internal/regularfile/ # Opening an operator's file only if regular, never hanging on a FIFO (ADR 0017); shared with cmd/addepar
-internal/strictjson/ # The strict JSON decoder for operators' files (host config and secrets, the scoring mapping) and extraction records (ADR 0017, 0020, 0021)
+regularfile/         # Opening an operator's file only if regular, never hanging on a FIFO (ADR 0017, 0023); public for agents in other modules
+strictjson/          # The strict JSON decoder for operators' files and agents' records and tool arguments (ADR 0017, 0020, 0021, 0023); public for agents in other modules
 cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019, 0020, 0021, 0022): `run` (standalone host), `verify`, `score`, `export` and `serve`;
                      #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
                      #   decimal, document (hash, pdfinfo, layout text), review (the review type, its log, approval, export),

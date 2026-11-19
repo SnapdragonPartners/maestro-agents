@@ -1,7 +1,8 @@
 // Package regularfile opens an operator-named file only if it is a
 // regular file, without hanging on a FIFO or device (ADR 0017, item 11):
-// the standalone host's configuration, secrets and inputs, and addepar's
-// own commands' files.
+// the standalone host's configuration, secrets and inputs, and an agent's
+// own commands' files. It is public so that agents built in their own
+// modules open operators' files the same way (ADR 0023).
 package regularfile
 
 import (

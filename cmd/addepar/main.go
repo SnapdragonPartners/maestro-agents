@@ -78,7 +78,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
-	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
+	"github.com/SnapdragonPartners/maestro-agents/regularfile"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
 )
 

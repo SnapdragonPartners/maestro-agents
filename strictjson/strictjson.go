@@ -1,8 +1,9 @@
 // Package strictjson decodes JSON more strictly than encoding/json, for
-// files an operator writes: the standalone host's configuration and
-// secrets (ADR 0017, item 5) and the intake agent's scoring mapping
-// (ADR 0020, item 7); and for the intake agent's extraction records,
-// from a model or a person (ADR 0021, item 13).
+// input an agent must not misread: files an operator writes (the
+// standalone host's configuration and secrets, ADR 0017, item 5) and
+// records a model or a person submits. It is public so that agents built
+// in their own modules decode their operators' files and their tools'
+// arguments the same way (ADR 0023).
 package strictjson
 
 import (
@@ -21,8 +22,13 @@ import (
 // than encoding/json: it refuses invalid UTF-8, a key
 // that is not exactly a field's JSON name (encoding/json matches keys
 // case-insensitively), a key repeated in any object (encoding/json keeps
-// the last), and data after the value.
+// the last), and data after the value. A v that is not a non-nil
+// pointer is refused with *json.InvalidUnmarshalError, as encoding/json
+// refuses it.
 func Decode(data []byte, v any) error {
+	if rv := reflect.ValueOf(v); rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return &json.InvalidUnmarshalError{Type: reflect.TypeOf(v)}
+	}
 	if !utf8.Valid(data) {
 		return errors.New("not valid UTF-8")
 	}

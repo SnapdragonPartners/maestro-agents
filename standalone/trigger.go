@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"unicode/utf8"
 
-	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
+	"github.com/SnapdragonPartners/maestro-agents/regularfile"
 )
 
 // FileTrigger is the payload of a one-shot or folder trigger (ADR 0017,
