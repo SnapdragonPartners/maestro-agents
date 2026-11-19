@@ -153,7 +153,11 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
      added. The record forms offer more rows on request, keeping what was
      typed (a submit button, so it works without JavaScript), and a
      correction or manual entry that fails or is refused comes back with
-     the person's draft, never an empty form.
+     the person's draft, never an empty form. A draft refused as stale
+     comes back on a page showing the record (or the document's records)
+     as it is now, so its `seen` is the current length: the person checks
+     the draft against what changed and saves it, rather than being
+     refused again until a reload discards it.
    - `/records/{sha}/{nn}`: one record (R-1): the page image with the
      evidence highlighted (item 11), the fields with their pages, the
      seven checks with their findings, the owner and asset, the review

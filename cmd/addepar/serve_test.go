@@ -368,6 +368,21 @@ func TestServe(t *testing.T) {
 	form = formValues(t, s.get("/records/"+hy).body, "correct")
 	form.Set("ending.amount", "714760.65")
 	form.Set("reason", "back to the printed value")
+	// On a stale view the draft comes back with the record's current
+	// length, so saving it again, after checking, works.
+	stale := url.Values{}
+	for k, v := range form {
+		stale[k] = v
+	}
+	stale.Set("seen", "1")
+	again := s.post("/records/"+hy+"/actions", stale)
+	if !strings.Contains(again.body, "changed while you were editing") || !strings.Contains(again.body, `value="back to the printed value"`) {
+		t.Fatalf("stale correction:\n%s", again.body)
+	}
+	form = formValues(t, again.body, "correct")
+	if form.Get("ending.amount") != "714760.65" || form.Get("seen") == "1" {
+		t.Fatalf("the kept draft %v", form)
+	}
 	if resp := s.post("/records/"+hy+"/actions", form); !strings.Contains(resp.body, "Correction saved") {
 		t.Fatalf("correct back: %s", resp.body)
 	}

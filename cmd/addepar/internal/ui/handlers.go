@@ -191,12 +191,16 @@ func (s *Server) actionSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 		return
 	}
 	a, err := actionOf(r.PostForm, id)
-	switch {
-	case err != nil:
+	if err != nil {
 		sess.say("error", err.Error())
-	case s.submit(r.Context(), sess, a):
-		http.Redirect(w, r, back, http.StatusSeeOther)
-		return
+	} else {
+		switch s.submit(r.Context(), sess, a) {
+		case submitted:
+			http.Redirect(w, r, back, http.StatusSeeOther)
+			return
+		case submitStale:
+			r.PostForm.Del("seen") // the page shows the record as it is now
+		}
 	}
 	// A correction that failed keeps the person's draft: the page comes
 	// back with what they typed, never an empty form.
@@ -207,11 +211,33 @@ func (s *Server) actionSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
+// outcome is what became of a submitted action.
+type outcome int
+
+const (
+	submitted outcome = iota
+	// submitFailed is a refusal or a failure, already told to the person.
+	submitFailed
+	// submitStale is a refusal for a stale view: a draft shown again
+	// takes the record's current log length, since the page it comes back
+	// on shows the record as it is now, so the person can save it after
+	// checking; never the stale one, which would
+	// be refused forever.
+	submitStale
+)
+
+// staleMessage tells the person their view was stale and the draft kept.
+const staleMessage = "This changed while you were editing: the page now shows it as it is. Your draft is kept below; check it against the record, then save again."
+
 // submit runs an action as the session's operator and tells the person
 // what became of it.
-func (s *Server) submit(ctx context.Context, sess *session, a *review.Action) bool {
+func (s *Server) submit(ctx context.Context, sess *session, a *review.Action) outcome {
 	a.By, a.At = sess.name(), s.opts.Now().UTC()
 	if _, err := review.Submit(ctx, s.current(), s.objects(), a); err != nil {
+		if ref, ok := review.Refused(err); ok && ref.Code == review.RefuseStale && (a.Kind == review.Correct || a.Kind == review.Manual) {
+			sess.say("refused", staleMessage)
+			return submitStale
+		}
 		msg, refused := submitError(err)
 		kind := "error"
 		if refused {
@@ -220,10 +246,10 @@ func (s *Server) submit(ctx context.Context, sess *session, a *review.Action) bo
 			s.opts.Logger.Error("ui: action failed", "kind", kindName(a.Kind), "error", oneLine(err.Error()))
 		}
 		sess.say(kind, msg)
-		return false
+		return submitFailed
 	}
 	sess.say("ok", doneMessage(a.Kind))
-	return true
+	return submitted
 }
 
 // kindName names a known action kind for a log line, never the request's
@@ -289,7 +315,13 @@ func (s *Server) manualSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 		return
 	}
 	a := &review.Action{Kind: review.Manual, Document: sha, Seen: seen, Extraction: ext, Reason: strings.TrimSpace(r.PostFormValue("reason"))}
-	if !s.submit(r.Context(), sess, a) {
+	switch s.submit(r.Context(), sess, a) {
+	case submitted:
+	case submitStale:
+		r.PostForm.Del("seen") // the page shows the document's records as they are now
+		s.renderDocument(w, r, sess, r.PostForm)
+		return
+	default:
 		s.renderDocument(w, r, sess, r.PostForm) // keeps the draft
 		return
 	}
