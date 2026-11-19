@@ -111,7 +111,9 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    The token stays valid for the life of the process, so the link (or a
    control-panel app) reopens the UI after the browser is closed; the
    same user can already read the process's environment. Sessions live in
-   memory and end with the process. Every other route but the static
+   memory and end with the process; since each use of the link opens one,
+   at most 64 are kept, the oldest dropped first (its browser signs in
+   again with the link). Every other route but the static
    assets (`/static/`: the stylesheet and script, which hold no data and
    which the sign-in page itself needs) answers 401 without a valid
    session cookie, or, for the JSON routes, `Authorization:

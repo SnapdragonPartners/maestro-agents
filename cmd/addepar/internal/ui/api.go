@@ -234,7 +234,15 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request, c caller) {
 	if err == nil {
 		err = strictjson.Decode(body, &req)
 	}
-	if err != nil || len(req.Records) == 0 {
+	if err == nil && len(req.Records) == 0 {
+		err = errors.New("no records")
+	}
+	for _, id := range req.Records {
+		if _, _, ok := review.SplitRecordID(id); !ok && err == nil {
+			err = errors.New("a malformed record ID")
+		}
+	}
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: `the body is {"records": ["<sha256>/<NN>", ...]}`})
 		return
 	}

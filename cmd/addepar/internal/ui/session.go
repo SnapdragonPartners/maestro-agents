@@ -69,8 +69,16 @@ type sessions struct {
 	m map[string]*session
 	// cookie is the session cookie's name.
 	cookie string
-	mu     sync.Mutex
+	// order is the sessions' IDs, oldest first, to drop the oldest past
+	// maxSessions.
+	order []string
+	mu    sync.Mutex
 }
+
+// maxSessions bounds the sign-ins kept: the launch token is valid for the
+// process's life, so each use of the link opens one, and past this the
+// oldest is dropped (its browser signs in again with the link).
+const maxSessions = 64
 
 func randomHex(n int) string {
 	b := make([]byte, n)
@@ -78,12 +86,17 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func (ss *sessions) open() (id string, s *session) {
+func (ss *sessions) open() string {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	id, s = randomHex(32), &session{csrf: randomHex(32)}
-	ss.m[id] = s
-	return id, s
+	id := randomHex(32)
+	for len(ss.order) >= maxSessions {
+		delete(ss.m, ss.order[0])
+		ss.order = ss.order[1:]
+	}
+	ss.m[id] = &session{csrf: randomHex(32)}
+	ss.order = append(ss.order, id)
+	return id
 }
 
 func (ss *sessions) fromRequest(r *http.Request) *session {
@@ -103,7 +116,7 @@ func (s *Server) authSession(w http.ResponseWriter, r *http.Request) {
 		s.unauthorized(w)
 		return
 	}
-	id, _ := s.sessions.open()
+	id := s.sessions.open()
 	http.SetCookie(w, &http.Cookie{
 		Name: s.sessions.cookie, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	})

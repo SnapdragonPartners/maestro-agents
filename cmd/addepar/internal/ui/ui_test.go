@@ -17,9 +17,12 @@ import (
 	"github.com/SnapdragonPartners/maestro-cms/extract/pdf"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/decimal"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/document"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/export"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/intake"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
+	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
 func TestFormatAmount(t *testing.T) {
@@ -317,5 +320,93 @@ func TestPastExportsNewestFirst(t *testing.T) {
 	}
 	if want := "export-d.1 export-e.1 export-a.1 export-c.1"; strings.Join(runs, " ") != want {
 		t.Errorf("pastExports order = %v, want %s", runs, want)
+	}
+}
+
+// fakeReader serves one object, a PDF's bytes, or none.
+type fakeReader struct {
+	store.Reader
+	pdf []byte
+}
+
+func (f fakeReader) Object(context.Context, string, string) (store.Object, bool, error) {
+	if f.pdf == nil {
+		return store.Object{}, false, nil
+	}
+	return store.Object{Bytes: f.pdf}, true, nil
+}
+
+type fakeBackend struct {
+	review.Submitter
+	r fakeReader
+}
+
+func (b fakeBackend) Store() store.Reader { return b.r }
+func (fakeBackend) Namespace() string     { return "ns" }
+
+// fakeLayout gives page 1 words and page 2 none, or fails.
+type fakeLayout struct{ fail bool }
+
+func (fakeLayout) Render(context.Context, string, []byte, int) ([]byte, error) { return nil, nil }
+func (f fakeLayout) Layout(context.Context, string, []byte) (*pdf.Layout, error) {
+	if f.fail {
+		return nil, errors.New("pdftotext failed")
+	}
+	return &pdf.Layout{Pages: []pdf.PageLayout{
+		{Number: 1, Width: 612, Height: 792, Words: []pdf.Word{word("Fund", 0)}},
+		{Number: 2, Width: 612, Height: 792},
+	}}, nil
+}
+
+// TestEvidencePagesSayWhyNoBoxes: a page without boxes says why, the
+// document's text not read, the page without words, or its words not
+// readable, never one fixed reason for all.
+func TestEvidencePagesSayWhyNoBoxes(t *testing.T) {
+	fs := []FieldView{{Key: "fund", Page: 1, text: "Fund"}, {Key: "ending", Page: 2, text: "x"}}
+	withText := &intake.Document{Document: &document.Document{PageCount: 2}, Text: []string{"Fund", ""}}
+	noText := &intake.Document{Document: &document.Document{PageCount: 2}}
+	for _, c := range []struct {
+		name   string
+		pdf    []byte
+		fail   bool
+		doc    *intake.Document
+		reason [2]string
+	}{
+		{"read", []byte("%PDF"), false, withText, [2]string{"", noBoxesNoWords}},
+		{"text not read", []byte("%PDF"), false, noText, [2]string{noBoxesNotRead, noBoxesNotRead}},
+		{"no PDF", nil, false, withText, [2]string{noBoxesFailed, noBoxesFailed}},
+		{"layout fails", []byte("%PDF"), true, withText, [2]string{noBoxesFailed, noBoxesFailed}},
+	} {
+		srv, err := New(Options{Token: "0123456789abcdef", Addr: "127.0.0.1:8741", Pages: fakeLayout{fail: c.fail}},
+			fakeBackend{r: fakeReader{pdf: c.pdf}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages := srv.evidencePages(context.Background(), strings.Repeat("a", 64), c.doc, fs)
+		if len(pages) != 2 {
+			t.Fatalf("%s: %d pages", c.name, len(pages))
+		}
+		for i, p := range pages {
+			if p.NoBoxes != c.reason[i] || p.Boxes != (c.reason[i] == "") {
+				t.Errorf("%s: page %d: boxes %v, reason %q, want %q", c.name, p.Number, p.Boxes, p.NoBoxes, c.reason[i])
+			}
+		}
+	}
+}
+
+// TestSessionsBounded: each use of the launch link opens a session, and
+// past maxSessions the oldest is dropped.
+func TestSessionsBounded(t *testing.T) {
+	ss := sessions{m: map[string]*session{}}
+	first := ss.open()
+	var last string
+	for range maxSessions {
+		last = ss.open()
+	}
+	if len(ss.m) != maxSessions || len(ss.order) != maxSessions {
+		t.Fatalf("%d sessions kept, %d ordered, want %d", len(ss.m), len(ss.order), maxSessions)
+	}
+	if ss.m[first] != nil || ss.m[last] == nil {
+		t.Fatal("the oldest session was kept or the newest dropped")
 	}
 }

@@ -176,13 +176,23 @@ func fields(r *statement.Record) []FieldView {
 // PageView is one cited page: its image's route and size in points, and
 // the boxes to draw on it.
 type PageView struct {
+	// NoBoxes is why a page without boxes has none: its text was not
+	// read, the page has no words (a scanned page), or its words could not
+	// be read (logged).
+	NoBoxes       string
 	Marks         []Mark
 	Number        int
 	Width, Height float64
-	// Boxes reports whether words were read for the page; a scan, or a
-	// document whose text was not read, shows the page without boxes.
+	// Boxes reports whether words were read for the page.
 	Boxes bool
 }
+
+// Why a page shows no boxes.
+const (
+	noBoxesNotRead = "the document's text was not read"
+	noBoxesNoWords = "the page has no text"
+	noBoxesFailed  = "the page's words could not be read; the serve log says why"
+)
 
 // Mark is a box on a page, in points from its top-left: a field's value
 // or label.
@@ -190,6 +200,14 @@ type Mark struct {
 	Field      string
 	Kind       string // "value" or "label"
 	X, Y, W, H float64
+}
+
+// withoutBoxes gives every page why it has no boxes.
+func withoutBoxes(pages []PageView, why string) []PageView {
+	for i := range pages {
+		pages[i].NoBoxes = why
+	}
+	return pages
 }
 
 // evidencePages returns each page the fields cite, in order, with every
@@ -204,21 +222,24 @@ func (s *Server) evidencePages(ctx context.Context, sha string, d *intake.Docume
 	}
 	pages := make([]PageView, 0, len(nums))
 	for n := range nums {
-		pages = append(pages, PageView{Number: n})
+		pages = append(pages, PageView{Number: n, NoBoxes: noBoxesNoWords})
 	}
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Number < pages[j].Number })
-	if len(d.Text) == 0 || len(pages) == 0 {
+	if len(pages) == 0 {
 		return pages
+	}
+	if len(d.Text) == 0 {
+		return withoutBoxes(pages, noBoxesNotRead)
 	}
 	data, err := s.pdfBytes(ctx, sha)
 	if err != nil {
 		s.opts.Logger.Warn("ui: cannot read the PDF", "document", sha, "error", err.Error())
-		return pages
+		return withoutBoxes(pages, noBoxesFailed)
 	}
 	layout, err := s.opts.Pages.Layout(ctx, sha, data)
 	if err != nil {
 		s.opts.Logger.Warn("ui: cannot read the words' boxes", "document", sha, "error", err.Error())
-		return pages
+		return withoutBoxes(pages, noBoxesFailed)
 	}
 	for i := range pages {
 		n := pages[i].Number
@@ -230,7 +251,7 @@ func (s *Server) evidencePages(ctx context.Context, sha string, d *intake.Docume
 		if len(pl.Words) == 0 {
 			continue
 		}
-		pages[i].Boxes = true
+		pages[i].Boxes, pages[i].NoBoxes = true, ""
 		for j := range fs {
 			if fs[j].Page == n {
 				pages[i].Marks = append(pages[i].Marks, marks(pl, &fs[j])...)

@@ -545,6 +545,17 @@ func TestServe(t *testing.T) {
 	} else {
 		resp.Body.Close()
 	}
+	// A malformed record ID is a bad request, not a refusal (ADR 0022,
+	// item 13).
+	for _, body := range []string{`{"records":["nope"],"by":"Q"}`, `{"records":[],"by":"Q"}`} {
+		req, _ = http.NewRequestWithContext(context.Background(), http.MethodPost, s.base+"/api/exports", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		if resp, err := bearer.Do(req); err != nil || resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("API export %s: %v %v", body, resp, err)
+		} else {
+			resp.Body.Close()
+		}
+	}
 	// Under no-referrer a browser sends "Origin: null" on its own form
 	// posts, which the Origin check refuses (found in manual QA).
 	if got := page.Header.Get("Referrer-Policy"); got != "same-origin" {

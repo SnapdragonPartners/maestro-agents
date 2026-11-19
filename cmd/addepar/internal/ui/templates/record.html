@@ -7,7 +7,7 @@
 <section class="evidence">
 {{range $d.Pages}}
 <figure class="page" id="page-{{.Number}}">
-  <figcaption>Page {{.Number}}{{if not .Boxes}} (no highlights: the page's text was not read){{end}}</figcaption>
+  <figcaption>Page {{.Number}}{{if not .Boxes}} (no highlights: {{.NoBoxes}}){{end}}</figcaption>
   <div class="sheet">
     <img src="/documents/{{$s.SHA256}}/pages/{{.Number}}" alt="Page {{.Number}} of the statement" loading="lazy">
     {{if .Boxes}}<svg viewBox="0 0 {{.Width}} {{.Height}}" preserveAspectRatio="none" aria-hidden="true">{{range .Marks}}<rect class="mark mark-{{.Kind}}" data-field="{{.Field}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{end}}</svg>{{end}}
