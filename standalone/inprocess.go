@@ -14,9 +14,13 @@ import (
 // Host is the standalone host opened in process (ADR 0020, item 2): a
 // harness or a test runs inputs one at a time, as `run -input` does, a
 // caller submits runs of the program's submitted types (Submit, ADR 0021),
-// and either reads what the runs wrote from the host's store. Runs on one
+// a caller watches a folder in process (Watch, ADR 0022), and any of
+// them reads what the runs wrote from the host's store. Runs on one
 // instance are serialized; Submit and RunInput are safe for concurrent
-// use.
+// use, and safe beside Watch, which shares their per-instance locks. One
+// Watch runs at a time (a second returns ErrWatching); it returns run's
+// exit code when its context ends (or the store must be reopened).
+// Close comes after Watch, Submit and RunInput have returned.
 type Host struct {
 	h       *host
 	cleanup func()

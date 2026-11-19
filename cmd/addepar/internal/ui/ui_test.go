@@ -12,10 +12,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-cms/extract/pdf"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/decimal"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/export"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 )
 
@@ -292,5 +295,27 @@ func TestServerGuards(t *testing.T) {
 	}
 	if _, err := New(Options{Token: "short", Addr: "127.0.0.1:1"}, nil); err == nil {
 		t.Fatal("a short token was accepted")
+	}
+}
+
+func TestPastExportsNewestFirst(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	ex := func(run string, at time.Time) review.Exported {
+		return review.Exported{Run: run, At: at, Export: &export.Export{CSVSHA256: strings.Repeat("a", 64)}}
+	}
+	// Key order (run IDs) is unrelated to time.
+	got := pastExports([]review.Exported{
+		ex("export-a.1", t0.Add(time.Hour)),
+		{Run: "export-b.1", At: t0.Add(3 * time.Hour)}, // no export: skipped
+		ex("export-c.1", t0),
+		ex("export-d.1", t0.Add(2*time.Hour)),
+		ex("export-e.1", t0.Add(2*time.Hour)),
+	})
+	var runs []string
+	for _, e := range got {
+		runs = append(runs, e.Run)
+	}
+	if want := "export-d.1 export-e.1 export-a.1 export-c.1"; strings.Join(runs, " ") != want {
+		t.Errorf("pastExports order = %v, want %s", runs, want)
 	}
 }

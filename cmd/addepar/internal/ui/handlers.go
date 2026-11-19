@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -368,14 +369,28 @@ func (s *Server) exportsData(ctx context.Context) (*exportsData, error) {
 	if err != nil {
 		return nil, err //nolint:wrapcheck // review names it
 	}
-	for i := len(exports) - 1; i >= 0; i-- {
+	d.Past = pastExports(exports)
+	return d, nil
+}
+
+// pastExports lists the stored exports newest first: their keys are run
+// IDs, random, so the store's key order says nothing about when.
+func pastExports(exports []review.Exported) []ExportView {
+	out := []ExportView{}
+	for i := range exports {
 		e := &exports[i]
 		if e.Export == nil {
 			continue
 		}
-		d.Past = append(d.Past, ExportView{At: e.At, Run: e.Run, By: e.By, CSVName: e.Export.CSVName(), CSVSHA: e.Export.CSVSHA256, Records: len(e.Records)})
+		out = append(out, ExportView{At: e.At, Run: e.Run, By: e.By, CSVName: e.Export.CSVName(), CSVSHA: e.Export.CSVSHA256, Records: len(e.Records)})
 	}
-	return d, nil
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].Run < out[j].Run
+		}
+		return out[i].At.After(out[j].At)
+	})
+	return out
 }
 
 func (s *Server) exportsPage(w http.ResponseWriter, r *http.Request, sess *session) {
