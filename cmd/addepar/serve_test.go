@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/intake"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
+	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/ui"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
 )
@@ -544,7 +546,7 @@ func TestServeSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secrets := filepath.Join(cfgDir, "addepar", secretsName)
+	secrets := filepath.Join(cfgDir, "addepar", cfg.Model.Credential+".json")
 	if cfg.Trigger.Kind != "folder" || cfg.Trigger.Dir != newWorkspace(ws).inbox || cfg.Credentials.File != secrets || cfg.Model.Provider != "anthropic" {
 		t.Fatalf("config %+v", cfg)
 	}
@@ -577,8 +579,8 @@ func TestServeSetup(t *testing.T) {
 	}
 	s.stop()
 
-	// A second workspace sharing the secrets file gets its own credential:
-	// the first workspace's key is kept.
+	// A second workspace gets its own credential and secrets file: the
+	// first workspace's key is kept.
 	ws2 := filepath.Join(t.TempDir(), "ws2")
 	s = startServe(t, program(nil), ws2, serveEnv{configDir: func() (string, error) { return cfgDir, nil }})
 	if resp := s.post("/setup", url.Values{"provider": {"openai"}, "model": {"gpt-5"}, "key": {"sk-second-key"}}); !strings.Contains(resp.body, "Who is reviewing?") {
@@ -589,26 +591,91 @@ func TestServeSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cfg2.Model.Credential == cfg.Model.Credential || cfg2.Credentials.File == cfg.Credentials.File ||
+		secretOf(t, cfg.Credentials.File, cfg.Model.Credential) != "sk-test-key" || secretOf(t, cfg2.Credentials.File, cfg2.Model.Credential) != "sk-second-key" {
+		t.Fatalf("credentials %q %q", cfg.Model.Credential, cfg2.Model.Credential)
+	}
+}
+
+func secretOf(t *testing.T, path, name string) string {
+	t.Helper()
 	var vals map[string]string
-	b, _ = os.ReadFile(secrets)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := json.Unmarshal(b, &vals); err != nil {
 		t.Fatal(err)
 	}
-	if cfg2.Model.Credential == cfg.Model.Credential || vals[cfg.Model.Credential] != "sk-test-key" || vals[cfg2.Model.Credential] != "sk-second-key" {
-		t.Fatalf("credentials %q %q, secrets %v", cfg.Model.Credential, cfg2.Model.Credential, vals)
+	return vals[name]
+}
+
+// TestSetupConcurrent: setups of many workspaces at once keep every key,
+// and concurrent setups of one workspace leave exactly one configuration,
+// whose key is its own (ADR 0022, item 5).
+func TestSetupConcurrent(t *testing.T) {
+	cfgDir := t.TempDir()
+	env := serveEnv{configDir: func() (string, error) { return cfgDir, nil }}
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	wss := make([]workspace, n)
+	for i := range n {
+		wss[i] = newWorkspace(filepath.Join(t.TempDir(), fmt.Sprint("ws", i)))
+		if err := wss[i].create(); err != nil {
+			t.Fatal(err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s := &server{ws: wss[i], env: env}
+			errs[i] = s.setup(ui.SetupInput{Provider: "openai", Model: "gpt-5", Key: fmt.Sprint("key-", i)})
+		}()
+	}
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil {
+			t.Fatalf("setup %d: %v", i, errs[i])
+		}
+		cfg, err := standalone.LoadConfig(wss[i].config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := secretOf(t, cfg.Credentials.File, cfg.Model.Credential); got != fmt.Sprint("key-", i) {
+			t.Fatalf("workspace %d holds %q", i, got)
+		}
 	}
 
-	// A secrets file holding JSON null is refused, not a panic.
-	nullDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(nullDir, "addepar"), 0o700); err != nil {
+	one := newWorkspace(filepath.Join(t.TempDir(), "one"))
+	if err := one.create(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nullDir, "addepar", secretsName), []byte("null"), 0o600); err != nil {
+	won := make(chan int, n)
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s := &server{ws: one, env: env}
+			if s.setup(ui.SetupInput{Provider: "openai", Model: "gpt-5", Key: fmt.Sprint("one-", i)}) == nil {
+				won <- i
+			}
+		}()
+	}
+	wg.Wait()
+	close(won)
+	var winners []int
+	for i := range won {
+		winners = append(winners, i)
+	}
+	if len(winners) != 1 {
+		t.Fatalf("%d setups of one workspace succeeded", len(winners))
+	}
+	cfg, err := standalone.LoadConfig(one.config)
+	if err != nil {
 		t.Fatal(err)
 	}
-	s = startServe(t, program(nil), filepath.Join(t.TempDir(), "ws3"), serveEnv{configDir: func() (string, error) { return nullDir, nil }})
-	if resp := s.post("/setup", url.Values{"provider": {"openai"}, "model": {"gpt-5"}, "key": {"k"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(resp.body, "not a JSON object") {
-		t.Fatalf("null secrets: %d %s", resp.StatusCode, resp.body)
+	if got := secretOf(t, cfg.Credentials.File, cfg.Model.Credential); got != fmt.Sprint("one-", winners[0]) {
+		t.Fatalf("the configuration's key is %q, its setup wrote one-%d", got, winners[0])
 	}
 }
 

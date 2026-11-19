@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/ui"
-	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
 )
 
@@ -31,7 +30,6 @@ const (
 	defaultAddr      = "127.0.0.1:8741"
 	tokenEnv         = "ADDEPAR_SESSION_TOKEN"
 	workspaceName    = "Addepar Intake"
-	secretsName      = "secrets.json"
 	shutdownGrace    = 5 * time.Second
 	readHeaderLimit  = 10 * time.Second
 	minSessionToken  = 16
@@ -331,9 +329,29 @@ func (s *server) close() {
 // configuration (ADR 0022, items 3 to 5). It never overwrites a
 // configuration.
 func (s *server) setup(in ui.SetupInput) error {
-	if _, err := os.Stat(s.ws.config); err == nil {
+	// Reserve the configuration first: a second setup of this workspace
+	// fails here, before it can touch the key this one writes.
+	f, err := os.OpenFile(s.ws.config, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: the workspace's own file
+	if errors.Is(err, fs.ErrExist) {
 		return errors.New("the workspace is already configured")
 	}
+	if err != nil {
+		return fmt.Errorf("write the configuration: %w", err)
+	}
+	werr := s.writeConfig(f, in)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(s.ws.config)
+		return werr
+	}
+	return nil
+}
+
+// writeConfig writes the workspace's key to its secrets file and its
+// configuration to f.
+func (s *server) writeConfig(f *os.File, in ui.SetupInput) error {
 	cred := s.ws.credential()
 	secrets, err := s.writeSecret(cred, in.Key)
 	if err != nil {
@@ -356,24 +374,16 @@ func (s *server) setup(in ui.SetupInput) error {
 	if err != nil {
 		return fmt.Errorf("encode the configuration: %w", err)
 	}
-	f, err := os.OpenFile(s.ws.config, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: the workspace's own file
-	if err != nil {
+	if _, err = f.Write(append(b, '\n')); err != nil {
 		return fmt.Errorf("write the configuration: %w", err)
-	}
-	_, werr := f.Write(append(b, '\n'))
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		_ = os.Remove(s.ws.config)
-		return fmt.Errorf("write the configuration: %w", werr)
 	}
 	return nil
 }
 
-// writeSecret stores the key as the named credential in the user's
-// secrets file, outside the workspace, owner-only, keeping every other
-// credential in it (another workspace's included), and returns its path.
+// writeSecret writes the workspace's own secrets file,
+// <user config dir>/addepar/<credential>.json, owner-only, holding only
+// its key (ADR 0022, item 5): no file is shared between workspaces, so
+// setting up two at once never loses either key. It returns the path.
 func (s *server) writeSecret(name, key string) (string, error) {
 	base, err := s.env.configDir()
 	if err != nil {
@@ -383,21 +393,8 @@ func (s *server) writeSecret(name, key string) (string, error) {
 	if err = os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("secrets: %w", err)
 	}
-	path := filepath.Join(dir, secretsName)
-	values := map[string]string{}
-	switch b, rerr := os.ReadFile(path); { //nolint:gosec // G304: the user's own secrets file
-	case rerr == nil:
-		if err = strictjson.Decode(b, &values); err != nil {
-			return "", fmt.Errorf("secrets file %s: %w", path, err)
-		}
-		if values == nil {
-			return "", fmt.Errorf("secrets file %s: not a JSON object", path)
-		}
-	case !errors.Is(rerr, fs.ErrNotExist):
-		return "", fmt.Errorf("secrets: %w", rerr)
-	}
-	values[name] = key
-	b, err := json.MarshalIndent(values, "", "  ")
+	path := filepath.Join(dir, name+".json")
+	b, err := json.MarshalIndent(map[string]string{name: key}, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("secrets: %w", err)
 	}

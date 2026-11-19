@@ -81,14 +81,16 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    with its errors, and nothing starts. Setup never overwrites an
    existing configuration; changing the model later is a technical
    user's edit, or deleting the configuration to run setup again.
-5. **The API key lives outside the workspace**, in
-   `<user config dir>/addepar/secrets.json` (on macOS `~/Library/Application
-   Support/addepar/`), owner-only, as ADR 0017's secrets file
-   (item 19): copying `.agent/` for an auditor must never carry the key.
-   The configuration names the file by absolute path, and the key by the
-   workspace's own credential name (`workspace-` and the first 16 hex
-   digits of the SHA-256 of the workspace's absolute path), so setting up
-   a second workspace never replaces the first's key. A control-panel
+5. **The API key lives outside the workspace**, in the workspace's own
+   secrets file, `<user config dir>/addepar/<credential>.json` (on macOS
+   `~/Library/Application Support/addepar/`), owner-only, as ADR 0017's
+   secrets file (item 19): copying `.agent/` for an auditor must never
+   carry the key. The credential is `workspace-` and the first 16 hex
+   digits of the SHA-256 of the workspace's absolute path; the
+   configuration names it and the file by absolute path. No file is
+   shared between workspaces, so setting up two at once loses neither
+   key, and setup creates the configuration exclusively before writing
+   the key, so a second setup of one workspace stops before touching it. A control-panel
    app that keeps the key in the Keychain can pass it by environment
    instead (`credentials.env`); that is its configuration.
 
@@ -99,7 +101,8 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    `http://<addr>/auth/session?token=<token>`, opening it in the default
    browser unless `-open=false`. `GET /auth/session?token=` compares the
    token in constant time and, on a match, sets a session cookie
-   (`addepar_session`, 32 random bytes, `HttpOnly`, `SameSite=Strict`,
+   (`addepar_session_<port>`, since browsers scope cookies by host and
+   not port, so two servers on one machine keep their own; 32 random bytes, `HttpOnly`, `SameSite=Strict`,
    `Path=/`, no `Max-Age`: it ends with the browser) and redirects to `/`.
    The token stays valid for the life of the process, so the link (or a
    control-panel app) reopens the UI after the browser is closed; the

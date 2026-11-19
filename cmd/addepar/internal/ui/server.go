@@ -79,9 +79,9 @@ type Server struct {
 	pages    *template.Template
 	mux      *http.ServeMux
 	hosts    map[string]bool
-	sessions sessions
 	inbox    inboxCache
 	opts     Options
+	sessions sessions
 	// setupMu serializes setup.
 	setupMu sync.Mutex
 }
@@ -110,7 +110,8 @@ func New(opts Options, backend Backend) (*Server, error) { //nolint:gocritic // 
 	if err != nil {
 		return nil, fmt.Errorf("ui: templates: %w", err)
 	}
-	s := &Server{opts: opts, pages: t, hosts: hosts, sessions: sessions{m: map[string]*session{}}}
+	_, port, _ := net.SplitHostPort(opts.Addr)
+	s := &Server{opts: opts, pages: t, hosts: hosts, sessions: sessions{m: map[string]*session{}, cookie: cookiePrefix + port}}
 	if backend != nil {
 		s.SetBackend(backend)
 	}

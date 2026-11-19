@@ -11,8 +11,10 @@ import (
 	"unicode/utf8"
 )
 
-// cookieName is the session cookie (ADR 0022, item 6).
-const cookieName = "addepar_session"
+// cookiePrefix begins the session cookie's name, which ends with the
+// server's port (ADR 0022, item 6): browsers scope cookies by host, not
+// port, so two servers on one machine must not share a name.
+const cookiePrefix = "addepar_session_"
 
 // maxName bounds an operator's name.
 const maxName = 100
@@ -64,8 +66,10 @@ func (s *session) checkCSRF(token string) bool {
 
 // sessions are the process's sign-ins, in memory: they end with it.
 type sessions struct {
-	m  map[string]*session
-	mu sync.Mutex
+	m map[string]*session
+	// cookie is the session cookie's name.
+	cookie string
+	mu     sync.Mutex
 }
 
 func randomHex(n int) string {
@@ -83,7 +87,7 @@ func (ss *sessions) open() (id string, s *session) {
 }
 
 func (ss *sessions) fromRequest(r *http.Request) *session {
-	c, err := r.Cookie(cookieName)
+	c, err := r.Cookie(ss.cookie)
 	if err != nil || c.Value == "" {
 		return nil
 	}
@@ -101,7 +105,7 @@ func (s *Server) authSession(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := s.sessions.open()
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		Name: s.sessions.cookie, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

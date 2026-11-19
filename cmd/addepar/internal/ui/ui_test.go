@@ -236,7 +236,8 @@ func TestServerGuards(t *testing.T) {
 		t.Fatalf("sign in: %d", w.Code)
 	}
 	c := w.Result().Cookies()[0]
-	if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+	// Named by port: browsers scope cookies by host, not port.
+	if c.Name != "addepar_session_8741" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("cookie %+v", c)
 	}
 	if w := get("/", "localhost:8741", c); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/setup" {
