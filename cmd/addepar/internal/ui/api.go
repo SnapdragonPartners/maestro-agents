@@ -142,7 +142,7 @@ func (s *Server) apiRecord(w http.ResponseWriter, r *http.Request, _ caller) {
 
 // readAction decodes a JSON action strictly, as the review run will.
 func readAction(r *http.Request) (*review.Action, error) {
-	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxBody))
+	body, err := io.ReadAll(r.Body) // ServeHTTP already caps the body at maxBody
 	if err != nil {
 		return nil, formErr("the body cannot be read: %v", err)
 	}
@@ -230,7 +230,7 @@ type apiExportRequest struct {
 
 func (s *Server) apiExport(w http.ResponseWriter, r *http.Request, c caller) {
 	var req apiExportRequest
-	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxBody))
+	body, err := io.ReadAll(r.Body) // ServeHTTP already caps the body at maxBody
 	if err == nil {
 		err = strictjson.Decode(body, &req)
 	}

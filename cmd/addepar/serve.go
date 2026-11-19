@@ -445,16 +445,12 @@ func (s *server) writeSecret(name, key string) (string, error) {
 	return path, nil
 }
 
-// openBrowser opens the link in the default browser.
+// openBrowser opens the link in the default browser: macOS's open, or
+// xdg-open elsewhere (serve refuses Windows, ADR 0022 item 2).
 func openBrowser(link string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
+	cmd := exec.Command("xdg-open", link)
+	if runtime.GOOS == "darwin" {
 		cmd = exec.Command("open", link)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", link)
-	default:
-		cmd = exec.Command("xdg-open", link)
 	}
 	if err := cmd.Start(); err != nil {
 		return err //nolint:wrapcheck // the caller says what failed

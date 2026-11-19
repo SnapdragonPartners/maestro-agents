@@ -40,7 +40,8 @@
 // .agent/: the store, the configuration and the manifests. Without a
 // configuration the UI opens on its setup page, which writes one; the API
 // key goes to the user's configuration folder, never the workspace. serve
-// listens on a loopback address only and prints the link that opens the
+// runs on macOS or Linux (the workspace's file store needs a Unix
+// system), listens on a loopback address only and prints the link that opens the
 // UI, with the session token from ADDEPAR_SESSION_TOKEN or a random one.
 // It exits 0 after a signal, 1 when the watch or the server failed, and 2
 // on a usage error.
