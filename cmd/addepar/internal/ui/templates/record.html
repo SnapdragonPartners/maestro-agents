@@ -77,8 +77,8 @@
 </details>
 
 <h2>History</h2>
-{{if $d.Log}}<ol class="log">{{range $d.Log}}<li><time>{{when .At}}</time> <strong>{{.By}}</strong> {{.Kind}}{{with .Finding}} {{.}}{{end}}{{with .Reason}}: “{{.}}”{{end}}{{with .Change}}<div class="detail">{{.}}</div>{{end}}</li>{{end}}</ol>{{else}}<p class="empty">No review actions yet.</p>{{end}}
 {{with $d.State.Record.Approval}}<p>Approved by <strong>{{.By}}</strong> at {{when .At}}.</p>{{end}}
+{{if $d.Log}}<ol class="log">{{range $d.Log}}<li><time>{{when .At}}</time> <strong>{{.By}}</strong> {{.Kind}}{{with .Finding}} {{.}}{{end}}{{with .Reason}}: “{{.}}”{{end}}{{with .Change}}<div class="detail">{{.}}</div>{{end}}</li>{{end}}</ol>{{else}}<p class="empty">No review actions yet.</p>{{end}}
 </section>
 </div>
 {{template "bottom" .}}{{end}}

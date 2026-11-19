@@ -13,8 +13,9 @@ import (
 // blankRows is how many empty line and repeat rows a form offers.
 const blankRows = 3
 
-// maxRows bounds the line and repeat rows a form submits.
-const maxRows = 200
+// maxRows bounds the line and repeat rows a form submits: more is
+// refused, never truncated (a record is at most 1 MiB, so far fewer fit).
+const maxRows = 2000
 
 // AmountForm is an amount's form fields.
 type AmountForm struct{ Label, Amount, Page string }
@@ -145,6 +146,28 @@ func normalizeAmount(s string) string {
 	return s
 }
 
+// rows reads the numbered amount rows under prefix ("lines.0", ...), up
+// to the first missing one, skipping blank rows; withKind reads each
+// row's kind too.
+func (f *formReader) rows(prefix, what string, withKind bool) []map[string]any {
+	out := make([]map[string]any, 0, blankRows)
+	for i := range maxRows {
+		p := fmt.Sprintf("%s.%d", prefix, i)
+		if !f.v.Has(p + ".label") {
+			break
+		}
+		a := f.amount(p, fmt.Sprintf("%s %d", what, i+1), true)
+		if a == nil {
+			continue
+		}
+		if withKind {
+			a["kind"] = f.text(p + ".kind")
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 // parseRecordForm builds the extraction record's JSON from the posted
 // form, in the record's exact shape, for the review run to decode
 // strictly and verify (ADR 0021, item 13).
@@ -176,33 +199,13 @@ func parseRecordForm(v url.Values) (json.RawMessage, error) {
 	if d := f.text("dash_zero"); d != "" {
 		m["dash_zero"] = d
 	}
-	lines := make([]map[string]any, 0, blankRows)
-	for i := range maxRows {
-		p := fmt.Sprintf("lines.%d", i)
-		if !v.Has(p + ".label") {
-			break
-		}
-		a := f.amount(p, fmt.Sprintf("line %d", i+1), true)
-		if a == nil {
-			continue
-		}
-		a["kind"] = f.text(p + ".kind")
-		lines = append(lines, a)
+	if v.Has(fmt.Sprintf("lines.%d.label", maxRows)) || v.Has(fmt.Sprintf("repeats.%d.label", maxRows)) {
+		return nil, formErr("the form has more than %d lines or repeats", maxRows)
 	}
-	if len(lines) > 0 {
+	if lines := f.rows("lines", "line", true); len(lines) > 0 {
 		m["lines"] = lines
 	}
-	var repeats []map[string]any
-	for i := range maxRows {
-		p := fmt.Sprintf("repeats.%d", i)
-		if !v.Has(p + ".label") {
-			break
-		}
-		if a := f.amount(p, fmt.Sprintf("repeat %d", i+1), true); a != nil {
-			repeats = append(repeats, a)
-		}
-	}
-	if len(repeats) > 0 {
+	if repeats := f.rows("repeats", "repeat", false); len(repeats) > 0 {
 		m["repeats"] = repeats
 	}
 	if f.err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -39,6 +40,7 @@ func TestNormalizeAmount(t *testing.T) {
 func TestSafeNextAndNames(t *testing.T) {
 	for in, want := range map[string]string{
 		"/records/x": "/records/x", "//evil.example/": "/", "https://evil.example": "/", "/\\evil": "/", "": "/",
+		"/\t/evil.example/": "/", "/\n/evil.example": "/", "/a\x7fb": "/",
 	} {
 		if got := safeNext(in); got != want {
 			t.Errorf("safeNext(%q) = %q", in, got)
@@ -183,6 +185,16 @@ func TestParseRecordForm(t *testing.T) {
 	}
 	if _, err = statement.DecodeBytes(raw); err == nil {
 		t.Fatal("a fund total without an amount decoded")
+	}
+
+	many := url.Values{}
+	for k, v := range base {
+		many[k] = v
+	}
+	many.Set(fmt.Sprintf("lines.%d.label", maxRows), "too far")
+	var tooMany *formError
+	if _, err = parseRecordForm(many); !errors.As(err, &tooMany) {
+		t.Fatalf("excess rows: %v", err)
 	}
 
 	partial.Set("ending.page", "one")

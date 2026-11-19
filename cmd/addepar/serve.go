@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,10 +13,12 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/ui"
@@ -29,7 +32,6 @@ const (
 	tokenEnv         = "ADDEPAR_SESSION_TOKEN"
 	workspaceName    = "Addepar Intake"
 	secretsName      = "secrets.json"
-	modelCredential  = "model"
 	shutdownGrace    = 5 * time.Second
 	readHeaderLimit  = 10 * time.Second
 	minSessionToken  = 16
@@ -68,6 +70,18 @@ func newWorkspace(dir string) workspace {
 		dir: dir, inbox: filepath.Join(dir, "Inbox"), exports: filepath.Join(dir, "Exports"),
 		agent: agentDir, manifests: filepath.Join(agentDir, "exports"), config: filepath.Join(agentDir, "config.json"),
 	}
+}
+
+// credential is the workspace's model credential's name in the user's
+// secrets file: one per workspace, so setting up another workspace never
+// replaces this one's key.
+func (w *workspace) credential() string {
+	abs, err := filepath.Abs(w.dir)
+	if err != nil {
+		abs = w.dir
+	}
+	sum := sha256.Sum256([]byte(abs))
+	return "workspace-" + hex.EncodeToString(sum[:8])
 }
 
 // create makes the workspace's folders, owner-only: they hold client data.
@@ -126,7 +140,7 @@ func serveCommand(ctx context.Context, p standalone.Program, args []string, stdo
 		say(stderr, "serve: %v (another copy may be running; choose another port with -addr)\n", err)
 		return exitUsage
 	}
-	s := &server{p: p, ws: ws, stderr: stderr, env: env, watchDone: make(chan int, 1)}
+	s := &server{p: p, ws: ws, stderr: stderr, env: env, watchDone: make(chan int, 1), grace: shutdownGrace}
 	return s.run(ctx, ln, token, *open, stdout)
 }
 
@@ -140,6 +154,8 @@ type server struct {
 	env       serveEnv
 	ws        workspace
 	p         standalone.Program
+	// grace is how long shutdown waits before cancelling requests.
+	grace time.Duration
 }
 
 func (s *server) run(ctx context.Context, ln net.Listener, token string, open bool, stdout io.Writer) int {
@@ -147,38 +163,29 @@ func (s *server) run(ctx context.Context, ln net.Listener, token string, open bo
 	wctx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
 	defer cancel()
-	inbox := s.ws.inbox
-	var backend ui.Backend
-	var setup func(context.Context, ui.SetupInput) (ui.Backend, error)
-	if _, err := os.Stat(s.ws.config); err == nil {
-		if inbox, err = s.start(wctx); err != nil {
-			say(s.stderr, "serve: %v\n", err)
-			return exitUsage
-		}
-		backend = s.host
-	} else {
-		setup = func(_ context.Context, in ui.SetupInput) (ui.Backend, error) {
-			if err := s.setup(in); err != nil {
-				return nil, err
-			}
-			if _, err := s.start(wctx); err != nil {
-				_ = os.Remove(s.ws.config) // setup runs again with the person's next try
-				return nil, err
-			}
-			return s.host, nil
-		}
-	}
-	srv, err := ui.New(ui.Options{
-		Token: token, Addr: ln.Addr().String(), Inbox: inbox, Exports: s.ws.exports, Manifests: s.ws.manifests, Setup: setup,
-	}, backend)
+	srv, err := s.newUI(wctx, token, ln.Addr().String())
 	if err != nil {
 		say(s.stderr, "serve: %v\n", err)
 		return exitUsage
 	}
-	hs := &http.Server{Handler: srv, ReadHeaderTimeout: readHeaderLimit}
+	inflight := newGate()
+	hs := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !inflight.enter() {
+				http.Error(w, "shutting down", http.StatusServiceUnavailable)
+				return
+			}
+			defer inflight.leave()
+			srv.ServeHTTP(w, r)
+		}),
+		ReadHeaderTimeout: readHeaderLimit,
+		// Requests run under the watch's context: cancelling it at
+		// shutdown stops a submission at its next step boundary.
+		BaseContext: func(net.Listener) context.Context { return wctx },
+	}
 	served := make(chan error, 1)
 	go func() { served <- hs.Serve(ln) }()
-	link := fmt.Sprintf("http://%s/auth/session?token=%s", ln.Addr().String(), token)
+	link := fmt.Sprintf("http://%s/auth/session?token=%s", ln.Addr().String(), url.QueryEscape(token))
 	say(stdout, "Addepar Intake is running.\nworkspace: %s\nopen: %s\n", s.ws.dir, link)
 	s.env.ready(link)
 	if open {
@@ -193,20 +200,100 @@ func (s *server) run(ctx context.Context, ln net.Listener, token string, open bo
 		say(s.stderr, "serve: the server stopped: %v\n", err)
 		code = exitFail
 	case c := <-s.watchDone:
-		say(s.stderr, "serve: the folder watch stopped (exit %d): the store must be reopened\n", c)
 		s.watchDone <- c
-		code = exitFail
+		// A signal can end the watch before this select sees it: only a
+		// watch that stopped on its own is a failure.
+		if ctx.Err() == nil {
+			say(s.stderr, "serve: the folder watch stopped (exit %d): the store must be reopened\n", c)
+			code = exitFail
+		}
 	}
-	sctx, scancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
-	defer scancel()
-	_ = hs.Shutdown(sctx)
-	cancel()
+	s.shutdown(ctx, hs, cancel, inflight)
 	if s.host != nil {
 		if c := <-s.watchDone; c != standalone.ExitComplete && code == exitOK {
 			code = c
 		}
 	}
 	return code
+}
+
+// newUI starts the configured workspace's host and watch and builds the
+// UI on it, or, with no configuration yet, builds the UI in setup mode,
+// whose setup starts them (ADR 0022, item 4).
+func (s *server) newUI(wctx context.Context, token, addr string) (*ui.Server, error) {
+	opts := ui.Options{Token: token, Addr: addr, Inbox: s.ws.inbox, Exports: s.ws.exports, Manifests: s.ws.manifests}
+	if _, err := os.Stat(s.ws.config); err == nil {
+		if opts.Inbox, err = s.start(wctx); err != nil {
+			return nil, err
+		}
+		return ui.New(opts, s.host) //nolint:wrapcheck // ui names it
+	}
+	opts.Setup = func(_ context.Context, in ui.SetupInput) (ui.Backend, error) {
+		if err := s.setup(in); err != nil {
+			return nil, err
+		}
+		if _, err := s.start(wctx); err != nil {
+			_ = os.Remove(s.ws.config) // setup runs again with the person's next try
+			return nil, err
+		}
+		return s.host, nil
+	}
+	return ui.New(opts, nil) //nolint:wrapcheck // ui names it
+}
+
+// shutdown stops the server: requests in flight get the grace period,
+// then their context is cancelled (a submission stops at its next step
+// boundary) and every handler is joined, so none outlives the host.
+func (s *server) shutdown(ctx context.Context, hs *http.Server, cancel context.CancelFunc, inflight *gate) {
+	sctx, scancel := context.WithTimeout(context.WithoutCancel(ctx), s.grace)
+	defer scancel()
+	err := hs.Shutdown(sctx)
+	cancel()
+	if err != nil {
+		_ = hs.Close()
+	}
+	inflight.closeAndWait()
+}
+
+// gate counts the requests in flight; once closed it admits none, and
+// closeAndWait returns when the last one has left.
+type gate struct {
+	cond   *sync.Cond
+	mu     sync.Mutex
+	n      int
+	closed bool
+}
+
+func newGate() *gate {
+	g := &gate{}
+	g.cond = sync.NewCond(&g.mu)
+	return g
+}
+
+func (g *gate) enter() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed {
+		return false
+	}
+	g.n++
+	return true
+}
+
+func (g *gate) leave() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.n--
+	g.cond.Broadcast()
+}
+
+func (g *gate) closeAndWait() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.closed = true
+	for g.n > 0 {
+		g.cond.Wait()
+	}
 }
 
 // start opens the host on the workspace's configuration and starts its
@@ -247,7 +334,8 @@ func (s *server) setup(in ui.SetupInput) error {
 	if _, err := os.Stat(s.ws.config); err == nil {
 		return errors.New("the workspace is already configured")
 	}
-	secrets, err := s.writeSecret(in.Key)
+	cred := s.ws.credential()
+	secrets, err := s.writeSecret(cred, in.Key)
 	if err != nil {
 		return err
 	}
@@ -257,7 +345,7 @@ func (s *server) setup(in ui.SetupInput) error {
 		"store":      map[string]any{"kind": "file", "dir": "store"},
 		"trigger":    map[string]any{"kind": "folder", "dir": "../Inbox"},
 		"model": map[string]any{
-			"provider": in.Provider, "name": in.Model, "credential": modelCredential, "timeout": "5m",
+			"provider": in.Provider, "name": in.Model, "credential": cred, "timeout": "5m",
 		},
 		"credentials": map[string]any{"file": secrets},
 		"budgets":     map[string]any{"turns": 16, "active_time": "10m", "tokens": 600000, "tokens_estimated": true},
@@ -283,10 +371,10 @@ func (s *server) setup(in ui.SetupInput) error {
 	return nil
 }
 
-// writeSecret stores the key as the model credential in the user's
-// secrets file, outside the workspace, owner-only, keeping any other
-// credential in it, and returns its path.
-func (s *server) writeSecret(key string) (string, error) {
+// writeSecret stores the key as the named credential in the user's
+// secrets file, outside the workspace, owner-only, keeping every other
+// credential in it (another workspace's included), and returns its path.
+func (s *server) writeSecret(name, key string) (string, error) {
 	base, err := s.env.configDir()
 	if err != nil {
 		return "", fmt.Errorf("no user configuration folder for the API key: %w", err)
@@ -302,10 +390,13 @@ func (s *server) writeSecret(key string) (string, error) {
 		if err = strictjson.Decode(b, &values); err != nil {
 			return "", fmt.Errorf("secrets file %s: %w", path, err)
 		}
+		if values == nil {
+			return "", fmt.Errorf("secrets file %s: not a JSON object", path)
+		}
 	case !errors.Is(rerr, fs.ErrNotExist):
 		return "", fmt.Errorf("secrets: %w", rerr)
 	}
-	values[modelCredential] = key
+	values[name] = key
 	b, err := json.MarshalIndent(values, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("secrets: %w", err)

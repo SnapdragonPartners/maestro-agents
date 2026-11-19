@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -88,7 +89,8 @@ func startServe(t *testing.T, p standalone.Program, ws string, env serveEnv) *se
 	if resp := s.get("/auth/session?token=nope"); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token: %d", resp.StatusCode)
 	}
-	resp := s.get("/auth/session?token=" + testToken)
+	// The printed link, its token encoded, signs in.
+	resp := s.get(u.RequestURI())
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("sign in: %d", resp.StatusCode)
 	}
@@ -356,6 +358,10 @@ func TestServe(t *testing.T) {
 	if rec.Record.State != "needs_review" || rec.Current.Result.Verdict != verify.Fail {
 		t.Fatalf("after a wrong correction %+v", rec)
 	}
+	// The voided approval stays in the history: the log, not the fold.
+	if hist := s.get("/records/" + hy).body; !strings.Contains(hist, "<strong>Jordan Lee</strong> approve") || strings.Contains(hist, "Approved by") {
+		t.Fatalf("history after a voiding correction:\n%s", hist)
+	}
 	form = formValues(t, s.get("/records/"+hy).body, "correct")
 	form.Set("ending.amount", "714760.65")
 	form.Set("reason", "back to the printed value")
@@ -547,8 +553,8 @@ func TestServeSetup(t *testing.T) {
 		t.Fatalf("secrets file: %v %v", fi, err)
 	}
 	b, _ := os.ReadFile(secrets)
-	if !strings.Contains(string(b), `"model": "sk-test-key"`) {
-		t.Fatalf("secrets %s", b)
+	if !strings.HasPrefix(cfg.Model.Credential, "workspace-") || !strings.Contains(string(b), `"`+cfg.Model.Credential+`": "sk-test-key"`) {
+		t.Fatalf("credential %q, secrets %s", cfg.Model.Credential, b)
 	}
 	if strings.Contains(readAll(t, ws), "sk-test-key") {
 		t.Fatal("the key is in the workspace")
@@ -568,6 +574,122 @@ func TestServeSetup(t *testing.T) {
 	s.post("/name", url.Values{"name": {"Jordan Lee"}, "next": {"/"}})
 	if resp := s.get("/"); !strings.Contains(resp.body, "No statements yet") {
 		t.Fatalf("restart: %s", resp.body)
+	}
+	s.stop()
+
+	// A second workspace sharing the secrets file gets its own credential:
+	// the first workspace's key is kept.
+	ws2 := filepath.Join(t.TempDir(), "ws2")
+	s = startServe(t, program(nil), ws2, serveEnv{configDir: func() (string, error) { return cfgDir, nil }})
+	if resp := s.post("/setup", url.Values{"provider": {"openai"}, "model": {"gpt-5"}, "key": {"sk-second-key"}}); !strings.Contains(resp.body, "Who is reviewing?") {
+		t.Fatalf("second setup: %s", resp.body)
+	}
+	s.stop()
+	cfg2, err := standalone.LoadConfig(newWorkspace(ws2).config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vals map[string]string
+	b, _ = os.ReadFile(secrets)
+	if err := json.Unmarshal(b, &vals); err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.Model.Credential == cfg.Model.Credential || vals[cfg.Model.Credential] != "sk-test-key" || vals[cfg2.Model.Credential] != "sk-second-key" {
+		t.Fatalf("credentials %q %q, secrets %v", cfg.Model.Credential, cfg2.Model.Credential, vals)
+	}
+
+	// A secrets file holding JSON null is refused, not a panic.
+	nullDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(nullDir, "addepar"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nullDir, "addepar", secretsName), []byte("null"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s = startServe(t, program(nil), filepath.Join(t.TempDir(), "ws3"), serveEnv{configDir: func() (string, error) { return nullDir, nil }})
+	if resp := s.post("/setup", url.Values{"provider": {"openai"}, "model": {"gpt-5"}, "key": {"k"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(resp.body, "not a JSON object") {
+		t.Fatalf("null secrets: %d %s", resp.StatusCode, resp.body)
+	}
+}
+
+// TestServeTokenEncoded: a session token with characters a URL query
+// changes ('+', '&', '#') still signs in from the printed link.
+func TestServeTokenEncoded(t *testing.T) {
+	tok := "abc+def&ghi#jkl/mno=0123456789"
+	s := startServe(t, program(nil), filepath.Join(t.TempDir(), "ws"), serveEnv{getenv: func(k string) string {
+		if k == tokenEnv {
+			return tok
+		}
+		return ""
+	}})
+	if resp := s.get("/"); !strings.Contains(resp.body, "Set up Addepar Intake") {
+		t.Fatalf("not signed in: %s", resp.body)
+	}
+}
+
+// TestServeCancelDuringOpen: a signal that ends the watch before serve
+// waits on it is a clean exit, not a failed watch.
+func TestServeCancelDuringOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the file store does not support Windows")
+	}
+	ws := filepath.Join(t.TempDir(), "ws")
+	writeServeConfig(t, ws)
+	ctx, cancel := context.WithCancel(context.Background())
+	env := defaultServeEnv()
+	env.getenv = func(string) string { return testToken }
+	env.open = func(string) error {
+		cancel()
+		time.Sleep(300 * time.Millisecond) // the watch ends meanwhile
+		return nil
+	}
+	var out, errb bytes.Buffer
+	if code := serveCommand(ctx, scriptedProgram(nil), []string{"-workspace", ws, "-addr", "127.0.0.1:0"}, &out, &errb, env); code != exitOK {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+}
+
+// TestServeShutdownJoinsHandlers: a request still running after the grace
+// period has its context cancelled and is joined before shutdown returns,
+// so it never outlives the host.
+func TestServeShutdownJoinsHandlers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started, finished := make(chan struct{}), make(chan struct{})
+	g := newGate()
+	hs := &http.Server{
+		Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			if !g.enter() {
+				return
+			}
+			defer g.leave()
+			close(started)
+			<-r.Context().Done()
+			time.Sleep(100 * time.Millisecond)
+			close(finished)
+		}),
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = hs.Serve(ln) }()
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String() + "/") //nolint:noctx // test
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-started
+	s := &server{grace: 50 * time.Millisecond}
+	s.shutdown(context.Background(), hs, cancel, g)
+	select {
+	case <-finished:
+	default:
+		t.Fatal("shutdown returned before the handler finished")
+	}
+	if g.enter() {
+		t.Fatal("the gate admits a request after shutdown")
 	}
 }
 

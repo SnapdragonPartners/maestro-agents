@@ -287,7 +287,7 @@ type RecordDetail struct {
 	Checks   []verify.CheckResult
 	Fields   []FieldView
 	Pages    []PageView
-	Log      []export.ReviewAction
+	Log      []review.Entry
 	Form     RecordForm
 	State    review.State
 }
@@ -328,7 +328,7 @@ func (s *Server) record(ctx context.Context, sha, nn string) (*RecordDetail, err
 	if err != nil {
 		return nil, err
 	}
-	st, err := review.Load(ctx, c.objs, id)
+	st, log, err := review.LoadLog(ctx, c.objs, id)
 	if err != nil {
 		if _, ok, rerr := c.reader.Object(ctx, c.objs.Namespace, intake.RecordKey(id)); rerr == nil && !ok {
 			return nil, errNotFound
@@ -337,7 +337,7 @@ func (s *Server) record(ctx context.Context, sha, nn string) (*RecordDetail, err
 	}
 	d := &RecordDetail{
 		Summary: summarize(id, &st, c.exported[id][st.Approval]), Document: doc, State: st,
-		Record: st.Record.Record, Blockers: review.Blockers(&st), Checks: st.Record.Result.Checks, Log: st.Record.Reviews,
+		Record: st.Record.Record, Blockers: review.Blockers(&st), Checks: st.Record.Result.Checks, Log: log,
 	}
 	if st.Record.Owner != nil {
 		d.Owner = *st.Record.Owner

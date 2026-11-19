@@ -332,6 +332,13 @@ func Load(ctx context.Context, o StoreObjects, id string) (State, error) {
 	return s, err
 }
 
+// LoadLog returns a record's current state and its whole review log, in
+// order: the log keeps every entry, approvals a later action voided
+// included, which the state's exporter-shaped record does not.
+func LoadLog(ctx context.Context, o StoreObjects, id string) (State, []Entry, error) {
+	return load(ctx, o, id)
+}
+
 // Records lists every record's ID, in key order.
 func Records(ctx context.Context, o StoreObjects) ([]string, error) {
 	keys, err := o.list(ctx, "records/")

@@ -235,7 +235,10 @@ func (s *Server) page(h handler, needsBackend bool) http.HandlerFunc {
 
 // safeNext keeps a redirect target on this server: a path, never a URL.
 func safeNext(p string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsAny(p, "\\\r\n") {
+	// Browsers drop tabs and newlines from a URL, so "/\t/host" would
+	// become "//host": every control character is refused first.
+	if strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) ||
+		!strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsRune(p, '\\') {
 		return "/"
 	}
 	return p

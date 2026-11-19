@@ -58,7 +58,9 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    serves the UI on `-addr`, which must be a loopback address
    (`127.0.0.1`, `::1` or `localhost`; anything else is a usage error)
    and defaults to `127.0.0.1:8741`. The first SIGINT or SIGTERM stops
-   the server (requests in flight finish) and the watch at its next step
+   the server (requests in flight get five seconds, then their context is
+   cancelled, a submission stopping at its next step boundary, and every
+   handler is joined before the host closes) and the watch at its next step
    boundary (ADR 0017, item 21); the exit code is the watch's.
 3. **The configuration is the standalone host's** (ADR 0017), written
    by setup (item 4) and editable by a technical user: `agent_type`
@@ -83,7 +85,10 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    `<user config dir>/addepar/secrets.json` (on macOS `~/Library/Application
    Support/addepar/`), owner-only, as ADR 0017's secrets file
    (item 19): copying `.agent/` for an auditor must never carry the key.
-   The configuration names the file by absolute path. A control-panel
+   The configuration names the file by absolute path, and the key by the
+   workspace's own credential name (`workspace-` and the first 16 hex
+   digits of the SHA-256 of the workspace's absolute path), so setting up
+   a second workspace never replaces the first's key. A control-panel
    app that keeps the key in the Keychain can pass it by environment
    instead (`credentials.env`); that is its configuration.
 
