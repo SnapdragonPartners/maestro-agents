@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -785,6 +786,39 @@ func TestServeSignalKeepsRequests(t *testing.T) {
 	}
 	if code := <-done; code != exitOK {
 		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+}
+
+// failingListener accepts nothing: Serve fails at once, a permanent error.
+type failingListener struct{ net.Listener }
+
+func (failingListener) Accept() (net.Conn, error) { return nil, errors.New("listener broken") }
+
+// TestServeServerFailureStopsWatch: when the HTTP server fails on its own,
+// serve stops the watch and returns, without waiting for a signal.
+func TestServeServerFailureStopsWatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the file store does not support Windows")
+	}
+	ws := filepath.Join(t.TempDir(), "ws")
+	writeServeConfig(t, ws)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := defaultServeEnv()
+	env.open = func(string) error { return nil }
+	var errb bytes.Buffer
+	s := &server{p: scriptedProgram(nil), ws: newWorkspace(ws), stderr: &errb, env: env, watchDone: make(chan int, 1), grace: time.Second}
+	done := make(chan int, 1)
+	go func() { done <- s.run(context.Background(), failingListener{ln}, testToken, false, io.Discard) }()
+	select {
+	case code := <-done:
+		if code != exitFail || !strings.Contains(errb.String(), "the server stopped") {
+			t.Fatalf("exit %d: %s", code, errb.String())
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("serve hung after its server failed")
 	}
 }
 

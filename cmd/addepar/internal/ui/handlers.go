@@ -169,6 +169,11 @@ func (s *Server) actionSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 		return
 	}
 	if r.PostFormValue("kind") == string(review.Correct) && wantsRows(r.PostForm) {
+		if tooManyRows(r.PostForm) {
+			sess.say("error", errTooManyRows.Error())
+			http.Redirect(w, r, back, http.StatusSeeOther)
+			return
+		}
 		s.renderRecord(w, r, sess, r.PostForm)
 		return
 	}
@@ -236,11 +241,16 @@ func (s *Server) manualSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 		s.fail(w, sess, http.StatusNotFound, "There is no such document.")
 		return
 	}
+	back := "/documents/" + sha
 	if wantsRows(r.PostForm) {
+		if tooManyRows(r.PostForm) {
+			sess.say("error", errTooManyRows.Error())
+			http.Redirect(w, r, back, http.StatusSeeOther)
+			return
+		}
 		s.renderDocument(w, r, sess, r.PostForm)
 		return
 	}
-	back := "/documents/" + sha
 	seen, err := strconv.Atoi(r.PostFormValue("seen"))
 	if err != nil {
 		sess.say("error", "The form is incomplete: reload the page.")

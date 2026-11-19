@@ -124,6 +124,15 @@ func formFromValues(v url.Values) RecordForm {
 // submitting.
 func wantsRows(v url.Values) bool { return v.Get("more") != "" }
 
+// tooManyRows reports a form past maxRows lines or repeats: refused,
+// whether submitted or extended, never truncated.
+func tooManyRows(v url.Values) bool {
+	return v.Has(fmt.Sprintf("lines.%d.label", maxRows)) || v.Has(fmt.Sprintf("repeats.%d.label", maxRows))
+}
+
+// errTooManyRows is tooManyRows' message for the person.
+var errTooManyRows = formErr("the form has more than %d lines or repeats", maxRows)
+
 // formError is a form a person filled in wrongly: the message is theirs.
 type formError struct{ msg string }
 
@@ -234,8 +243,8 @@ func parseRecordForm(v url.Values) (json.RawMessage, error) {
 	if d := f.text("dash_zero"); d != "" {
 		m["dash_zero"] = d
 	}
-	if v.Has(fmt.Sprintf("lines.%d.label", maxRows)) || v.Has(fmt.Sprintf("repeats.%d.label", maxRows)) {
-		return nil, formErr("the form has more than %d lines or repeats", maxRows)
+	if tooManyRows(v) {
+		return nil, errTooManyRows
 	}
 	if lines := f.rows("lines", "line", true); len(lines) > 0 {
 		m["lines"] = lines

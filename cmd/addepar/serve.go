@@ -218,6 +218,9 @@ func (s *server) run(ctx context.Context, ln net.Listener, token string, open bo
 			code = exitFail
 		}
 	}
+	// Stop the watch on every path, not only a signal's: after a server
+	// failure ctx is still live, and the watch would never end.
+	cancel()
 	s.shutdown(ctx, hs, rcancel, inflight)
 	if s.host != nil {
 		if c := <-s.watchDone; c != standalone.ExitComplete && code == exitOK {

@@ -233,6 +233,14 @@ func TestInboxFilters(t *testing.T) {
 func TestFormFromValues(t *testing.T) {
 	v := url.Values{"investor.text": {"A"}, "lines.0.label": {"x"}, "lines.0.amount": {"1"}, "lines.0.kind": {"subtotal"},
 		"lines.1.label": {""}, "repeats.0.label": {"r"}}
+	if tooManyRows(v) {
+		t.Fatal("a small draft is too many rows")
+	}
+	v.Set(fmt.Sprintf("repeats.%d.label", maxRows), "too far")
+	if !tooManyRows(v) {
+		t.Fatal("an oversized draft passes")
+	}
+	v.Del(fmt.Sprintf("repeats.%d.label", maxRows))
 	f := formFromValues(v)
 	if f.InvestorText != "A" || len(f.Lines) != 2+blankRows || f.Lines[0].Kind != "subtotal" || f.Lines[0].Amount != "1" || len(f.Repeats) != 1+blankRows {
 		t.Fatalf("form %+v", f)
