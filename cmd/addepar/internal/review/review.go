@@ -26,8 +26,8 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/intake"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/statement"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/verify"
-	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
 	"github.com/SnapdragonPartners/maestro-agents/store"
+	"github.com/SnapdragonPartners/maestro-agents/strictjson"
 )
 
 // Kind is an action's kind (ADR 0021, items 7 and 9).

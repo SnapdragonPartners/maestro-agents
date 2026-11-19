@@ -55,5 +55,6 @@ template.
 | [0018](0018-the-intake-agent-type-and-the-vertical-slice.md) | The intake agent type and the vertical slice | Amended by ADR-0019, ADR-0021 |
 | [0019](0019-the-extraction-agent-reads-the-pdf.md) | The extraction agent reads the PDF | Accepted |
 | [0020](0020-the-scoring-harness.md) | The scoring harness | Amended by ADR-0021 |
-| [0021](0021-review-writes-approval-and-export.md) | Review writes, approval and export | Amended by ADR-0022 |
+| [0021](0021-review-writes-approval-and-export.md) | Review writes, approval and export | Amended by ADR-0022, ADR-0023 |
 | [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted |
+| [0023](0023-public-strictjson-and-regularfile.md) | Public `strictjson` and `regularfile` for agents in other modules | Accepted |

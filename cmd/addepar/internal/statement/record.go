@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/decimal"
-	"github.com/SnapdragonPartners/maestro-agents/internal/strictjson"
+	"github.com/SnapdragonPartners/maestro-agents/strictjson"
 )
 
 // Precision is how a statement prints its amounts.

@@ -3,7 +3,7 @@ package standalone
 import (
 	"os"
 
-	"github.com/SnapdragonPartners/maestro-agents/internal/regularfile"
+	"github.com/SnapdragonPartners/maestro-agents/regularfile"
 )
 
 // openRegular opens an operator's regular file for reading without hanging
