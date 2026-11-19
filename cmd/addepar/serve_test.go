@@ -408,6 +408,21 @@ func TestServe(t *testing.T) {
 	if !strings.Contains(bad.body, `value="Typed Investor"`) || !strings.Contains(bad.body, "must be a page number") {
 		t.Fatalf("failed manual entry:\n%s", bad.body)
 	}
+	bad = s.post("/documents/"+keelson+"/manual", url.Values{
+		"seen": {"1"}, "investor.text": {"Typed Investor"}, "investor.page": {"one"}, "reason": {"read off page 1"},
+		"lines.0.label": {""},
+	})
+	if !strings.Contains(bad.body, `value="read off page 1"`) {
+		t.Fatalf("the note was not kept:\n%s", bad.body)
+	}
+	// An oversized submission is refused, never shown truncated.
+	huge := url.Values{"seen": {"1"}, "investor.text": {"Typed Investor"}, "reason": {"x"}}
+	for i := 0; i <= ui.MaxRows; i++ {
+		huge.Set(fmt.Sprintf("lines.%d.label", i), fmt.Sprint("row ", i))
+	}
+	if over := s.post("/documents/"+keelson+"/manual", huge); !strings.Contains(over.body, "more than") || strings.Contains(over.body, `value="Typed Investor"`) {
+		t.Fatalf("oversized submission: %s", over.body[:min(len(over.body), 2000)])
+	}
 	var apiErr struct {
 		Error   string          `json:"error"`
 		Refusal *review.Refusal `json:"refusal"`

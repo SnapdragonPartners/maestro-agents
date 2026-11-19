@@ -71,7 +71,7 @@
   <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="seen" value="{{$d.CorrectSeen}}">
   <input type="hidden" name="kind" value="correct">
   {{template "recordform" $d.Form}}
-  <label>Reason for the correction <input name="reason" required></label>
+  <label>Reason for the correction <input name="reason" value="{{$d.Form.Reason}}" required></label>
   <button type="submit">Save the correction</button>
 </form>
 </details>

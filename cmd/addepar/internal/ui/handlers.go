@@ -43,9 +43,12 @@ func (s *Server) documentPage(w http.ResponseWriter, r *http.Request, sess *sess
 }
 
 // renderDocument shows the document page; draft, when set, is the manual
-// form's posted values to show again with more rows.
+// form's posted values to show again (more rows, or after a failure).
 func (s *Server) renderDocument(w http.ResponseWriter, r *http.Request, sess *session, draft url.Values) {
 	sha := r.PathValue("sha")
+	if refuseDraft(w, r, sess, draft, "/documents/"+sha) {
+		return
+	}
 	if !shaOK(sha) {
 		s.fail(w, sess, http.StatusNotFound, "There is no such document.")
 		return
@@ -83,9 +86,24 @@ func (s *Server) recordPage(w http.ResponseWriter, r *http.Request, sess *sessio
 	s.renderRecord(w, r, sess, nil)
 }
 
+// refuseDraft is the one gate every draft passes before it is shown again:
+// a form past the row limit cannot be shown whole, so it is refused with
+// the reason, never truncated. It reports whether it answered.
+func refuseDraft(w http.ResponseWriter, r *http.Request, sess *session, draft url.Values, back string) bool {
+	if draft == nil || !tooManyRows(draft) {
+		return false
+	}
+	sess.say("error", errTooManyRows.Error())
+	http.Redirect(w, r, back, http.StatusSeeOther)
+	return true
+}
+
 // renderRecord shows the record page; draft, when set, is the correction
-// form's posted values to show again with more rows.
+// form's posted values to show again (more rows, or after a failure).
 func (s *Server) renderRecord(w http.ResponseWriter, r *http.Request, sess *session, draft url.Values) {
+	if refuseDraft(w, r, sess, draft, "/records/"+r.PathValue("sha")+"/"+r.PathValue("nn")) {
+		return
+	}
 	d, err := s.record(r.Context(), r.PathValue("sha"), r.PathValue("nn"))
 	switch {
 	case errors.Is(err, errNotFound):
@@ -169,11 +187,6 @@ func (s *Server) actionSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 		return
 	}
 	if r.PostFormValue("kind") == string(review.Correct) && wantsRows(r.PostForm) {
-		if tooManyRows(r.PostForm) {
-			sess.say("error", errTooManyRows.Error())
-			http.Redirect(w, r, back, http.StatusSeeOther)
-			return
-		}
 		s.renderRecord(w, r, sess, r.PostForm)
 		return
 	}
@@ -260,11 +273,6 @@ func (s *Server) manualSubmit(w http.ResponseWriter, r *http.Request, sess *sess
 	}
 	back := "/documents/" + sha
 	if wantsRows(r.PostForm) {
-		if tooManyRows(r.PostForm) {
-			sess.say("error", errTooManyRows.Error())
-			http.Redirect(w, r, back, http.StatusSeeOther)
-			return
-		}
 		s.renderDocument(w, r, sess, r.PostForm)
 		return
 	}

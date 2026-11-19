@@ -15,7 +15,10 @@ const blankRows = 3
 
 // maxRows bounds the line and repeat rows a form submits: more is
 // refused, never truncated (a record is at most 1 MiB, so far fewer fit).
-const maxRows = 2000
+const maxRows = MaxRows
+
+// MaxRows is the most line or repeat rows a record form takes.
+const MaxRows = 2000
 
 // AmountForm is an amount's form fields.
 type AmountForm struct{ Label, Amount, Page string }
@@ -36,9 +39,12 @@ type RecordForm struct {
 	Precision                                            string
 	ColumnLabel, ColumnSection, ColumnReason, ColumnPage string
 	DashZero                                             string
-	Beginning, Ending, FundTotal                         AmountForm
-	Lines                                                []LineForm
-	Repeats                                              []AmountForm
+	// Reason is the action's reason or the manual entry's note: kept
+	// with a draft shown again.
+	Reason                       string
+	Beginning, Ending, FundTotal AmountForm
+	Lines                        []LineForm
+	Repeats                      []AmountForm
 }
 
 func page(n int) string {
@@ -103,7 +109,7 @@ func formFromValues(v url.Values) RecordForm {
 		CurrencyCode: t("currency.code"), CurrencyEvidence: t("currency.evidence"), CurrencyPage: t("currency.page"),
 		Precision:   t("precision"),
 		ColumnLabel: t("column.label"), ColumnSection: t("column.section"), ColumnReason: t("column.reason"), ColumnPage: t("column.page"),
-		DashZero:  t("dash_zero"),
+		DashZero: t("dash_zero"), Reason: t("reason"),
 		Beginning: amt("beginning"), Ending: amt("ending"), FundTotal: amt("fund_total"),
 	}
 	for i := 0; i < maxRows && v.Has(fmt.Sprintf("lines.%d.label", i)); i++ {

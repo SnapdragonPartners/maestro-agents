@@ -22,7 +22,7 @@
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="seen" value="{{.Data.Seen}}">
   {{template "recordform" .Data.Form}}
-  <label>Note (where you read it, anything unusual) <input name="reason" required></label>
+  <label>Note (where you read it, anything unusual) <input name="reason" value="{{.Data.Form.Reason}}" required></label>
   <button type="submit">Save the record</button>
 </form>
 </details>
