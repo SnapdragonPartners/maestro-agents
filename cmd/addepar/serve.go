@@ -160,7 +160,6 @@ type server struct {
 	stderr    io.Writer
 	host      *standalone.Host
 	watchDone chan int
-	cancel    context.CancelFunc
 	env       serveEnv
 	ws        workspace
 	p         standalone.Program
@@ -173,7 +172,6 @@ func (s *server) run(ctx context.Context, ln net.Listener, token string, open bo
 	// The watch stops at the signal; requests have their own context,
 	// cancelled only after the grace period (ADR 0022, item 2).
 	wctx, cancel := context.WithCancel(ctx)
-	s.cancel = cancel
 	defer cancel()
 	rctx, rcancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer rcancel()

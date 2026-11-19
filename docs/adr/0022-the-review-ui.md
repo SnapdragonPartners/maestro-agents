@@ -46,7 +46,10 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    The watch and `Submit` already share the per-instance locks (ADR 0021,
    item 3), so a review submitted while the watch runs waits for, or
    finishes, the document's run, and the watch skips an instance a
-   submission holds. This amends ADR 0021, item 14 ("the in-process host never watches").
+   submission holds. This amends ADR 0021, item 14, where `standalone.Open`'s host only
+   submits runs ("while `addepar run` watches, the file store's lock
+   keeps it out, which `addepar serve` (the UI's ADR) resolves by being
+   one process"): the in-process host now watches too.
 
 ### The command and the workspace
 
