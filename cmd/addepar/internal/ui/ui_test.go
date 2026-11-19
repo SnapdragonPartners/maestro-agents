@@ -286,8 +286,9 @@ func TestServerGuards(t *testing.T) {
 	if w := get("/", "localhost:8741", c); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/setup" {
 		t.Fatalf("before setup: %d %s", w.Code, w.Header().Get("Location"))
 	}
-	if w := get("/setup", "localhost:8741", c); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "API key") {
-		t.Fatalf("setup page: %d", w.Code)
+	if w := get("/setup", "localhost:8741", c); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "API key") ||
+		!strings.Contains(w.Body.String(), `value="claude-opus-5-5"`) {
+		t.Fatalf("setup page (the default model in the page, for no JavaScript): %d", w.Code)
 	}
 	if _, err := New(Options{Token: "short", Addr: "127.0.0.1:1"}, nil); err == nil {
 		t.Fatal("a short token was accepted")

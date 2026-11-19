@@ -111,8 +111,10 @@ The human operator settled the shape on 2026-11-17 and 2026-11-18:
    The token stays valid for the life of the process, so the link (or a
    control-panel app) reopens the UI after the browser is closed; the
    same user can already read the process's environment. Sessions live in
-   memory and end with the process. Every other route answers 401 without
-   a valid session cookie, or, for the JSON routes, `Authorization:
+   memory and end with the process. Every other route but the static
+   assets (`/static/`: the stylesheet and script, which hold no data and
+   which the sign-in page itself needs) answers 401 without a valid
+   session cookie, or, for the JSON routes, `Authorization:
    Bearer <token>`, which a control-panel app uses.
 7. **The operator's name.** A session has no name until the person
    types one (a form shown before anything else); it is the `by` of every

@@ -45,7 +45,10 @@ func (s *Server) setupPage(w http.ResponseWriter, _ *http.Request, sess *session
 		s.render(w, sess, "setup-done", &view{Title: "Set up"})
 		return
 	}
-	s.render(w, sess, "setup", &view{Title: "Set up", Data: &setupData{Providers: Providers(), Provider: Providers()[0].ID}})
+	// The default model is in the page itself, so setup works without
+	// JavaScript; app.js only follows a change of provider.
+	first := Providers()[0]
+	s.render(w, sess, "setup", &view{Title: "Set up", Data: &setupData{Providers: Providers(), Provider: first.ID, Model: first.Model}})
 }
 
 // setupSubmit writes the configuration and starts the agent (ADR 0022,
