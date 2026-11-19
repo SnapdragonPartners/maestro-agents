@@ -286,7 +286,14 @@ func TestServe(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(w.inbox, name+".pdf"), b, 0o600); err != nil {
+		// Stage as a dotfile and rename in, as an operator's copy should
+		// land: the watch skips dotfiles, and the rename is atomic, so it
+		// never sees a half-written file under load.
+		tmp := filepath.Join(w.inbox, "."+name+".tmp")
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, filepath.Join(w.inbox, name+".pdf")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -400,8 +407,17 @@ func TestServe(t *testing.T) {
 		t.Fatalf("manual: %d %v", code, out)
 	}
 	ke := intake.RecordID(keelson, 1)
-	// An unknown record is 404 on a POST too, as on a GET.
 	var nf map[string]any
+	// A manual entry for a well-formed but unknown document is a 404 (a
+	// no_document refusal), never a failed run (buggrit f-6424dd).
+	if code := s.api(http.MethodPost, "/api/documents/"+strings.Repeat("0", 64)+"/manual", map[string]any{"kind": "manual", "seen": 0, "extraction": keelsonRec, "reason": "x"}, &nf); code != http.StatusNotFound {
+		t.Fatalf("manual for an unknown document: %d %v", code, nf)
+	}
+	// A page the PDF does not have is a 404, not a failure.
+	if pg := s.get("/documents/" + halyard + "/pages/99"); pg.StatusCode != http.StatusNotFound {
+		t.Fatalf("page past the end: %d", pg.StatusCode)
+	}
+	// An unknown record is 404 on a POST too, as on a GET.
 	if code := s.api(http.MethodPost, "/api/records/"+keelson+"/09/actions", map[string]any{"kind": "approve", "seen": 0}, &nf); code != http.StatusNotFound {
 		t.Fatalf("POST to an unknown record: %d %v", code, nf)
 	}

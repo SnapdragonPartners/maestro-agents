@@ -198,7 +198,7 @@ type Mark struct {
 func (s *Server) evidencePages(ctx context.Context, sha string, d *intake.Document, fs []FieldView) []PageView {
 	nums := map[int]bool{}
 	for i := range fs {
-		if fs[i].Page > 0 && (d.Document == nil || fs[i].Page <= d.Document.PageCount) {
+		if fs[i].Page > 0 && fs[i].Page <= d.Document.PageCount { // record() loads only a document that is there
 			nums[fs[i].Page] = true
 		}
 	}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SnapdragonPartners/maestro-cms/extract/pdf/pdftoppm"
+
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/export"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
 )
@@ -135,6 +137,10 @@ func (s *Server) pageImage(w http.ResponseWriter, r *http.Request, _ *session) {
 		return
 	}
 	img, err := s.opts.Pages.Render(r.Context(), sha, data, n)
+	if errors.Is(err, pdftoppm.ErrPageOutOfRange) {
+		http.NotFound(w, r) // a page the PDF does not have
+		return
+	}
 	if err != nil {
 		s.opts.Logger.Warn("ui: cannot render a page", "document", sha, "page", n, "error", err.Error())
 		http.Error(w, "the page cannot be shown", http.StatusInternalServerError)
