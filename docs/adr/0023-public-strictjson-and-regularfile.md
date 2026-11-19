@@ -29,14 +29,15 @@ must refuse the same files.
 
 1. **`strictjson` and `regularfile` are public packages at the module
    root**: `github.com/SnapdragonPartners/maestro-agents/strictjson` and
-   `.../regularfile`. They move unchanged: the same functions and
-   behavior (`strictjson.Decode`; `regularfile.Open`, `Check`,
-   `ReadCapped`, `PlusOne` and `ErrTooLarge`), the same tests. The
-   package comments change, to name agents in general rather than the
-   intake agent; and `strictjson.Decode`, which a caller in another
-   module may now misuse, refuses a destination that is not a non-nil
-   pointer with `*json.InvalidUnmarshalError`, as `encoding/json` does,
-   where it panicked.
+   `.../regularfile`. The exported API keeps its shape
+   (`strictjson.Decode`; `regularfile.Open`, `Check`, `ReadCapped`,
+   `PlusOne` and `ErrTooLarge`) and the tests move with the packages.
+   Two things change: the package comments name agents in general
+   rather than the intake agent; and `strictjson.Decode`, which a caller
+   in another module may now misuse, refuses a destination that is not a
+   non-nil pointer with `*json.InvalidUnmarshalError`, as `encoding/json`
+   does, where it panicked, with one test added for it. `regularfile`'s
+   behavior is unchanged.
 
 2. **They are the decoder and file opener for agents.** An agent built
    on this library decodes its operators' files and its tools' and
