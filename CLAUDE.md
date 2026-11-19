@@ -246,9 +246,11 @@ Load-bearing decisions so far:
   word boxes on the pdftoppm-rendered page, every copy on the cited page
   ([ADR 0022](docs/adr/0022-the-review-ui.md))
 - `strictjson` and `regularfile` are public packages at the module root
-  (ADR 0023), moved unchanged from `internal/` so agents in their own
-  modules (morris-agents) decode operators' files and tools' arguments,
-  and open operators' files, exactly as the host does; the rest of
+  (ADR 0023), moved from `internal/` so agents in their own modules
+  (morris-agents) decode operators' files and tools' arguments, and open
+  operators' files, exactly as the host does; `strictjson.Decode` refuses
+  a destination that is not a non-nil pointer with
+  `*json.InvalidUnmarshalError` rather than panicking; the rest of
   `internal/` stays internal; before v1 a minor release may change an
   API, noted in its release notes; `v0.1.0` is the first tag
   ([ADR 0023](docs/adr/0023-public-strictjson-and-regularfile.md))
@@ -328,7 +330,7 @@ store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemet
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
 regularfile/         # Opening an operator's file only if regular, never hanging on a FIFO (ADR 0017, 0023); public for agents in other modules
-strictjson/          # The strict JSON decoder for operators' files and agents' records and tool arguments (ADR 0017, 0021, 0023); public for agents in other modules
+strictjson/          # The strict JSON decoder for operators' files and agents' records and tool arguments (ADR 0017, 0020, 0021, 0023); public for agents in other modules
 cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019, 0020, 0021, 0022): `run` (standalone host), `verify`, `score`, `export` and `serve`;
                      #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
                      #   decimal, document (hash, pdfinfo, layout text), review (the review type, its log, approval, export),

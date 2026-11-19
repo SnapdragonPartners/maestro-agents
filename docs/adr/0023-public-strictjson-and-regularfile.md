@@ -31,9 +31,12 @@ must refuse the same files.
    root**: `github.com/SnapdragonPartners/maestro-agents/strictjson` and
    `.../regularfile`. They move unchanged: the same functions and
    behavior (`strictjson.Decode`; `regularfile.Open`, `Check`,
-   `ReadCapped`, `PlusOne` and `ErrTooLarge`), the same tests. Only the
+   `ReadCapped`, `PlusOne` and `ErrTooLarge`), the same tests. The
    package comments change, to name agents in general rather than the
-   intake agent.
+   intake agent; and `strictjson.Decode`, which a caller in another
+   module may now misuse, refuses a destination that is not a non-nil
+   pointer with `*json.InvalidUnmarshalError`, as `encoding/json` does,
+   where it panicked.
 
 2. **They are the decoder and file opener for agents.** An agent built
    on this library decodes its operators' files and its tools' and
@@ -42,9 +45,9 @@ must refuse the same files.
    refuses.
 
 3. **The rest of `internal/` stays internal.** `internal/storecore` and
-   `internal/jsonschema` are reached only through `store/` and `agent/`;
-   no agent imports them, and the module's public surface grows only by
-   these two packages.
+   `internal/jsonschema` are reached only through `store/`, `agent/` and
+   `standalone/`; no agent imports them, and the module's public
+   surface grows only by these two packages.
 
 4. **Their API follows the module's version.** They are stable under
    the same rule as the rest of the module: before v1, a minor release
