@@ -32,7 +32,9 @@
 //
 // An agent's own commands, or a harness such as the scoring package, can
 // open the host in process instead (ADR 0020, item 2; ADR 0021): Open
-// loads and validates any configuration, without watching a folder.
+// loads and validates any configuration. Host.Watch runs a folder
+// configuration's watch in process, as run does (ADR 0022), while the
+// caller submits runs beside it.
 // Host.RunInput runs one input as run -input does and returns its Report;
 // it needs a one_shot trigger (ErrNotOneShot otherwise), and
 // Host.TriggerKind says which the configuration has. Host.Submit runs one

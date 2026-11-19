@@ -356,8 +356,14 @@ func applyNewManual(ctx context.Context, env *agent.Env, o objects, a *Action) (
 		return nil, refuse(RefuseStale, "the document has %d records, the action saw %d: reload it", len(keys), a.Seen)
 	}
 	var d intake.Document
-	if _, err = readJSON(ctx, o, intake.DocumentKey(sha), &d); err != nil {
+	ok, err := readJSON(ctx, o, intake.DocumentKey(sha), &d)
+	switch {
+	case err != nil:
 		return nil, err
+	case !ok || d.Document == nil:
+		// A manual record needs its document's source; never act on a
+		// document that is not there (a well-formed but unknown SHA).
+		return nil, refuse(RefuseNoDocument, "document %s is not in the store", sha)
 	}
 	id := intake.RecordID(sha, len(keys)+1)
 	e := Entry{N: 1, At: a.At.UTC(), Kind: Manual, By: a.By, Reason: a.Reason, Run: env.RunID(), Change: "entered by hand"}

@@ -2,21 +2,14 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/cmd/addepar/internal/review"
 	"github.com/SnapdragonPartners/maestro-agents/standalone"
-	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
 // stringList is a repeatable flag.
@@ -100,18 +93,18 @@ func exportCommand(ctx context.Context, p standalone.Program, args []string, std
 	var exp *review.Exported
 	switch {
 	case f.rewrite != "":
-		exp, err = storedExport(ctx, objs, f.rewrite)
+		exp, err = review.StoredExport(ctx, objs, f.rewrite)
 	case f.approved:
 		var ids []string
-		if ids, err = unexported(ctx, objs); err == nil && len(ids) == 0 {
+		if ids, err = review.Unexported(ctx, objs); err == nil && len(ids) == 0 {
 			say(stdout, "nothing to export: no approved record is waiting\n")
 			return exitOK
 		}
 		if err == nil {
-			exp, err = submitExport(ctx, h, objs, f.by, ids)
+			exp, err = review.SubmitExport(ctx, h, objs, f.by, time.Now(), ids)
 		}
 	default:
-		exp, err = submitExport(ctx, h, objs, f.by, f.records)
+		exp, err = review.SubmitExport(ctx, h, objs, f.by, time.Now(), f.records)
 	}
 	if err != nil {
 		say(stderr, "export: %v\n", err)
@@ -126,93 +119,4 @@ func exportCommand(ctx context.Context, p standalone.Program, args []string, std
 	}
 	say(stdout, "exported %d record(s) (run %s)\ncsv: %s\nmanifest: %s\n", len(exp.Records), exp.Run, csvPath, manPath)
 	return exitOK
-}
-
-// unexported lists the approved records whose current approval no export
-// holds.
-func unexported(ctx context.Context, objs review.StoreObjects) ([]string, error) {
-	all, err := review.Records(ctx, objs)
-	if err != nil {
-		return nil, fmt.Errorf("list records: %w", err)
-	}
-	exports, err := review.Exports(ctx, objs)
-	if err != nil {
-		return nil, fmt.Errorf("list exports: %w", err)
-	}
-	done := review.ExportedApprovals(exports)
-	var ids []string
-	for _, id := range all {
-		s, err := review.Load(ctx, objs, id)
-		if err != nil {
-			return nil, fmt.Errorf("record %s: %w", id, err)
-		}
-		if s.Approved() && !done[id][s.Approval] {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
-}
-
-// errRefused is an action the review run refused: the message is the
-// person's to act on.
-var errRefused = errors.New("refused")
-
-// submitExport runs the export and returns what it stored.
-func submitExport(ctx context.Context, h *standalone.Host, objs review.StoreObjects, by string, ids []string) (*review.Exported, error) {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	a := review.Action{Kind: review.Export, By: by, At: time.Now().UTC(), Records: ids}
-	payload, err := json.Marshal(a)
-	if err != nil {
-		return nil, fmt.Errorf("encode the action: %w", err)
-	}
-	rep, err := h.Submit(ctx, standalone.Submission{
-		AgentType: review.TypeName, Instance: review.ExportInstancePrefix + hex.EncodeToString(b[:]), Payload: payload,
-	})
-	if err != nil {
-		return nil, err //nolint:wrapcheck // standalone names it
-	}
-	if err = outcome(ctx, objs, &rep); err != nil {
-		return nil, err
-	}
-	return storedExport(ctx, objs, rep.Run)
-}
-
-// storedExport reads the export a run stored.
-func storedExport(ctx context.Context, objs review.StoreObjects, run string) (*review.Exported, error) {
-	var exp review.Exported
-	o, ok, err := objs.Reader.Object(ctx, objs.Namespace, review.ExportKey(run))
-	if err != nil || !ok {
-		return nil, fmt.Errorf("read the export of run %s: %v", run, cmpErr(err, "no such export"))
-	}
-	if err := json.Unmarshal(o.JSON, &exp); err != nil || exp.Export == nil {
-		return nil, fmt.Errorf("decode the export of run %s: %v", run, cmpErr(err, "no export"))
-	}
-	return &exp, nil
-}
-
-// outcome turns a review run's report into nil when it applied, the
-// refusal when it refused, and an error otherwise.
-func outcome(ctx context.Context, objs review.StoreObjects, rep *standalone.Report) error {
-	switch {
-	case rep.Error != "":
-		return fmt.Errorf("run %s has no confirmed outcome: %s", rep.Run, rep.Error)
-	case rep.Status == store.StatusSucceeded && rep.Reason.Code == agent.ReasonChanged:
-		return nil
-	case rep.Status == store.StatusSucceeded && rep.Reason.Code == agent.ReasonNoChange:
-		var r review.Refusal
-		o, ok, err := objs.Reader.Object(ctx, objs.Namespace, review.RefusalKey(rep.Run))
-		if err != nil || !ok || json.Unmarshal(o.JSON, &r) != nil {
-			return fmt.Errorf("%w (run %s; its refusal cannot be read)", errRefused, rep.Run)
-		}
-		return fmt.Errorf("%w: %s: %s", errRefused, r.Code, r.Message)
-	}
-	return fmt.Errorf("run %s ended %s (%s)", rep.Run, rep.Status, rep.Reason.Code)
-}
-
-func cmpErr(err error, otherwise string) any {
-	if err != nil {
-		return err
-	}
-	return otherwise
 }

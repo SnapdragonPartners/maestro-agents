@@ -1,0 +1,54 @@
+{{define "recordform"}}
+<fieldset><legend>Who and what</legend>
+<div class="grid">
+  <label>Investor, as printed <input name="investor.text" value="{{.InvestorText}}"></label>
+  <label>Page <input name="investor.page" value="{{.InvestorPage}}" inputmode="numeric" class="page"></label>
+  <label>Fund, as printed <input name="fund.text" value="{{.FundText}}"></label>
+  <label>Page <input name="fund.page" value="{{.FundPage}}" inputmode="numeric" class="page"></label>
+  <label>Period end (YYYY-MM-DD) <input name="period.end" value="{{.PeriodEnd}}" placeholder="2026-03-31"></label>
+  <label>Period, as printed <input name="period.label" value="{{.PeriodLabel}}"></label>
+  <label>Page <input name="period.page" value="{{.PeriodPage}}" inputmode="numeric" class="page"></label>
+  <label>Currency <input name="currency.code" value="{{.CurrencyCode}}" maxlength="3" placeholder="USD"></label>
+  <label>Currency, as printed <input name="currency.evidence" value="{{.CurrencyEvidence}}"></label>
+  <label>Page <input name="currency.page" value="{{.CurrencyPage}}" inputmode="numeric" class="page"></label>
+  <label>Amounts printed in
+    <select name="precision"><option value="cents"{{if eq .Precision "cents"}} selected{{end}}>cents</option><option value="whole"{{if eq .Precision "whole"}} selected{{end}}>whole units</option></select>
+  </label>
+</div>
+</fieldset>
+<fieldset><legend>Column the amounts are read from</legend>
+<div class="grid">
+  <label>Header, as printed <input name="column.label" value="{{.ColumnLabel}}" placeholder="Quarter to Date"></label>
+  <label>Section over it <input name="column.section" value="{{.ColumnSection}}" placeholder="Limited Partner"></label>
+  <label>Page <input name="column.page" value="{{.ColumnPage}}" inputmode="numeric" class="page"></label>
+  <label class="wide">Why this column <input name="column.reason" value="{{.ColumnReason}}"></label>
+</div>
+</fieldset>
+<fieldset><legend>Balances (label as printed, amount, page)</legend>
+<table class="amounts">
+<tr><th></th><th>Label</th><th>Amount</th><th>Page</th></tr>
+<tr><td>Beginning (optional)</td><td><input name="beginning.label" value="{{.Beginning.Label}}"></td><td><input name="beginning.amount" value="{{.Beginning.Amount}}" class="num"></td><td><input name="beginning.page" value="{{.Beginning.Page}}" class="page"></td></tr>
+<tr><td><strong>Ending</strong></td><td><input name="ending.label" value="{{.Ending.Label}}"></td><td><input name="ending.amount" value="{{.Ending.Amount}}" class="num"></td><td><input name="ending.page" value="{{.Ending.Page}}" class="page"></td></tr>
+<tr><td>Fund total (optional)</td><td><input name="fund_total.label" value="{{.FundTotal.Label}}"></td><td><input name="fund_total.amount" value="{{.FundTotal.Amount}}" class="num"></td><td><input name="fund_total.page" value="{{.FundTotal.Page}}" class="page"></td></tr>
+</table>
+</fieldset>
+<fieldset><legend>Roll-forward lines, in printed order (blank rows are ignored)</legend>
+<table class="amounts">
+<tr><th>Kind</th><th>Label</th><th>Amount</th><th>Page</th></tr>
+{{range $i, $l := .Lines}}
+<tr><td><select name="lines.{{$i}}.kind"><option value="movement"{{if eq $l.Kind "movement"}} selected{{end}}>movement</option><option value="subtotal"{{if eq $l.Kind "subtotal"}} selected{{end}}>subtotal</option></select></td>
+<td><input name="lines.{{$i}}.label" value="{{$l.Label}}"></td><td><input name="lines.{{$i}}.amount" value="{{$l.Amount}}" class="num"></td><td><input name="lines.{{$i}}.page" value="{{$l.Page}}" class="page"></td></tr>
+{{end}}
+</table>
+</fieldset>
+<fieldset><legend>Other places the ending balance is printed</legend>
+<table class="amounts">
+<tr><th>Label</th><th>Amount</th><th>Page</th></tr>
+{{range $i, $r := .Repeats}}
+<tr><td><input name="repeats.{{$i}}.label" value="{{$r.Label}}"></td><td><input name="repeats.{{$i}}.amount" value="{{$r.Amount}}" class="num"></td><td><input name="repeats.{{$i}}.page" value="{{$r.Page}}" class="page"></td></tr>
+{{end}}
+</table>
+<label>A dash in this table means zero, because (optional) <input name="dash_zero" value="{{.DashZero}}"></label>
+</fieldset>
+<button type="submit" name="more" value="1" formnovalidate>Add more rows (keeps what you typed)</button>
+{{end}}

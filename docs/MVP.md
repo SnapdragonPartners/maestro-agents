@@ -232,7 +232,9 @@ an operator requirement ([ADR 0005](adr/0005-storage-one-fenced-commit.md)).
    second agent type submitted in process, appending to the record's
    review log, and `addepar export` exports the approvals' snapshots
    ([ADR 0021](adr/0021-review-writes-approval-and-export.md)); then the
-   UI, `addepar serve`, one process with the folder watch.
+   UI, `addepar serve`, one process with the folder watch, built: the
+   workspace, first-run setup, the pages and their JSON routes, evidence
+   boxes on the rendered page ([ADR 0022](adr/0022-the-review-ui.md)).
 7. **The trial** with the operators, for one reporting cycle.
 
 ## After the MVP

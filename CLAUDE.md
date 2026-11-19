@@ -16,7 +16,8 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 - Agent executables live in this repository under `cmd/<agent>/`, beside the
   library
 
-Current state: **MVP, step 6 (the review UI)**. The store interface,
+Current state: **MVP, step 6 (the review UI) built; next, the release
+and the trial**. The store interface,
 the memory and file stores and the conformance suite exist (`store/`), and
 so do agent types, the run controller for code and model states,
 budgets, forced wrap-up with the visible clock, manifests, namespace
@@ -31,12 +32,13 @@ scoring harness (`scoring/`, ADR 0020) with the intake agent's answer-key
 comparator (`addepar score`), and the review writes the UI stands on:
 submitted runs on the standalone host (`Host.Submit`), the review agent
 type with its append-only log and approval snapshots, and `addepar
-export` (ADR 0021); the UI itself (`addepar serve`) comes next. The requirements are in
+export` (ADR 0021), and the UI, `addepar serve`: the folder watch and
+the review pages in one process (`Host.Watch`, ADR 0022). The requirements are in
 [docs/requirements.md](docs/requirements.md), and what the MVP builds
 of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
 0014 and 0016, the standalone host ADR 0017, the scoring harness ADR 0020, the intake
-agent's own design ADRs 0015, 0018, 0019 and 0021; further design
+agent's own design ADRs 0015, 0018, 0019, 0021 and 0022; further design
 arrives with the code, each piece with its ADR.
 
 Load-bearing decisions so far:
@@ -225,6 +227,21 @@ Load-bearing decisions so far:
   an absent or null amount is malformed, and the intake type is version 3;
   the operator's workspace is `Inbox/`, `Exports/` and a hidden `.agent/`
   ([ADR 0021](docs/adr/0021-review-writes-approval-and-export.md))
+- The review UI is `addepar serve` (ADR 0022): one process running the
+  folder watch in process (`Host.Watch`, beside `Submit` on the same
+  per-instance locks) and the UI (`cmd/addepar/internal/ui`, `net/http`
+  + `html/template` + `embed`, forms that work without JavaScript, JSON
+  routes under `/api/`); the workspace (default `~/Documents/Addepar
+  Intake`) is created by serve, its configuration `.agent/config.json`
+  written by browser setup (Anthropic or OpenAI), the API key in the
+  user's config dir, never the workspace; loopback only, Host check,
+  CSRF token, Origin check, CSP, `Referrer-Policy: same-origin`; the
+  session from `ADDEPAR_SESSION_TOKEN` or a random token, valid for the
+  process's life, exchanged at `/auth/session?token=` for a cookie (or a
+  bearer for `/api/`), the maestro-macos contract; a typed operator name
+  per session is every action's `by`; evidence boxes from maestro-cms
+  word boxes on the pdftoppm-rendered page, every copy on the cited page
+  ([ADR 0022](docs/adr/0022-the-review-ui.md))
 
 ### Related repositories
 
@@ -292,7 +309,7 @@ them and does not pin or bump them independently.
 ```
 doc.go               # Root package `agents`: package documentation
 agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials (ADR 0007-0014, 0016)
-standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017); in process (ADR 0020); submitted runs (ADR 0021)
+standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017); in process (ADR 0020); submitted runs (ADR 0021); in-process watch (ADR 0022)
 scoring/             # The scoring harness (TEST-4): run inputs, compare with an answer key, report (ADR 0020)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
@@ -302,11 +319,12 @@ internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
 internal/regularfile/ # Opening an operator's file only if regular, never hanging on a FIFO (ADR 0017); shared with cmd/addepar
 internal/strictjson/ # The strict JSON decoder for operators' files (host config and secrets, the scoring mapping) and extraction records (ADR 0017, 0020, 0021)
-cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019, 0020, 0021): `run` (standalone host), `verify`, `score` and `export`;
+cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019, 0020, 0021, 0022): `run` (standalone host), `verify`, `score`, `export` and `serve`;
                      #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
                      #   decimal, document (hash, pdfinfo, layout text), review (the review type, its log, approval, export),
                      #   score (answer key, mapping, comparator), statement (the record),
-                     #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs)
+                     #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs),
+                     #   ui (the review UI: pages, JSON routes, sessions, evidence boxes)
 .local/              # Gitignored machine-local data; .local/addepar/ holds the real sample statements
 docs/requirements.md # Library requirements (input to the design ADRs)
 docs/MVP.md          # MVP scope: what the MVP builds, what is deferred

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/store"
@@ -106,5 +107,61 @@ func TestOpenRefuses(t *testing.T) {
 	invalid := writeConfigFile(t, dir, cfg)
 	if _, err := Open(context.Background(), p, invalid, io.Discard); err == nil {
 		t.Fatal("an invalid configuration opened")
+	}
+}
+
+// TestHostWatch: the in-process host watches a folder as `run` does, a
+// submission runs while it watches, a second watch is refused, and a
+// one_shot configuration does not watch (ADR 0022, item 1).
+func TestHostWatch(t *testing.T) {
+	pr := newProbe()
+	n := &note{}
+	p := noteProgram(t, pr, n)
+	dir := t.TempDir()
+	inbox := filepath.Join(dir, "inbox")
+	if err := os.Mkdir(inbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Open(context.Background(), p, writeConfigFile(t, dir, folderConfig(dir, inbox, 1)), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close() //nolint:errcheck // test
+	ctx, cancel := context.WithCancel(context.Background())
+	type ret struct {
+		err  error
+		code int
+	}
+	done := make(chan ret, 1)
+	go func() {
+		code, werr := h.Watch(ctx)
+		done <- ret{code: code, err: werr}
+	}()
+	writeFile(t, filepath.Join(inbox, "a.txt"), "fine")
+	waitFor(t, pr.started, 1)
+	rep, err := h.Submit(context.Background(), Submission{AgentType: "note", Instance: "i", Payload: payload("x")})
+	if err != nil || rep.Status != store.StatusSucceeded {
+		t.Fatalf("Submit while watching: %+v %v", rep, err)
+	}
+	// A second watch is refused while the first runs.
+	deadline := time.Now().Add(5 * time.Second)
+	for !h.watching.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if code, werr := h.Watch(ctx); !errors.Is(werr, ErrWatching) || code != ExitUsage {
+		t.Fatalf("second watch: %d %v", code, werr)
+	}
+	cancel()
+	if r := <-done; r.err != nil || r.code != ExitComplete {
+		t.Fatalf("watch ended %d %v", r.code, r.err)
+	}
+
+	one, err := Open(context.Background(), probeProgram(t, newProbe()), writeConfigFile(t, t.TempDir(), oneShotConfig(t.TempDir())), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer one.Close() //nolint:errcheck // test
+	if code, err := one.Watch(context.Background()); !errors.Is(err, ErrNotFolder) || code != ExitUsage {
+		t.Fatalf("one_shot watch: %d %v", code, err)
 	}
 }

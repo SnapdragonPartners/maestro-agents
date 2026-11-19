@@ -425,3 +425,16 @@ func abs(n int) int {
 	}
 	return n
 }
+
+// ParseAmount reads a printed amount as the checks read one ("$1,234.56",
+// "(1,234)", "-12"), for a caller locating a value on the page, such as
+// the review UI's evidence boxes.
+func ParseAmount(s string) (decimal.Decimal, bool) {
+	v, _, ok := parseAmount(foldPunct(s))
+	return v, ok
+}
+
+// Words normalizes text into the words the checks compare: case and
+// typographic punctuation folded, trailing ':' ',' ';' and stray
+// punctuation dropped, every digit kept.
+func Words(s string) []string { return exactWords(s) }
