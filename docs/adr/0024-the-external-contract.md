@@ -104,8 +104,13 @@ consumer-facing reference is [docs/contract.md](../contract.md).
 
 6. **A run can be stopped from outside, whatever is executing it.**
    - `ControlPlane.RequestCancel(ctx, run, cause)` records a cancel
-     request on the run record, unfenced and idempotent, with the cause
-     `operator` or `superseded`. It does not change the run's status.
+     request, unfenced and idempotent, with the cause `operator` or
+     `superseded`. **The request is a record of its own, keyed by the
+     run, not a field of the run record.** The run record's version and
+     its single writer (the owning activation, ADR 0006 item 5) are
+     unchanged, so a request never makes an activation's commit
+     conflict. The first request's cause stands, and a later one
+     returns it unchanged. `Reader.CancelRequest(run)` reads it.
    - `Heartbeat` returns the request along with the ownership, so the
      executing host cancels the activation's context with the matching
      cause (`agent.ErrOperator` or `agent.ErrSuperseded`). The activation
@@ -115,9 +120,14 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      `cancelled` before it takes any step, so a ready run is stopped by
      whoever claims it next. The standalone host claims such a run at
      once.
-   - A run already terminal ignores the request. This works the same in
-     process and across the wire, so Morris's Stop button and the app's
-     need nothing of their own.
+   - **Stopping is a request, and the run's own commit decides.** A
+     run already terminal ignores the request. A request that races the
+     activation's final commit loses if that commit lands first: the
+     run keeps the outcome it committed, and its status shows that
+     outcome, never `stopping`. A request recorded first is seen at the
+     next heartbeat or the next start, whichever comes first. This
+     works the same in process and across the wire, so Morris's Stop
+     button and the app's need nothing of their own.
 
 7. **A run's status is derived, never stored twice.**
    - `agent.Status(ctx, reader, runID)` computes a `RunStatus` from the
@@ -132,7 +142,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      published artifacts (item 10).
    - `agent.InstanceStatus` adds what a continuously running agent
      needs: the active run, the last succeeded and last failed runs,
-     the open requests and the queued triggers.
+     the open requests and the queued triggers. To find past runs, the
+     reader gains `Runs(ctx, instance, after, limit)`, an instance's
+     runs in creation order, paged. Checkpoints cannot stand in for it:
+     a run refused at its start ends without one.
    - Both are JSON values a host serves as it likes: Morris in its chat
      entries and runs page, the app host and the wire handler at
      `GET /v1/runs/{id}/status` and `GET /v1/instances/{id}/status`.
@@ -153,7 +166,8 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      `SchemaVersion` opens its notes with "Database migration required".
    - **The schema is kept as static as possible.** It holds only the
      records `store.Store` fixes: runs, ownership, triggers,
-     checkpoints, the execution record, artifacts and objects. Every
+     checkpoints, the execution record, artifacts and their instance
+     links, cancel requests and objects. Every
      agent's data is a JSON payload in an object or a record entry, so
      a new agent, or a new version of one, never changes the schema.
      The schema changes only when `store.Store` does, and that is an ADR
@@ -174,6 +188,16 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      its own authentication, and passes an `Authorizer` that sees every
      call's operation, instance, run and namespace, so Morris can
      confine a run's token to that run's instance and namespace.
+   - **Every read names an instance or a namespace, artifacts
+     included.** Artifacts stay content-addressed and stored once, but
+     each `PutArtifact` links its digest to the committing instance,
+     the link written even when the content is already stored, and
+     `Reader.Artifact(ctx, instance, digest)` answers only for a digest
+     linked to that instance (`ErrNotFound` otherwise). Every store
+     enforces this, not only the wire handler, so knowing a digest
+     never reaches another instance's content. The runtime's own reads
+     (the recorded configuration, a model state's stored content) name
+     their run's instance.
    - The same handler serves the status routes (item 7) and an
      unauthenticated `GET /v1/healthz`, which returns the module
      version, the schema version and whether the store answers.
@@ -184,8 +208,9 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     content-addressed and write-once (ADR 0005). Publishing one for
     people to download appends an `artifact_published` execution-record
     entry (name, media type, digest, size), committed with it. A run's
-    artifacts are those entries, so the run record and the schema stay
-    unchanged. A host serves them from its own store: Morris on its runs
+    artifacts are those entries, so the run record stays unchanged.
+    The host reads each one with its run's instance (item 9) and serves
+    it from its own store: Morris on its runs
     page and in chat, the app host as downloads. An agent's export is a
     published artifact, and writing a copy into a local folder is a
     host's choice, not the agent's (a change to ADR 0021, item 11, made
@@ -329,12 +354,17 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     failure is a classified tool error. The replay harness stands in
     for the server. The issue's own ADR decides the details.
 
-18. **Gaps, each its own issue:** check before start (item 5); cancel
-    requests (item 6); status (item 7); the Postgres store (item 8); the
-    store's wire form (item 9); published artifacts (item 10); requests,
-    blocks and bundles (items 11 to 14); the app host and process
-    contract (items 15 and 16); schedule triggers (MODE-4, for
-    continuously running agents); and the in-run wait (STM-8). Until
+18. **Gaps, each its own issue:** check before start (item 5, #35);
+    cancel requests (item 6, #26); status (item 7, #27); the Postgres
+    store (item 8, #28); the store's wire form and instance-linked
+    artifact reads (item 9, #29); published artifacts (item 10, #30);
+    requests, blocks and bundles (items 11 to 14, #31); the app host and
+    process contract (items 15 and 16, #32); schedule triggers (MODE-4,
+    for continuously running agents, #33); and the in-run wait (STM-8,
+    #34). The policy's third verdict, holding a call for approval
+    (TOOL-4), is not built either: today a `pending` verdict fails the
+    run with `config_error` (ADR 0011), and a host's policy allows or
+    denies. Until
     each lands, the contract says what it will be, and
     [docs/contract.md](../contract.md) marks it **planned**.
 
@@ -343,13 +373,17 @@ consumer-facing reference is [docs/contract.md](../contract.md).
 Each takes effect with the issue that builds it.
 
 - **ADR 0003, item 7:** a cancel request (item 6) is a fact a host reads
-  beside the run's status. A ready run with a cancel request is claimed
-  only to be cancelled.
-- **ADR 0005, item 4, and ADR 0006:** the control plane gains
-  `RequestCancel`, `Heartbeat` returns the run's cancel request, and the
-  reader gains a lookup of a run by (instance, trigger ID), which
-  item 11's open requests need. The store's records gain the cancel
-  request.
+  beside the run's status, from a record of its own. A ready run with a
+  cancel request is claimed only to be cancelled.
+- **ADR 0005, items 4 and 5, and ADR 0006:** the store's records gain
+  the cancel request (one per run, first cause stands) and the
+  artifact-to-instance link. The control plane gains `RequestCancel`,
+  and `Heartbeat` returns the active run's cancel request. The reader
+  gains `CancelRequest(run)`, `Runs(instance, after, limit)` and a
+  lookup of a run by (instance, trigger ID), which item 11's open
+  requests need. `Reader.Artifact` takes the instance and answers only
+  for a digest linked to it (item 9). ADR 0006 item 5's single writer
+  of the run record is unchanged.
 - **ADR 0017, item 18:** a heartbeat that returns a cancel request
   cancels the activation with the request's cause.
 - **ADR 0021, item 11:** an export is a published artifact (item 10),

@@ -15,7 +15,7 @@ Each part is marked:
 
 - **exists**: in the library today, with the ADR that defines it.
 - **planned**: decided in ADR 0024 but not built. Wire against the shape
-  given here. The tracking issue is named once filed.
+  given here. The tracking issue is named beside it.
 
 Contents:
 
@@ -35,7 +35,7 @@ Contents:
 |---|---|---|---|
 | Store | `store.Store` | exists ([ADR 0006](adr/0006-store-interface.md)) | Every durable record. One fenced, atomic `Commit`, the control plane and the reader. Prove a host store with `store/storetest`. |
 | Model client | `*agent.ModelClient`, from `agent.NewModelClient` | exists ([ADR 0014](adr/0014-model-client-and-attempt-admission.md)) | Wraps the host's `maestro-llms` client and its rate limiter. Admits and records every provider attempt. No other client compiles. |
-| Policy | `agent.Policy` | exists ([ADR 0007](adr/0007-agent-types-and-the-run-controller.md)) | Allows, denies or holds every tool call. |
+| Policy | `agent.Policy` | exists ([ADR 0007](adr/0007-agent-types-and-the-run-controller.md)) | Allows or denies every tool call. Holding a call for approval (TOOL-4) is **not built**: a `pending` verdict fails the run with `config_error` ([ADR 0011](adr/0011-manifests.md)). A run asks a person through a request instead (section 4). |
 | Credentials | `agent.CredentialProvider` | exists ([ADR 0016](adr/0016-telemetry-logging-and-credentials.md)) | Serves a tool a credential at call time, keyed by the run context (run, principal). Never reaches agent code. |
 | Telemetry | `agent.Sink`, `agent.Redactor` | exists (ADR 0016) | One event per committed record entry: IDs, names, counts and codes, never content. Free text leaves only through the redactor. |
 | Logging | `*slog.Logger` | exists (ADR 0016) | One logger for the runtime, agent types and tools. |
@@ -47,13 +47,13 @@ Contents:
 |---|---|---|
 | `agent.NewRegistry`, `Registry.Register` | exists | Register each agent type explicitly (MAN-3). |
 | `Registry.Manifest(name)` | exists ([ADR 0011](adr/0011-manifests.md)) | The type's manifest as JSON: name, version, triggers, configuration schema, default budgets, states, tools, skills, templates. Morris builds its catalogue and its "propose a run" tool from it. |
-| `Registry.CheckStart(type, triggerKind, config, budgets)` | planned | Checks a start without a run, returning every failure as data. Use it before a confirmation box or before saving a setup. The start itself checks again. |
+| `Registry.CheckStart(type, triggerKind, config, budgets)` | planned (#35) | Checks a start without a run, returning every failure as data. Use it before a confirmation box or before saving a setup. The start itself checks again. |
 | `ControlPlane.EnqueueTrigger`, `CreateRun`, `RemoveTrigger` | exists ([ADR 0005](adr/0005-storage-one-fenced-commit.md)) | Create a run, idempotently on (instance, trigger ID). |
 | `ControlPlane.Claim`, `Heartbeat`, `Release` | exists ([ADR 0003](adr/0003-run-model-identities-and-activation-results.md)) | Lease the instance before activating, and keep the lease alive. |
 | `agent.NewController(store, registry, opts...)` | exists | One controller serves every instance, concurrently. |
 | `Controller.Activate(ctx, ActivationInput)` | exists ([ADR 0007](adr/0007-agent-types-and-the-run-controller.md)) | Run a claimed run up to `MaxSteps` steps, or to its end. |
-| `ControlPlane.RequestCancel(run, cause)` | planned | Stop a run, whoever is executing it (below). |
-| `agent.Status`, `agent.InstanceStatus` | planned | Section 2. |
+| `ControlPlane.RequestCancel(run, cause)` | planned (#26) | Stop a run, whoever is executing it (below). |
+| `agent.Status`, `agent.InstanceStatus` | planned (#27) | Section 2. |
 
 `ActivationInput` (exists) carries:
 
@@ -110,11 +110,14 @@ depend on the status:
 
 There is no stored `running` status. Section 2 derives one.
 
-### Stopping a run (planned)
+### Stopping a run (planned, #26)
 
-`RequestCancel(run, cause)` records a request on the run record, with
-the cause `operator` or `superseded`. It is unfenced and idempotent, and
-it does nothing to a terminal run.
+`RequestCancel(run, cause)` records a cancel request, with the cause
+`operator` or `superseded`. It is unfenced and idempotent: the first
+cause stands. The request is a record of its own, not part of the run
+record, so it never makes the executing activation's commit conflict.
+`Reader.CancelRequest(run)` reads it, and it does nothing to a terminal
+run.
 
 - **If the run is executing,** the executing host learns of the request
   from its next heartbeat and cancels the activation with the matching
@@ -124,7 +127,11 @@ it does nothing to a terminal run.
 
 The status shows phase `stopping` until the run is terminal.
 
-### Artifacts a person downloads (planned)
+Stopping is a request, and the run's own commit decides. If the run's
+final commit lands before the request, the run keeps that outcome, and
+its status never shows `stopping`.
+
+### Artifacts a person downloads (planned, #30)
 
 An artifact is content-addressed and write-once (`store.Artifact`, which
 exists). When an agent publishes one, it appends an `artifact_published`
@@ -136,11 +143,15 @@ entry to the execution record, in the same commit:
 ```
 
 A run's artifacts are those entries, and `RunStatus.artifacts` lists
-them. Fetch the content with `Reader.Artifact(digest)`. The host decides
+them. Fetch the content with `Reader.Artifact(instance, digest)`
+(planned, #29): every store answers only for a digest linked to that
+instance, because each put links the digest to the instance that
+committed it. Knowing a digest is therefore never enough to read another
+instance's content. Today's `Reader.Artifact(digest)` takes no instance. The host decides
 where downloads appear: Morris on its runs page and in chat, the app
 host as links, and an optional copy in a local folder.
 
-## 2. Run status (planned)
+## 2. Run status (planned, #27)
 
 `agent.Status(ctx, reader, runID)` returns a `RunStatus`. It is derived
 from the run record, the ownership record and the execution record, and
@@ -192,11 +203,14 @@ continuously, such as data pipelines. It returns:
 - the instance's open requests;
 - the queued triggers (count, oldest).
 
+It finds past runs with a new reader call, `Runs(instance, after,
+limit)`: an instance's runs in creation order, paged.
+
 A new phase or reason is a contract change and comes with an ADR.
 
 ## 3. Stores: Postgres and the wire form
 
-### The Postgres store (planned)
+### The Postgres store (planned, #28)
 
 An adapter package implements `store.Store` on Postgres (STORE-4,
 STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
@@ -210,13 +224,15 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   schema. A newer schema is accepted.
 - Migrations are expand-only. A release that raises `SchemaVersion`
   opens its notes with **"Database migration required"**.
-- The schema holds only `store.Store`'s fixed records. Agents keep their
+- The schema holds only `store.Store`'s fixed records (with ADR 0024's
+  additions, the cancel requests and the artifact-to-instance links).
+  Agents keep their
   data as JSON payloads, so adding an agent never changes the schema.
 
 It has its own Postgres schema, beside `maestro-llms`' bucket schema in
 the same database.
 
-### The store's wire form (planned)
+### The store's wire form (planned, #29)
 
 A library package serves any `store.Store` over HTTP, and provides a
 client that is itself a `store.Store`. Morris runs the handler in its
@@ -241,12 +257,14 @@ against the client.
 - **Authentication is the host's.** Wrap the handler with your own. Pass
   an `Authorizer`, which sees every call's operation, instance, run and
   namespace. Morris uses it to confine a run's token to that run's
-  instance and namespace.
+  instance and namespace. Every read names an instance or a namespace,
+  artifact reads included (above), so the `Authorizer` always has one
+  to check.
 
 This carries the store only. Running an agent across a process boundary
 is MODE-8, which is not built.
 
-## 4. Requests and responses (planned)
+## 4. Requests and responses (planned, #31)
 
 A run asks for something with a **request** and gets back a
 **response**. The model is generic: an approval, a choice, a question or
@@ -363,7 +381,7 @@ and says the body needs a newer host.
 - The exact JSON is finalised with the requests issue, which may
   refine this first version before it ships.
 
-## 5. What an agent module exports (planned)
+## 5. What an agent module exports (planned, #31)
 
 Each agent is a Go module of its own (in `morris-agents`). It exports a
 `Bundle`:
@@ -384,7 +402,7 @@ over the standalone host. A host that wants the agent's data for a
 richer view reads it through the module's public packages over
 `store.Reader`. Answers still go through requests.
 
-## 6. The app process (planned)
+## 6. The app process (planned, #32)
 
 The macOS app (or any launcher) starts one host executable, which has
 agent bundles linked in:
