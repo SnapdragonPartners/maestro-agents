@@ -426,11 +426,11 @@ agent bundles linked in:
 |---|---|
 | Arguments | `-workspace DIR -addr HOST:PORT`. Port `0` picks a free port. Loopback only. |
 | Session token | `MAESTRO_AGENTS_SESSION_TOKEN`, at least 16 characters (shorter fails the start), or 32 random bytes if unset. Valid for the life of the process. A host that drew its own token writes the sign-in link to stderr once, after the ready line. |
-| Ready | Exactly one JSON line on stdout once the listener is bound and, in a configured workspace, the store is open. On first run (no configuration yet) it is written anyway, and the `url` serves setup: `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`. The `url` is the address actually bound, with the assigned port (`[::1]` or `localhost` if `-addr` named it). Nothing else goes to stdout. |
+| Ready | Exactly one JSON line on stdout once the listener is bound and, in a configured workspace, the store is open. On first run (no configuration yet) it is written anyway, and the `url` serves setup: `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`. The `url` carries the IP actually bound (`127.0.0.1` or `[::1]`, never a name, even for `-addr localhost`), with the assigned port. Nothing else goes to stdout. |
 | Failure to start | A failed bind, or a configured workspace whose store will not open: exit non-zero, with the reason on stderr and no ready line. |
 | Logs | stderr. |
 | Health | `GET /healthz`, no session needed: `{"version", "store": "ok" \| "unavailable" \| "unconfigured"}` (`unconfigured` until first-run setup completes). |
-| Browser sign-in | Open `<url>auth/session?token=<token>`: a launcher that set the token builds it from the ready line's `url`, and a host that drew its own writes it to stderr. It sets a per-port session cookie and redirects to `/`. The link stays valid, so it can reopen the UI. |
+| Browser sign-in | Open `<url>auth/session?token=<token>`: a launcher that set the token builds it from the ready line's `url`, percent-encoding the token as a query value, and a host that drew its own writes it to stderr. It sets a per-port session cookie and redirects to `/`. The link stays valid, so it can reopen the UI. |
 | Control calls | `/api/...` with `Authorization: Bearer <token>`. |
 | Stop | SIGTERM (or SIGINT). The host stops at the next step boundary. Wait at least 5 seconds before SIGKILL. |
 | First run | Setup in the browser: model provider, model and key. The key is kept in the user's configuration folder, never in the workspace. |
