@@ -425,12 +425,12 @@ agent bundles linked in:
 | Aspect | Contract |
 |---|---|
 | Arguments | `-workspace DIR -addr HOST:PORT`. Port `0` picks a free port. Loopback only. |
-| Session token | `MAESTRO_AGENTS_SESSION_TOKEN`, or 32 random bytes if unset. Valid for the life of the process. |
+| Session token | `MAESTRO_AGENTS_SESSION_TOKEN`, or 32 random bytes if unset. Valid for the life of the process. A host that drew its own token writes the sign-in link to stderr once, after the ready line. |
 | Ready | Exactly one JSON line on stdout once the listener is bound and the store is open: `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`. Nothing else goes to stdout. |
 | Failure to start | Exit non-zero, with the reason on stderr and no ready line. |
 | Logs | stderr. |
 | Health | `GET /healthz`, no session needed: `{"version", "store"}`. |
-| Browser sign-in | The host does not print a link: build `<url>auth/session?token=<token>` from the ready line's `url` and your token, and open it. It sets a per-port session cookie and redirects to `/`. The link stays valid, so it can reopen the UI. |
+| Browser sign-in | Open `<url>auth/session?token=<token>`: a launcher that set the token builds it from the ready line's `url`, and a host that drew its own writes it to stderr. It sets a per-port session cookie and redirects to `/`. The link stays valid, so it can reopen the UI. |
 | Control calls | `/api/...` with `Authorization: Bearer <token>`. |
 | Stop | SIGTERM (or SIGINT). The host stops at the next step boundary. Wait at least 5 seconds before SIGKILL. |
 | First run | Setup in the browser: model provider, model and key. The key is kept in the user's configuration folder, never in the workspace. |

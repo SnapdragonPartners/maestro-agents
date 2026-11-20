@@ -331,7 +331,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
       allowed. It listens on loopback only.
     - The session token comes from `MAESTRO_AGENTS_SESSION_TOKEN`, or 32
       random bytes when that is unset. It stays valid for the life of
-      the process, as in ADR 0022, item 6.
+      the process, as in ADR 0022, item 6. A host that drew its own
+      token writes the sign-in link to stderr once, after the ready
+      line, so a person running it directly can still sign in; a
+      launcher that set the token builds the link itself.
     - **Ready is one JSON line on stdout**, written only after the
       listener is bound and the store is open:
       `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`.
@@ -415,9 +418,11 @@ Each takes effect with the issue that builds it.
 - **ADR 0021, item 11:** an export is a published artifact (item 10),
   and the folder copy is the host's.
 - **ADR 0022, item 6:** the session token's variable becomes
-  `MAESTRO_AGENTS_SESSION_TOKEN`, and the sign-in link is no longer
-  printed: stdout carries the ready line alone (item 15), and a launcher
-  builds `<url>auth/session?token=<token>` from it. **ADR 0022, item
+  `MAESTRO_AGENTS_SESSION_TOKEN`, and the sign-in link moves off
+  stdout, which carries the ready line alone (item 15): a launcher
+  builds `<url>auth/session?token=<token>` from the ready line and the
+  token it set, and a host that drew its own token writes the link to
+  stderr. **ADR 0022, item
   8:** `GET /healthz` (and the wire handler's `GET /v1/healthz`, item 9)
   answers without a session. Both take effect when the intake agent
   moves to the app host.
