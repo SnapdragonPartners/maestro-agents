@@ -181,9 +181,9 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      links, cancel requests and objects, and the telemetry events
      `store.Telemetry` keeps (STORE-1, ADR 0016 item 8), so the
      `store` telemetry sink works on it as on the reference stores.
-     Every
-     agent's data is a JSON payload in an object or a record entry, so
-     a new agent, or a new version of one, never changes the schema.
+     Every agent's data is an object's value, JSON or raw bytes (a
+     PDF, through `Env.PutBytes`), or a JSON record entry, so a new
+     agent, or a new version of one, never changes the schema.
      The schema changes only when `store.Store` or `store.Telemetry`
      does, or the blob backend's bookkeeping (below) needs a table, and
      that is an ADR each time.
@@ -206,12 +206,16 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      precondition that can fail, which ADR 0005 item 3 rules out
      today; if it does, #28 amends that item and says where the
      conflict is handled.
-   - **The schema keeps purging possible.** Every record is keyed by
-     its instance or its run, and an artifact's links name the
-     instances that hold it, so an instance's records, and the
-     artifacts linked to it alone, can be removed later without a
-     destructive migration; content that was never linked is the blob
-     backend's design's (above). Removing them is not decided here.
+   - **The schema keeps purging possible.** Every record but an
+     object is keyed by its instance or its run, and an artifact's
+     links name the instances that hold it, so an instance's records,
+     and the artifacts linked to it alone, can be removed later
+     without a destructive migration; content that was never linked
+     is decided by the blob backend's design (above). Objects are
+     keyed by namespace, which instances may share (ADR 0012, item
+     1), so they are outside a per-instance purge: the host, which
+     assigns namespaces, removes a namespace's objects when it retires
+     the namespace. Removing any of them is not decided here.
 
 9. **The store has a wire form, built here.**
    - A library package serves any `store.Store` as an HTTP handler
@@ -472,6 +476,14 @@ Each takes effect with the issue that builds it.
 - **ADR 0003, item 7:** a cancel request (item 6) is a fact a host reads
   beside the run's status, from a record of its own. A ready run with a
   cancel request is claimed only to be cancelled.
+- **ADR 0005, item 3:** storing a digest already stored is no longer a
+  no-op when the committing instance is new to it: the commit writes
+  that instance's link (item 9), and the first metadata still stands.
+  `put_artifact` still has no precondition and never conflicts, but a
+  commit that re-stores an artifact for a new instance is a write, so
+  `Committer`'s "a commit whose operations change nothing … cannot
+  fail after those checks" no longer covers it. The doc comments in
+  `store/store.go` and `store/ops.go` change with #29.
 - **ADR 0005, items 4 and 5, and ADR 0006:** the store's records gain
   the cancel request (one per run, first cause stands) and the
   artifact-to-instance link. The control plane gains `RequestCancel`,

@@ -238,8 +238,9 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
 - The schema holds only `store.Store`'s fixed records (with ADR 0024's
   additions, the cancel requests and the artifact-to-instance links),
   and the telemetry events `store.Telemetry` keeps (so the `store`
-  telemetry sink works on it). Agents keep their data as JSON
-  payloads, so adding an agent never changes the schema.
+  telemetry sink works on it). Agents keep their data as object
+  values, JSON or raw bytes, and JSON record entries, so adding an
+  agent never changes the schema.
 - **Artifact content can live elsewhere.** Pass an optional blob
   backend (your implementation of a small interface, such as Cloud
   Storage) and artifact content is kept there by digest. The digest,
@@ -249,7 +250,9 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   only through a committed link, and never lets a committed link point
   at missing content.
 - The schema keeps purging an instance's records possible later; the
-  store has no delete today (ADR 0024, "Not decided here").
+  store has no delete today (ADR 0024, "Not decided here"). Objects are
+  keyed by namespace, which instances may share, so they are outside a
+  per-instance purge: retiring a namespace is the host's.
 
 It has its own Postgres schema, beside `maestro-llms`' bucket schema in
 the same database.
