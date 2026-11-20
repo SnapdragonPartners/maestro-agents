@@ -243,7 +243,11 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   backend (your implementation of a small interface, such as Cloud
   Storage) and artifact content is kept there by digest. The digest,
   size, media type and instance links stay in Postgres. Without one,
-  content is kept in Postgres.
+  content is kept in Postgres. The interface is put, get, list and
+  delete by digest. Content is written only after the instance's fence
+  and the `Authorizer` are checked, before the commit; content whose
+  commit never lands has no link, and a sweep (list, drop digests with
+  no link older than a grace period) removes it.
 - The schema keeps purging an instance's records possible later; the
   store has no delete today (ADR 0024, "Not decided here").
 
@@ -348,8 +352,11 @@ data. A custom renderer is optional (section 5).
 `by` is a principal, which may be a person or an agent (a coding
 agent's architect answers its coder). **The host decides who may answer
 a request** (Morris: only the run's principal), and `by` is the
-responder the host authenticated, never a value a client supplies. The
-handler's run takes the responder as its principal.
+principal the host authenticated, never a value a client supplies. The
+handler's run takes that principal as its own. A host that
+authenticates only a session (the app host) uses its configured
+principal for `by` and the handler's run, and carries the typed
+operator name as attribution only.
 
 ### Lifecycle
 

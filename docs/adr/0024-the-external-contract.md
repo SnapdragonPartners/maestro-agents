@@ -187,15 +187,25 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      an optional blob backend, a small interface the host implements
      (Morris: Cloud Storage), that holds artifact content by digest.
      The digest, size, media type and instance links stay in Postgres,
-     committed atomically as before. The content is written first,
-     content-addressed and write-once, so a commit that then fails
-     leaves only unreferenced content, never a reference to missing
-     content. With no backend, the content is kept in Postgres.
+     committed atomically as before. **Content is written only for a
+     current owner:** the store (or the wire handler's upload route,
+     item 9) checks the instance's fence and the `Authorizer` before
+     it writes, and the write is content-addressed and write-once. It
+     lands before the commit, so a commit that then fails leaves only
+     unreferenced content, never a reference to missing content, and
+     nothing reads content except through a committed link (ADR 0005's
+     one fenced commit still decides what exists). Unreferenced
+     content is found by a sweep: the backend lists its digests, and
+     one with no instance link, older than a grace period, is
+     removed. The backend's interface is therefore put, get, list and
+     delete by digest. With no backend, the content is kept in
+     Postgres, in the commit's own transaction.
    - **The schema keeps purging possible.** Every record is keyed by
      its instance or its run, and an artifact's links name the
      instances that hold it, so an instance's records, and the
      artifacts linked to it alone, can be removed later without a
-     destructive migration. Removing them is not decided here.
+     destructive migration; content that was never linked is the
+     sweep's (above). Removing them is not decided here.
 
 9. **The store has a wire form, built here.**
    - A library package serves any `store.Store` as an HTTP handler
@@ -277,10 +287,16 @@ consumer-facing reference is [docs/contract.md](../contract.md).
       when.
     - **The host decides who may answer a request** (Morris: only the
       requesting run's principal). It checks the responder along with
-      the value, and `by` is the responder the host authenticated,
-      never a value a client supplies. The handler's run takes the
-      responder as its principal (ADR 0016's run context), so it acts
-      with the answerer's authority, not the requester's.
+      the value, and `by` is the principal the host authenticated,
+      never a value a client supplies. The handler's run takes that
+      principal as its own (ADR 0016's run context), so it acts with
+      the answerer's authority, not the requester's.
+    - **A host that authenticates only a session**, not people (the
+      app host, ADR 0022 item 7: whoever holds the session can type any
+      name), authenticates no responder of its own: `by` is its
+      configured principal, the handler's run runs under it as every
+      submitted run does today, and the typed operator name travels
+      with the response as attribution, never as authority.
     - **The requester declares what may be answered**, through the
       response schema, and no renderer may widen it. As in Maestro's
       ADR 0030: "A UI free to compose scopes would become an authority
@@ -460,6 +476,14 @@ Each takes effect with the issue that builds it.
   of the run record is unchanged.
 - **ADR 0017, item 18:** a heartbeat that returns a cancel request
   cancels the activation with the request's cause.
+- **ADR 0021, item 1:** a submission may carry a principal the host
+  authenticated, which its run runs under, replacing "under its
+  principal" for such a run. Without one, the run runs under the
+  configuration's principal, as today. The standalone and app hosts
+  pass none (item 11), so ADR 0017 item 19's credentials, served only
+  to the configured principal, are unchanged; a host that passes a
+  responder's principal serves its credentials by its own provider.
+  It is built with #31.
 - **ADR 0021, item 2:** a submission may carry a caller-chosen trigger
   identity (`Submission`, `Host.Submit`). A response uses its request's
   ID, so a repeat finds the existing run rather than making another.
