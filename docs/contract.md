@@ -47,7 +47,7 @@ Contents:
 |---|---|---|
 | `agent.NewRegistry`, `Registry.Register` | exists | Register each agent type explicitly (MAN-3). |
 | `Registry.Manifest(name)` | exists ([ADR 0011](adr/0011-manifests.md)) | The type's `Manifest` value (and whether the type exists), whose JSON form is the catalogue entry: name, version, triggers, configuration schema, default budgets, states, tools, skills, templates. Morris builds its catalogue and its "propose a run" tool from it. |
-| `Registry.CheckStart(type, triggerKind, config, budgets)` | planned (#35) | Checks a start without a run, returning every failure as data. Use it before a confirmation box or before saving a setup. The start itself checks again. |
+| `Registry.CheckStart(agentType, triggerKind, config, budgets)` | planned (#35) | Checks a start without a run, returning every failure as data. Use it before a confirmation box or before saving a setup. The start itself checks again. |
 | `ControlPlane.EnqueueTrigger`, `CreateRun`, `RemoveTrigger` | exists ([ADR 0005](adr/0005-storage-one-fenced-commit.md)) | Create a run, idempotently on (instance, trigger ID). |
 | `ControlPlane.Claim`, `Heartbeat`, `Release` | exists ([ADR 0003](adr/0003-run-model-identities-and-activation-results.md)) | Lease the instance before activating, and keep the lease alive. |
 | `agent.NewController(store, registry, opts...)` | exists | One controller serves every instance, concurrently. |
@@ -106,6 +106,7 @@ depend on the status:
 | Status | Reason codes |
 |---|---|
 | `runnable` | none (an empty reason: created, not yet activated), `step_limit`, `shutdown` |
+| `waiting` | the awaited input (STM-8, planned, #34); no run enters `waiting` before then |
 | `succeeded` | `changed`, `no_change` |
 | `failed` | `budget_exhausted`, `budget_unenforceable`, `model_error`, `tool_error`, `invalid_output`, `wrap_up_failed`, `object_conflict`, `state_error`, `config_error` |
 | `cancelled` | `operator`, `superseded` |
@@ -206,7 +207,9 @@ continuously, such as data pipelines. It returns:
 - the queued triggers (count, oldest).
 
 It finds past runs with a new reader call, `Runs(instance, after,
-limit)`: an instance's runs in creation order, paged.
+limit)`: an instance's runs ordered by creation time and then run ID,
+paged. `after` is the last run ID of the previous page, empty for the
+first.
 
 A new phase or reason is a contract change and comes with an ADR.
 
@@ -427,7 +430,7 @@ agent bundles linked in:
 | Failure to start | Exit non-zero, with the reason on stderr and no ready line. |
 | Logs | stderr. |
 | Health | `GET /healthz`, no session needed: `{"version", "store"}`. |
-| Browser sign-in | Open `<url>auth/session?token=<token>`, which sets a per-port session cookie and redirects to `/`. The link stays valid, so it can reopen the UI. |
+| Browser sign-in | The host does not print a link: build `<url>auth/session?token=<token>` from the ready line's `url` and your token, and open it. It sets a per-port session cookie and redirects to `/`. The link stays valid, so it can reopen the UI. |
 | Control calls | `/api/...` with `Authorization: Bearer <token>`. |
 | Stop | SIGTERM (or SIGINT). The host stops at the next step boundary. Wait at least 5 seconds before SIGKILL. |
 | First run | Setup in the browser: model provider, model and key. The key is kept in the user's configuration folder, never in the workspace. |

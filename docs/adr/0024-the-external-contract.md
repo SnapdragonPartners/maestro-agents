@@ -93,7 +93,7 @@ consumer-facing reference is [docs/contract.md](../contract.md).
    its chat entries.
 
 5. **Starting a run can be checked without a run.**
-   `Registry.CheckStart(type, triggerKind, config, budgets)` runs the
+   `Registry.CheckStart(agentType, triggerKind, config, budgets)` runs the
    same checks an activation runs at the start (trigger kind, the
    configuration against the type's schema, the budgets against its
    limits; ADR 0011) and returns every failure as data. Morris checks a
@@ -144,7 +144,8 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      needs: the active run, the last succeeded and last failed runs,
      the open requests and the queued triggers. To find past runs, the
      reader gains `Runs(ctx, instance, after, limit)`, an instance's
-     runs in creation order, paged. Checkpoints cannot stand in for it:
+     runs ordered by creation time and then run ID, paged: `after` is
+     the last run ID of the previous page, empty for the first. Checkpoints cannot stand in for it:
      a run refused at its start ends without one.
    - Both are JSON values a host serves as it likes: Morris in its chat
      entries and runs page, the app host and the wire handler at
@@ -398,7 +399,8 @@ Each takes effect with the issue that builds it.
   the cancel request (one per run, first cause stands) and the
   artifact-to-instance link. The control plane gains `RequestCancel`,
   and `Heartbeat` returns the active run's cancel request. The reader
-  gains `CancelRequest(run)`, `Runs(instance, after, limit)` and a
+  gains `CancelRequest(run)`, `Runs(instance, after, limit)` (`after` a
+  run ID, item 7) and a
   lookup of a run by (instance, trigger ID), which item 11's open
   requests need. `Reader.Artifact` takes the instance and answers only
   for a digest linked to it (item 9). ADR 0006 item 5's single writer
@@ -413,8 +415,12 @@ Each takes effect with the issue that builds it.
 - **ADR 0021, item 11:** an export is a published artifact (item 10),
   and the folder copy is the host's.
 - **ADR 0022, item 6:** the session token's variable becomes
-  `MAESTRO_AGENTS_SESSION_TOKEN`, when the intake agent moves to the app
-  host.
+  `MAESTRO_AGENTS_SESSION_TOKEN`, and the sign-in link is no longer
+  printed: stdout carries the ready line alone (item 15), and a launcher
+  builds `<url>auth/session?token=<token>` from it. **ADR 0022, item
+  8:** `GET /healthz` (and the wire handler's `GET /v1/healthz`, item 9)
+  answers without a session. Both take effect when the intake agent
+  moves to the app host.
 
 ## Consequences
 
