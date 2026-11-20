@@ -121,7 +121,9 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      returns it unchanged. `Reader.CancelRequest(run)` reads it.
    - `Heartbeat` returns the request along with the ownership, so the
      executing host cancels the activation's context with the matching
-     cause (`agent.ErrOperator` or `agent.ErrSuperseded`). The activation
+     cause (`agent.ErrOperator`, `agent.ErrSuperseded` or
+     `agent.ErrUnauthorized`). Any other cause, or none, is still a
+     shutdown that keeps the run's disposition. The activation
      then commits `cancelled` with that reason at its next safe point
      (ADR 0003, item 17; RUN-2).
    - An activation that finds a cancel request when it starts commits

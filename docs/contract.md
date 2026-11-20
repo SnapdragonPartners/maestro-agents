@@ -81,8 +81,9 @@ acts under. Morris passes the user who clicked Confirm.
    - a heartbeat that finds ownership gone cancels the activation's
      context;
    - (planned) a heartbeat that returns a cancel request cancels it with
-     `context.WithCancelCause` and `agent.ErrOperator` or
-     `agent.ErrSuperseded`.
+     `context.WithCancelCause` and the matching cause:
+     `agent.ErrOperator`, `agent.ErrSuperseded` or (planned)
+     `agent.ErrUnauthorized`.
 4. **Read the result.**
    - An `Outcome` means its commit is confirmed. The activation released
      the claim in that commit.
@@ -90,7 +91,7 @@ acts under. Morris passes the user who clicked Confirm.
      you still hold it, reread the run record, and retry from step 2
      (ADR 0003, item 14). A store failure is never a run failure.
 5. **Shut down.** On shutdown, cancel the context with no cause, or any
-   cause other than the two above. The run keeps its disposition
+   cause other than the cancellation causes above. The run keeps its disposition
    (`runnable`), and the next claimant continues it.
 
 Delivery is at least once (DEL-1). Recovery replays at most one step
