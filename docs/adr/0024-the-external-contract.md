@@ -178,12 +178,16 @@ consumer-facing reference is [docs/contract.md](../contract.md).
    - **The schema is kept as static as possible.** It holds only the
      records `store.Store` fixes: runs, ownership, triggers,
      checkpoints, the execution record, artifacts and their instance
-     links, cancel requests and objects; plus one table of the store's
+     links, cancel requests and objects, and the telemetry events
+     `store.Telemetry` keeps (STORE-1, ADR 0016 item 8), so the
+     `store` telemetry sink works on it as on the reference stores;
+     plus one table of the store's
      own bookkeeping for a blob backend, the upload pins (below),
      created by the same migrations and empty without a backend. Every
      agent's data is a JSON payload in an object or a record entry, so
      a new agent, or a new version of one, never changes the schema.
-     The schema changes only when `store.Store` does, or this ADR's
+     The schema changes only when `store.Store` or `store.Telemetry`
+     does, or this ADR's
      bookkeeping does, and that is an ADR each time.
    - **Artifact content may live outside Postgres.** The store takes
      an optional blob backend, a small interface the host implements
@@ -482,6 +486,14 @@ Each takes effect with the issue that builds it.
 - **ADR 0003, item 7:** a cancel request (item 6) is a fact a host reads
   beside the run's status, from a record of its own. A ready run with a
   cancel request is claimed only to be cancelled.
+- **ADR 0005, item 3:** `put_artifact` gains one precondition that
+  can legitimately fail, in a store with a blob backend only: the
+  upload pin (item 8). Its conflict is handled in the store: the
+  store's own `Commit`, in process or the wire client, uploads again
+  and retries, so it never reaches the runtime, and a caller that sees
+  it anyway treats it as a store failure, as the runtime already does
+  any non-object conflict. Without a blob backend, `put_artifact` still
+  never conflicts. `store.Artifact`'s doc comment changes with #28.
 - **ADR 0005, items 4 and 5, and ADR 0006:** the store's records gain
   the cancel request (one per run, first cause stands) and the
   artifact-to-instance link. The control plane gains `RequestCancel`,

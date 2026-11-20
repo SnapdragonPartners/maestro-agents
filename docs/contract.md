@@ -237,7 +237,9 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   opens its notes with **"Database migration required"**.
 - The schema holds only `store.Store`'s fixed records (with ADR 0024's
   additions, the cancel requests and the artifact-to-instance links),
-  plus the store's own upload pins for a blob backend (empty without
+  and the telemetry events `store.Telemetry` keeps (so the `store`
+  telemetry sink works on it), plus the store's own upload pins for a
+  blob backend (empty without
   one).
   Agents keep their
   data as JSON payloads, so adding an agent never changes the schema.
