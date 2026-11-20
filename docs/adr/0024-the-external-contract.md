@@ -104,8 +104,16 @@ consumer-facing reference is [docs/contract.md](../contract.md).
 
 6. **A run can be stopped from outside, whatever is executing it.**
    - `ControlPlane.RequestCancel(ctx, run, cause)` records a cancel
-     request, unfenced and idempotent, with the cause `operator` or
-     `superseded`. **The request is a record of its own, keyed by the
+     request, unfenced and idempotent, with the cause `operator`,
+     `superseded` or `unauthorized`. **`unauthorized`** is a third
+     cancellation cause beside RUN-2's two: the run's principal no
+     longer holds the authority the run started under, as a host that
+     re-checks it at each lease finds (Morris ADR 0069, decision 6).
+     It cancels with `agent.ErrUnauthorized` and commits `cancelled`
+     with the reason `unauthorized`, so such a run never shows as
+     stopped by an operator nobody was. A host that finds the loss
+     while it holds the lease may cancel the activation with that
+     cause directly, without a request. **The request is a record of its own, keyed by the
      run, not a field of the run record.** The run record's version and
      its single writer (the owning activation, ADR 0006 item 5) are
      unchanged, so a request never makes an activation's commit
@@ -173,6 +181,19 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      a new agent, or a new version of one, never changes the schema.
      The schema changes only when `store.Store` does, and that is an ADR
      each time.
+   - **Artifact content may live outside Postgres.** The store takes
+     an optional blob backend, a small interface the host implements
+     (Morris: Cloud Storage), that holds artifact content by digest.
+     The digest, size, media type and instance links stay in Postgres,
+     committed atomically as before. The content is written first,
+     content-addressed and write-once, so a commit that then fails
+     leaves only unreferenced content, never a reference to missing
+     content. With no backend, the content is kept in Postgres.
+   - **The schema keeps purging possible.** Every record is keyed by
+     its instance or its run, and an artifact's links name the
+     instances that hold it, so an instance's records, and the
+     artifacts linked to it alone, can be removed later without a
+     destructive migration. Removing them is not decided here.
 
 9. **The store has a wire form, built here.**
    - A library package serves any `store.Store` as an HTTP handler
@@ -212,6 +233,11 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      never reaches another instance's content. The runtime's own reads
      (the recorded configuration, a model state's stored content) name
      their run's instance.
+   - **Artifact content travels on its own routes**, as raw bytes
+     streamed by digest, never inside a JSON body. The handler refuses
+     content over a host-set maximum (64 MiB unless the host sets
+     another) with `ErrInvalid`, a definite error, so a host plans its
+     largest artifact against that limit.
    - The same handler serves the status routes (item 7) and an
      unauthenticated `GET /v1/healthz`, which returns the module
      version, the schema version and whether the store answers.
@@ -247,6 +273,12 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     - **A response** has the request's ID, a value the schema accepts,
       who answered (a principal, which may be a person or an agent) and
       when.
+    - **The host decides who may answer a request** (Morris: only the
+      requesting run's principal). It checks the responder along with
+      the value, and `by` is the responder the host authenticated,
+      never a value a client supplies. The handler's run takes the
+      responder as its principal (ADR 0016's run context), so it acts
+      with the answerer's authority, not the requester's.
     - **The requester declares what may be answered**, through the
       response schema, and no renderer may widen it. As in Maestro's
       ADR 0030: "A UI free to compose scopes would become an authority
@@ -407,6 +439,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
 
 Each takes effect with the issue that builds it.
 
+- **RUN-2 and RUN-3 (docs/requirements.md), and ADR 0003, item 17:**
+  a third cancellation cause, `unauthorized` (`agent.ErrUnauthorized`),
+  the reason of a `cancelled` run whose principal lost the authority it
+  started under (item 6). It is built with #26.
 - **ADR 0003, item 7:** a cancel request (item 6) is a fact a host reads
   beside the run's status, from a record of its own. A ready run with a
   cancel request is claimed only to be cancelled.
@@ -466,6 +502,11 @@ Each takes effect with the issue that builds it.
   decided in its ADR.
 - Bundling Poppler in the app, given its licence, as against requiring
   Homebrew's.
+- Purging: removing an instance's records for good, and the artifacts
+  linked to it alone, as a retention workflow (Morris's, under its own
+  ADR) may need. The store has no delete today. Item 8 keeps the schema
+  and item 9's artifact links from ruling it out, and the operation
+  itself is a `store.Store` change with its own ADR.
 
 ## References
 

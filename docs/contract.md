@@ -109,14 +109,19 @@ depend on the status:
 | `waiting` | the awaited input (STM-8, planned, #34); no run enters `waiting` before then |
 | `succeeded` | `changed`, `no_change` |
 | `failed` | `budget_exhausted`, `budget_unenforceable`, `model_error`, `tool_error`, `invalid_output`, `wrap_up_failed`, `object_conflict`, `state_error`, `config_error` |
-| `cancelled` | `operator`, `superseded` |
+| `cancelled` | `operator`, `superseded`; `unauthorized` (planned, #26) |
 
 There is no stored `running` status. Section 2 derives one.
 
 ### Stopping a run (planned, #26)
 
 `RequestCancel(ctx, run, cause)` records a cancel request, with the cause
-`operator` or `superseded`. It is unfenced and idempotent: the first
+`operator`, `superseded` or `unauthorized`. Use `unauthorized` when the
+run's principal no longer holds the authority the run started under (a
+host that re-checks it at each lease); the run ends `cancelled` with
+that reason, never as stopped by an operator. A host that finds the
+loss while it holds the lease may also cancel the activation directly
+with `agent.ErrUnauthorized`. It is unfenced and idempotent: the first
 cause stands. The request is a record of its own, not part of the run
 record, so it never makes the executing activation's commit conflict.
 `Reader.CancelRequest(run)` reads it, and it does nothing to a terminal
@@ -233,6 +238,13 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   additions, the cancel requests and the artifact-to-instance links).
   Agents keep their
   data as JSON payloads, so adding an agent never changes the schema.
+- **Artifact content can live elsewhere.** Pass an optional blob
+  backend (your implementation of a small interface, such as Cloud
+  Storage) and artifact content is kept there by digest. The digest,
+  size, media type and instance links stay in Postgres. Without one,
+  content is kept in Postgres.
+- The schema keeps purging an instance's records possible later; the
+  store has no delete today (ADR 0024, "Not decided here").
 
 It has its own Postgres schema, beside `maestro-llms`' bucket schema in
 the same database.
@@ -273,6 +285,10 @@ against the client.
     never to a token scoped to a run or an instance.
   - Every other read names an instance or a namespace, artifact reads
     included (above).
+
+- **Artifact content** travels on its own routes as raw bytes, by
+  digest, never inside JSON. Content over the host's maximum (64 MiB
+  unless the host sets another) is refused with `ErrInvalid`.
 
 This carries the store only. Running an agent across a process boundary
 is MODE-8, which is not built.
@@ -329,7 +345,10 @@ data. A custom renderer is optional (section 5).
 ```
 
 `by` is a principal, which may be a person or an agent (a coding
-agent's architect answers its coder).
+agent's architect answers its coder). **The host decides who may answer
+a request** (Morris: only the run's principal), and `by` is the
+responder the host authenticated, never a value a client supplies. The
+handler's run takes the responder as its principal.
 
 ### Lifecycle
 
