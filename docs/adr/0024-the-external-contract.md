@@ -329,23 +329,29 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     (or any other launcher) needs nothing agent-specific:
     - It is started with `-workspace DIR` and `-addr HOST:PORT`, port 0
       allowed. It listens on loopback only.
-    - The session token comes from `MAESTRO_AGENTS_SESSION_TOKEN`, or 32
+    - The session token comes from `MAESTRO_AGENTS_SESSION_TOKEN`, at
+      least 16 characters (a shorter one fails the start), or 32
       random bytes when that is unset. It stays valid for the life of
       the process, as in ADR 0022, item 6. A host that drew its own
       token writes the sign-in link to stderr once, after the ready
       line, so a person running it directly can still sign in; a
       launcher that set the token builds the link itself.
-    - **Ready is one JSON line on stdout**, written only after the
-      listener is bound and the store is open:
+    - **Ready is one JSON line on stdout**, written once the listener
+      is bound and, in a configured workspace, the store is open. An
+      unconfigured workspace (first run) has no store yet: the host
+      writes the ready line anyway and serves setup at its `url`, and
+      opens the store when setup completes.
       `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`,
       whose `url` is built from the address the listener actually bound
       (`127.0.0.1`, `[::1]` or `localhost`, with the assigned port when
       `-addr` gave port 0), which ADR 0022 item 8's Host check accepts.
       Nothing else is written to stdout, and logs go to stderr. A
-      failure to bind or to open exits non-zero with the reason on
-      stderr, and writes no ready line.
-    - `GET /healthz` answers without a session (version, and whether
-      the store answers).
+      failure to bind, or a configured workspace whose store will not
+      open, exits non-zero with the reason on stderr, and writes no
+      ready line.
+    - `GET /healthz` answers without a session (version, and the
+      store: `ok`, `unavailable`, or `unconfigured` until first-run
+      setup completes).
     - Browser sign-in goes through `/auth/session?token=`, which sets a
       per-port session cookie. A control app calls `/api/` with
       `Authorization: Bearer <token>`.
