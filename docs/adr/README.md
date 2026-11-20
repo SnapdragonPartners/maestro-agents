@@ -58,3 +58,4 @@ template.
 | [0021](0021-review-writes-approval-and-export.md) | Review writes, approval and export | Amended by ADR-0022, ADR-0023 |
 | [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted |
 | [0023](0023-public-strictjson-and-regularfile.md) | Public `strictjson` and `regularfile` for agents in other modules | Accepted |
+| [0024](0024-the-external-contract.md) | The external contract | Proposed |

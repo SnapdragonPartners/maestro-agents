@@ -41,8 +41,11 @@ of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
 and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
 0014 and 0016, the standalone host ADR 0017, the scoring harness ADR 0020, the intake
 agent's own design ADRs 0015, 0018, 0019, 0021 and 0022, the public
-helpers for agents in other modules ADR 0023; further design
-arrives with the code, each piece with its ADR.
+helpers for agents in other modules ADR 0023, and the external
+contract every consumer (Morris's worker, the macOS app, an agent's CLI)
+wires against ADR 0024, with its reference in
+[docs/contract.md](docs/contract.md); further design arrives with the
+code, each piece with its ADR.
 
 Load-bearing decisions so far:
 
@@ -254,6 +257,26 @@ Load-bearing decisions so far:
   `internal/` stays internal; before v1 a minor release may change an
   API, noted in its release notes; `v0.1.0` is the first tag
   ([ADR 0023](docs/adr/0023-public-strictjson-and-regularfile.md))
+- The external contract (ADR 0024, Proposed; reference
+  [docs/contract.md](docs/contract.md)) is one interface for every
+  consumer, JSON at every seam: the existing seams as they stand, plus
+  planned gaps, each its own issue: `Registry.CheckStart`; cancel
+  requests (`ControlPlane.RequestCancel`, surfaced by `Heartbeat`); a
+  derived status taxonomy (`agent.Status`: phase `queued`, `running`,
+  `waiting`, `stopping` or terminal with RUN-3's reason, and progress);
+  a Postgres store whose migrations follow `maestro-llms`'
+  `bucket/postgres` (files, no runner, expand-only, a static schema of
+  `store.Store`'s records alone); the store's wire form (HTTP handler
+  and a client that is a store, errors keeping their class, the host's
+  authentication and `Authorizer`); run-linked published artifacts; a
+  generic request/response model (kinds `approval`, `choice`, `input`,
+  `review`; display blocks, versioned; the response schema the
+  authority; answered once as a submitted run whose trigger ID is the
+  request's ID; between runs now, in the run with STM-8), with an
+  agent's own renderer an optional enhancement; an agent module's
+  `Bundle`; and the app process contract
+  (`MAESTRO_AGENTS_SESSION_TOKEN`, `-addr` with port 0, one JSON ready
+  line on stdout, `/healthz`, SIGTERM)
 
 ### Related repositories
 
@@ -340,6 +363,7 @@ cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019,
 .local/              # Gitignored machine-local data; .local/addepar/ holds the real sample statements
 docs/requirements.md # Library requirements (input to the design ADRs)
 docs/MVP.md          # MVP scope: what the MVP builds, what is deferred
+docs/contract.md     # The external contract: what hosts, agent modules and the app rely on (ADR 0024)
 docs/adr/            # Architecture Decision Records
 hooks/               # Git hooks (installed by `make install-hooks`)
 .github/             # CI, CodeQL, buggrit, Dependabot
