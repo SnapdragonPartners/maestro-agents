@@ -266,7 +266,8 @@ Load-bearing decisions so far:
   `waiting`, `stopping` or terminal with RUN-3's reason, and progress);
   a Postgres store whose migrations follow `maestro-llms`'
   `bucket/postgres` (files, no runner, expand-only, a static schema of
-  `store.Store`'s records alone); the store's wire form (HTTP handler
+  the records `store.Store` and `store.Telemetry` fix, and an optional
+  host blob backend for artifact content); the store's wire form (HTTP handler
   and a client that is a store, errors keeping their class, the host's
   authentication and `Authorizer`); run-linked published artifacts; a
   generic request/response model (kinds `approval`, `choice`, `input`,

@@ -180,54 +180,38 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      checkpoints, the execution record, artifacts and their instance
      links, cancel requests and objects, and the telemetry events
      `store.Telemetry` keeps (STORE-1, ADR 0016 item 8), so the
-     `store` telemetry sink works on it as on the reference stores;
-     plus one table of the store's
-     own bookkeeping for a blob backend, the upload pins (below),
-     created by the same migrations and empty without a backend. Every
+     `store` telemetry sink works on it as on the reference stores.
+     Every
      agent's data is a JSON payload in an object or a record entry, so
      a new agent, or a new version of one, never changes the schema.
      The schema changes only when `store.Store` or `store.Telemetry`
-     does, or this ADR's
-     bookkeeping does, and that is an ADR each time.
+     does, or the blob backend's bookkeeping (below) needs a table, and
+     that is an ADR each time.
    - **Artifact content may live outside Postgres.** The store takes
      an optional blob backend, a small interface the host implements
      (Morris: Cloud Storage), that holds artifact content by digest.
      The digest, size, media type and instance links stay in Postgres,
-     committed atomically as before. **Content is written only for a
-     current owner:** the store checks the instance's fence before it
-     writes, and the wire handler's upload route (item 9) also passes
-     the call to its `Authorizer` first; `store.Store` itself has no
-     authorizer. The write is content-addressed and write-once. It
-     lands before the commit, so a commit that then fails leaves only
-     unreferenced content, never a reference to missing content, and
-     nothing reads content except through a committed link (ADR 0005's
-     one fenced commit still decides what exists).
-   - **Publication and the sweep coordinate per digest, in
-     Postgres.** One guard serializes them: a per-digest advisory
-     lock (a transaction-scoped Postgres advisory lock on the digest),
-     which exists whether or not any row for the digest does. Every
-     upload, a repeat of existing content included, takes it to upsert
-     a pin row (digest, instance, time, the time refreshed each time),
-     then writes the content. The commit that links a digest takes it,
-     checks the pin, writes the link and drops the pin. The sweep
-     removes unreferenced content: holding the lock until the delete
-     is done, it deletes a digest's content, and its pin, only when
-     the digest has no link and no pin younger than a grace period. A
-     commit that finds its pin gone links nothing and fails that
-     operation with a `*ConflictError` (kind `put_artifact`), a
-     class `store.IsDefinite` already treats as definite and the wire
-     keeps; the store's own `Commit`, in process or the wire client,
-     uploads again and retries, so a caller never sees it. No
-     confirmed link ever points at swept content. The backend's interface is put, get, list (for
-     content with no pin at all, such as after a crash between pin and
-     write) and delete by digest. With no backend, the content is kept
-     in Postgres, in the commit's own transaction, with no pins.
+     committed atomically as before. With no backend, the content is
+     kept in Postgres, in the commit's own transaction. The mechanism
+     is #28's to design, in its own ADR, keeping these guarantees:
+     - nothing reads content except through a committed link, so
+       ADR 0005's one fenced commit still decides what exists;
+     - no confirmed link ever points at missing content;
+     - content written for a commit that never lands can be found and
+       removed, so it is neither unreachable nor kept for ever;
+     - no writer without the instance's lease can make content
+       reachable.
+
+     Writing content outside the commit may give `put_artifact` a
+     precondition that can fail, which ADR 0005 item 3 rules out
+     today; if it does, #28 amends that item and says where the
+     conflict is handled.
    - **The schema keeps purging possible.** Every record is keyed by
      its instance or its run, and an artifact's links name the
      instances that hold it, so an instance's records, and the
      artifacts linked to it alone, can be removed later without a
-     destructive migration; content that was never linked is the
-     sweep's (above). Removing them is not decided here.
+     destructive migration; content that was never linked is the blob
+     backend's design's (above). Removing them is not decided here.
 
 9. **The store has a wire form, built here.**
    - A library package serves any `store.Store` as an HTTP handler
@@ -267,8 +251,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      never reaches another instance's content. The runtime's own reads
      (the recorded configuration, a model state's stored content) name
      their run's instance.
-   - **Artifact content travels on its own routes**, as raw bytes
-     streamed by digest, never inside a JSON body. The handler refuses
+   - **Artifact content travels on its own routes**, as raw bytes,
+     never inside a JSON body; their exact shape, and how an upload
+     names its instance and fence to the `Authorizer` and the store,
+     are #29's to fix with #28's design. The handler refuses
      content over a host-set maximum (64 MiB unless the host sets
      another) with `ErrInvalid`, a definite error, so a host plans its
      largest artifact against that limit.
@@ -486,14 +472,6 @@ Each takes effect with the issue that builds it.
 - **ADR 0003, item 7:** a cancel request (item 6) is a fact a host reads
   beside the run's status, from a record of its own. A ready run with a
   cancel request is claimed only to be cancelled.
-- **ADR 0005, item 3:** `put_artifact` gains one precondition that
-  can legitimately fail, in a store with a blob backend only: the
-  upload pin (item 8). Its conflict is handled in the store: the
-  store's own `Commit`, in process or the wire client, uploads again
-  and retries, so it never reaches the runtime, and a caller that sees
-  it anyway treats it as a store failure, as the runtime already does
-  any non-object conflict. Without a blob backend, `put_artifact` still
-  never conflicts. `store.Artifact`'s doc comment changes with #28.
 - **ADR 0005, items 4 and 5, and ADR 0006:** the store's records gain
   the cancel request (one per run, first cause stands) and the
   artifact-to-instance link. The control plane gains `RequestCancel`,

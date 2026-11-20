@@ -238,28 +238,16 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
 - The schema holds only `store.Store`'s fixed records (with ADR 0024's
   additions, the cancel requests and the artifact-to-instance links),
   and the telemetry events `store.Telemetry` keeps (so the `store`
-  telemetry sink works on it), plus the store's own upload pins for a
-  blob backend (empty without
-  one).
-  Agents keep their
-  data as JSON payloads, so adding an agent never changes the schema.
+  telemetry sink works on it). Agents keep their data as JSON
+  payloads, so adding an agent never changes the schema.
 - **Artifact content can live elsewhere.** Pass an optional blob
   backend (your implementation of a small interface, such as Cloud
   Storage) and artifact content is kept there by digest. The digest,
   size, media type and instance links stay in Postgres. Without one,
-  content is kept in Postgres. The interface is put, get, list and
-  delete by digest. Content is written only after the instance's fence
-  is checked (and, over the wire, the `Authorizer`: the store itself has
-  none), before the commit, under a pin row
-  in Postgres that each upload refreshes. A per-digest advisory lock,
-  taken by the upload's pin, the commit and the sweep whether or not a
-  pin exists, serializes them: the commit checks the pin, links the
-  digest and drops the pin, and the sweep removes content with no link
-  and no recent pin while holding the lock, so a confirmed link
-  never points at swept content. A commit whose pin was swept fails
-  that operation with a `*ConflictError` (kind `put_artifact`), and the
-  store's `Commit`, in process or the wire client, uploads again and
-  retries, so callers never see it.
+  content is kept in Postgres. The interface and how uploads are
+  coordinated with commits come with #28; it keeps content readable
+  only through a committed link, and never lets a committed link point
+  at missing content.
 - The schema keeps purging an instance's records possible later; the
   store has no delete today (ADR 0024, "Not decided here").
 
@@ -303,8 +291,9 @@ against the client.
   - Every other read names an instance or a namespace, artifact reads
     included (above).
 
-- **Artifact content** travels on its own routes as raw bytes, by
-  digest, never inside JSON. Content over the host's maximum (64 MiB
+- **Artifact content** travels on its own routes as raw bytes, never
+  inside JSON (their exact shape, naming the instance and fence, comes
+  with #29). Content over the host's maximum (64 MiB
   unless the host sets another) is refused with `ErrInvalid`.
 
 This carries the store only. Running an agent across a process boundary
