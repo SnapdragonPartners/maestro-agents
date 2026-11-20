@@ -181,9 +181,12 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      links, cancel requests and objects, and the telemetry events
      `store.Telemetry` keeps (STORE-1, ADR 0016 item 8), so the
      `store` telemetry sink works on it as on the reference stores.
-     Every agent's data is an object's value, JSON or raw bytes (a
-     PDF, through `Env.PutBytes`), or a JSON record entry, so a new
-     agent, or a new version of one, never changes the schema.
+     Every agent's data lands in one of those records: an object's
+     value, JSON or raw bytes (a PDF, through `Env.PutBytes`); a
+     checkpoint's state data, opaque JSON; a record entry's JSON
+     payload; or artifact content (the manifest, the configuration, a
+     model state's parameters and transcript). So a new agent, or a
+     new version of one, never changes the schema.
      The schema changes only when `store.Store` or `store.Telemetry`
      does, or the blob backend's bookkeeping (below) needs a table, and
      that is an ADR each time.
@@ -479,8 +482,9 @@ Each takes effect with the issue that builds it.
 - **ADR 0005, item 3:** storing a digest already stored is no longer a
   no-op when the committing instance is new to it: the commit writes
   that instance's link (item 9), and the first metadata still stands.
-  `put_artifact` still has no precondition and never conflicts, but a
-  commit that re-stores an artifact for a new instance is a write, so
+  `put_artifact` still has no precondition and never conflicts (unless
+  #28's blob backend gives it one, item 8, and amends this item
+  again), but a commit that re-stores an artifact for a new instance is a write, so
   `Committer`'s "a commit whose operations change nothing … cannot
   fail after those checks" no longer covers it. The doc comments in
   `store/store.go` and `store/ops.go` change with #29.
