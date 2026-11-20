@@ -337,7 +337,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
       launcher that set the token builds the link itself.
     - **Ready is one JSON line on stdout**, written only after the
       listener is bound and the store is open:
-      `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`.
+      `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`,
+      whose `url` is built from the address the listener actually bound
+      (`127.0.0.1`, `[::1]` or `localhost`, with the assigned port when
+      `-addr` gave port 0), which ADR 0022 item 8's Host check accepts.
       Nothing else is written to stdout, and logs go to stderr. A
       failure to bind or to open exits non-zero with the reason on
       stderr, and writes no ready line.
@@ -422,10 +425,11 @@ Each takes effect with the issue that builds it.
   stdout, which carries the ready line alone (item 15): a launcher
   builds `<url>auth/session?token=<token>` from the ready line and the
   token it set, and a host that drew its own token writes the link to
-  stderr. **ADR 0022, item
-  8:** `GET /healthz` (and the wire handler's `GET /v1/healthz`, item 9)
-  answers without a session. Both take effect when the intake agent
-  moves to the app host.
+  stderr. `GET /healthz` joins the static assets as a route that
+  answers without a session (item 15), as the wire handler's
+  `GET /v1/healthz` does (item 9); item 8's request checks still apply
+  to it. These take effect when the intake agent moves to the app
+  host.
 
 ## Consequences
 

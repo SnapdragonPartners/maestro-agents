@@ -426,7 +426,7 @@ agent bundles linked in:
 |---|---|
 | Arguments | `-workspace DIR -addr HOST:PORT`. Port `0` picks a free port. Loopback only. |
 | Session token | `MAESTRO_AGENTS_SESSION_TOKEN`, or 32 random bytes if unset. Valid for the life of the process. A host that drew its own token writes the sign-in link to stderr once, after the ready line. |
-| Ready | Exactly one JSON line on stdout once the listener is bound and the store is open: `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`. Nothing else goes to stdout. |
+| Ready | Exactly one JSON line on stdout once the listener is bound and the store is open: `{"event":"ready","url":"http://127.0.0.1:PORT/","version":"…"}`. The `url` is the address actually bound, with the assigned port (`[::1]` or `localhost` if `-addr` named it). Nothing else goes to stdout. |
 | Failure to start | Exit non-zero, with the reason on stderr and no ready line. |
 | Logs | stderr. |
 | Health | `GET /healthz`, no session needed: `{"version", "store"}`. |
