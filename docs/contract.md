@@ -246,9 +246,11 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   content is kept in Postgres. The interface is put, get, list and
   delete by digest. Content is written only after the instance's fence
   and the `Authorizer` are checked, before the commit, under a pin row
-  in Postgres that each upload refreshes. The commit locks the pin,
-  links the digest and drops the pin. A sweep, under the same lock,
-  removes content with no link and no recent pin, so a confirmed link
+  in Postgres that each upload refreshes. A per-digest advisory lock,
+  taken by the upload's pin, the commit and the sweep whether or not a
+  pin exists, serializes them: the commit checks the pin, links the
+  digest and drops the pin, and the sweep removes content with no link
+  and no recent pin while holding the lock, so a confirmed link
   never points at swept content; a commit whose pin was swept fails
   definitively, and the writer uploads again.
 - The schema keeps purging an instance's records possible later; the

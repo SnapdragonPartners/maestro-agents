@@ -197,13 +197,16 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      nothing reads content except through a committed link (ADR 0005's
      one fenced commit still decides what exists).
    - **Publication and the sweep coordinate per digest, in
-     Postgres.** Every upload, a repeat of existing content included,
-     first upserts a pin row (digest, instance, time, the time
-     refreshed each time) and then writes the content. The commit that
-     links a digest locks its pin row, writes the link and drops the
-     pin. The sweep removes unreferenced content: holding the same row
-     lock, it deletes a digest's content, and its pin, only when the
-     digest has no link and no pin younger than a grace period. A
+     Postgres.** One guard serializes them: a per-digest advisory
+     lock (a transaction-scoped Postgres advisory lock on the digest),
+     which exists whether or not any row for the digest does. Every
+     upload, a repeat of existing content included, takes it to upsert
+     a pin row (digest, instance, time, the time refreshed each time),
+     then writes the content. The commit that links a digest takes it,
+     checks the pin, writes the link and drops the pin. The sweep
+     removes unreferenced content: holding the lock until the delete
+     is done, it deletes a digest's content, and its pin, only when
+     the digest has no link and no pin younger than a grace period. A
      commit that finds its pin gone fails with a definite error, and
      the writer uploads again; so no confirmed link ever points at
      swept content. The backend's interface is put, get, list (for
