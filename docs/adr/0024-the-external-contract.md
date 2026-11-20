@@ -178,17 +178,30 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      under `/v1/`, and provides a client that is itself a `store.Store`
      over that handler. `storetest` runs against the client, so the
      wire form proves the same contract as the store behind it.
-   - Every error keeps its class across the wire: a definite error
+   - Every error keeps its class across the wire. The definite errors
      (`ErrOwnership`, `ErrInvalid`, `*ConflictError` with its current
-     version, `ErrNotClaimable`, `ErrInstanceBusy`, `ErrNotFound`)
-     arrives as itself. Anything the client cannot classify, a dropped
-     connection included, is indeterminate (`store.IsDefinite`), and the
-     host rereads before retrying (ADR 0003, item 14).
+     version, `ErrNotClaimable`, `ErrInstanceBusy`) arrive as
+     themselves, and so does `ErrNotFound`, which stays what it is
+     today: a read's answer, not a definite error (`store.IsDefinite`
+     is unchanged). Anything the client cannot classify, a dropped
+     connection included, is indeterminate, and the host rereads
+     before retrying (ADR 0003, item 14).
    - The handler authenticates nothing itself. The host wraps it with
-     its own authentication, and passes an `Authorizer` that sees every
-     call's operation, instance, run and namespace, so Morris can
-     confine a run's token to that run's instance and namespace.
-   - **Every read names an instance or a namespace, artifacts
+     its own authentication, and passes an `Authorizer` that sees each
+     call's operation and the instance, run and namespace it concerns,
+     so Morris can confine a run's token to that run's instance and
+     namespace. **A call that names only a run is authorized on that
+     run's instance:** for `Run`, `Entries`, `CancelRequest`,
+     `RequestCancel` and the run status route, the handler reads the
+     run record first and passes its instance to the `Authorizer`, and
+     a refused call answers exactly as a missing run does
+     (`ErrNotFound`), so a token learns nothing of runs outside its
+     scope. **`Claimable` names no instance**: it is the executor's
+     store-wide scan, and the `Authorizer` sees it as such, with no
+     instance, to grant only to an executing service's identity (Morris's
+     worker), never to a token scoped to a run or an instance. `storetest`
+     covers both through the client.
+   - **Every other read names an instance or a namespace, artifacts
      included.** Artifacts stay content-addressed and stored once, but
      each `PutArtifact` links its digest to the committing instance,
      the link written even when the content is already stored, and
@@ -246,7 +259,13 @@ consumer-facing reference is [docs/contract.md](../contract.md).
       run of the handler type, on the requesting run's instance, whose
       trigger ID is the request's ID. `CreateRun` is conditional on
       (instance, trigger ID), so a second answer finds the first one's
-      run and changes nothing. A request is open until that run exists.
+      run and changes nothing. (`CreateRun` returns an existing run for
+      the trigger ID even after the trigger is removed.) A submission
+      therefore carries the caller's trigger identity (amendment to ADR
+      0021, item 2, below). If the instance has an unfinished run
+      (`ErrInstanceBusy`, or `Host.Submit`'s `ErrBusy`), no run is
+      made and the request stays open: the host retries, or tells the
+      responder to try again. A request is open until that run exists.
       A handler that needs another answer, such as a correction that
       must be reviewed again, opens a new request.
     - **There are two ways to wait.** *Between runs*, built now: the
@@ -386,6 +405,11 @@ Each takes effect with the issue that builds it.
   of the run record is unchanged.
 - **ADR 0017, item 18:** a heartbeat that returns a cancel request
   cancels the activation with the request's cause.
+- **ADR 0021, item 2:** a submission may carry a caller-chosen trigger
+  identity (`Submission`, `Host.Submit`). A response uses its request's
+  ID, so a repeat finds the existing run rather than making another.
+  Without one, the host still draws `submitted:<hex>` at random, never
+  deduplicated, as today.
 - **ADR 0021, item 11:** an export is a published artifact (item 10),
   and the folder copy is the host's.
 - **ADR 0022, item 6:** the session token's variable becomes

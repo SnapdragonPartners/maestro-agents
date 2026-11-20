@@ -35,7 +35,7 @@ Contents:
 |---|---|---|---|
 | Store | `store.Store` | exists ([ADR 0006](adr/0006-store-interface.md)) | Every durable record. One fenced, atomic `Commit`, the control plane and the reader. Prove a host store with `store/storetest`. |
 | Model client | `*agent.ModelClient`, from `agent.NewModelClient` | exists ([ADR 0014](adr/0014-model-client-and-attempt-admission.md)) | Wraps the host's `maestro-llms` client and its rate limiter. Admits and records every provider attempt. No other client compiles. |
-| Policy | `agent.Policy` | exists ([ADR 0007](adr/0007-agent-types-and-the-run-controller.md)) | Allows or denies every tool call. Holding a call for approval (TOOL-4) is **not built**: a `pending` verdict fails the run with `config_error` ([ADR 0011](adr/0011-manifests.md)). A run asks a person through a request instead (section 4). |
+| Policy | `agent.Policy` | exists ([ADR 0008](adr/0008-model-states.md), item 5) | Allows or denies every tool call. Holding a call for approval (TOOL-4) is **not built**: a `pending` verdict fails the run with `config_error` ([ADR 0011](adr/0011-manifests.md)). A run asks a person through a request instead (section 4). |
 | Credentials | `agent.CredentialProvider` | exists ([ADR 0016](adr/0016-telemetry-logging-and-credentials.md)) | Serves a tool a credential at call time, keyed by the run context (run, principal). Never reaches agent code. |
 | Telemetry | `agent.Sink`, `agent.Redactor` | exists (ADR 0016) | One event per committed record entry: IDs, names, counts and codes, never content. Free text leaves only through the redactor. |
 | Logging | `*slog.Logger` | exists (ADR 0016) | One logger for the runtime, agent types and tools. |
@@ -46,13 +46,13 @@ Contents:
 | Call | Status | Use |
 |---|---|---|
 | `agent.NewRegistry`, `Registry.Register` | exists | Register each agent type explicitly (MAN-3). |
-| `Registry.Manifest(name)` | exists ([ADR 0011](adr/0011-manifests.md)) | The type's manifest as JSON: name, version, triggers, configuration schema, default budgets, states, tools, skills, templates. Morris builds its catalogue and its "propose a run" tool from it. |
+| `Registry.Manifest(name)` | exists ([ADR 0011](adr/0011-manifests.md)) | The type's `Manifest` value (and whether the type exists), whose JSON form is the catalogue entry: name, version, triggers, configuration schema, default budgets, states, tools, skills, templates. Morris builds its catalogue and its "propose a run" tool from it. |
 | `Registry.CheckStart(type, triggerKind, config, budgets)` | planned (#35) | Checks a start without a run, returning every failure as data. Use it before a confirmation box or before saving a setup. The start itself checks again. |
 | `ControlPlane.EnqueueTrigger`, `CreateRun`, `RemoveTrigger` | exists ([ADR 0005](adr/0005-storage-one-fenced-commit.md)) | Create a run, idempotently on (instance, trigger ID). |
 | `ControlPlane.Claim`, `Heartbeat`, `Release` | exists ([ADR 0003](adr/0003-run-model-identities-and-activation-results.md)) | Lease the instance before activating, and keep the lease alive. |
 | `agent.NewController(store, registry, opts...)` | exists | One controller serves every instance, concurrently. |
 | `Controller.Activate(ctx, ActivationInput)` | exists ([ADR 0007](adr/0007-agent-types-and-the-run-controller.md)) | Run a claimed run up to `MaxSteps` steps, or to its end. |
-| `ControlPlane.RequestCancel(run, cause)` | planned (#26) | Stop a run, whoever is executing it (below). |
+| `ControlPlane.RequestCancel(ctx, run, cause)` | planned (#26) | Stop a run, whoever is executing it (below). |
 | `agent.Status`, `agent.InstanceStatus` | planned (#27) | Section 2. |
 
 `ActivationInput` (exists) carries:
@@ -70,7 +70,9 @@ acts under. Morris passes the user who clicked Confirm.
 
 1. **Create the run.** `EnqueueTrigger`, then `CreateRun` (conditional
    on instance and trigger ID), then `RemoveTrigger`. A run is created
-   `runnable`.
+   `runnable`. The trigger is whatever starts a run: a file, a click, a
+   submitted response. Schedule triggers, for continuously running
+   agents (MODE-4), are planned (#33).
 2. **Claim it.** Find ready runs with `Reader.Claimable`, then call
    `Claim(instance, owner, lease)`. The ownership returned gives the
    fence.
@@ -103,7 +105,7 @@ depend on the status:
 
 | Status | Reason codes |
 |---|---|
-| `runnable` | `step_limit`, `shutdown` |
+| `runnable` | none (an empty reason: created, not yet activated), `step_limit`, `shutdown` |
 | `succeeded` | `changed`, `no_change` |
 | `failed` | `budget_exhausted`, `budget_unenforceable`, `model_error`, `tool_error`, `invalid_output`, `wrap_up_failed`, `object_conflict`, `state_error`, `config_error` |
 | `cancelled` | `operator`, `superseded` |
@@ -112,7 +114,7 @@ There is no stored `running` status. Section 2 derives one.
 
 ### Stopping a run (planned, #26)
 
-`RequestCancel(run, cause)` records a cancel request, with the cause
+`RequestCancel(ctx, run, cause)` records a cancel request, with the cause
 `operator` or `superseded`. It is unfenced and idempotent: the first
 cause stands. The request is a record of its own, not part of the run
 record, so it never makes the executing activation's commit conflict.
@@ -188,7 +190,7 @@ never stored.
 |---|---|
 | `queued` | `runnable`, and no live lease on the instance |
 | `running` | `runnable`, and a live lease |
-| `waiting` | `waiting` for input (STM-8; not produced before then) |
+| `waiting` | `waiting` for input (STM-8, planned, #34; not produced before then) |
 | `stopping` | a cancel request, not yet terminal |
 | `succeeded`, `failed`, `cancelled` | terminal, with RUN-3's reason |
 
@@ -250,16 +252,24 @@ against the client.
   - `*ConflictError`, with the current version
   - `ErrNotClaimable`
   - `ErrInstanceBusy`
-  - `ErrNotFound`
+  - `ErrNotFound`, a read's answer, which is not a definite error
+    today and stays so
 
   Anything else is indeterminate (`store.IsDefinite` is false), a
   dropped connection included. Reread before retrying.
 - **Authentication is the host's.** Wrap the handler with your own. Pass
-  an `Authorizer`, which sees every call's operation, instance, run and
-  namespace. Morris uses it to confine a run's token to that run's
-  instance and namespace. Every read names an instance or a namespace,
-  artifact reads included (above), so the `Authorizer` always has one
-  to check.
+  an `Authorizer`, which sees each call's operation and the instance,
+  run and namespace it concerns. Morris uses it to confine a run's token
+  to that run's instance and namespace.
+  - A call that names only a run (`Run`, `Entries`, `CancelRequest`,
+    `RequestCancel`, the run status route) is authorized on that run's
+    instance: the handler reads the run record first. A refused call
+    answers exactly as a missing run does (`ErrNotFound`).
+  - `Claimable` names no instance. It is the executor's store-wide
+    scan: grant it only to an executing service (Morris's worker),
+    never to a token scoped to a run or an instance.
+  - Every other read names an instance or a namespace, artifact reads
+    included (above).
 
 This carries the store only. Running an agent across a process boundary
 is MODE-8, which is not built.
@@ -325,13 +335,15 @@ agent's architect answers its coder).
 2. **Wait.**
    - *Between runs* (built first): the run finishes, and its requests
      stay open.
-   - *In the run* (STM-8, later): the run is `waiting`.
+   - *In the run* (STM-8, planned, #34): the run is `waiting`.
 3. **Answer, once.** The host checks the value against the schema, then
    submits a run of `handler` on the request's instance, with the
    response as its payload and **the request's ID as its trigger ID**.
    `CreateRun` is conditional on (instance, trigger ID), so a second
-   answer finds the first one's run and changes nothing. A request is
-   closed once that run exists.
+   answer finds the first one's run and changes nothing. If the
+   instance has an unfinished run, no run is made and the request stays
+   open: the host retries, or asks the responder to try again. A request
+   is closed once that run exists.
 4. **Continue.** The handler's run acts on the response. If it needs
    another answer, for instance on a correction to review again, it
    opens a new request.
