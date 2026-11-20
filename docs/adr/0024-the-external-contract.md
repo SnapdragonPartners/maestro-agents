@@ -184,9 +184,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      Every agent's data lands in one of those records: an object's
      value, JSON or raw bytes (a PDF, through `Env.PutBytes`); a
      checkpoint's state data, opaque JSON; a record entry's JSON
-     payload; or artifact content (the manifest, the configuration, a
-     model state's parameters and transcript). So a new agent, or a
-     new version of one, never changes the schema.
+     payload; or an artifact (the manifest, the configuration, a
+     model state's parameters and transcript), whose content is in
+     Postgres unless a blob backend (below) holds it. So a new agent,
+     or a new version of one, never changes the schema.
      The schema changes only when `store.Store` or `store.Telemetry`
      does, or the blob backend's bookkeeping (below) needs a table, and
      that is an ADR each time.

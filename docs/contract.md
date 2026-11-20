@@ -240,8 +240,11 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   and the telemetry events `store.Telemetry` keeps (so the `store`
   telemetry sink works on it). Agents' data lands in those records:
   object values (JSON or raw bytes), checkpoint state, record entries
-  and artifact content (manifests, configurations, transcripts), so
-  adding an agent never changes the schema.
+  and artifacts (manifests, configurations, transcripts), whose content
+  is in Postgres unless a blob backend holds it (below), so adding an
+  agent never changes the schema. The schema changes only with
+  `store.Store` or `store.Telemetry`, or if the blob backend's
+  bookkeeping (#28) needs a table, each by an ADR.
 - **Artifact content can live elsewhere.** Pass an optional blob
   backend (your implementation of a small interface, such as Cloud
   Storage) and artifact content is kept there by digest. The digest,
