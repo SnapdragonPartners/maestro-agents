@@ -178,7 +178,8 @@ consumer-facing reference is [docs/contract.md](../contract.md).
    - **The schema is kept as static as possible.** It holds only the
      records `store.Store` fixes: runs, ownership, triggers,
      checkpoints, the execution record, artifacts and their instance
-     links, cancel requests and objects. Every
+     links, the upload pins of a blob backend (below), cancel requests
+     and objects. Every
      agent's data is a JSON payload in an object or a record entry, so
      a new agent, or a new version of one, never changes the schema.
      The schema changes only when `store.Store` does, and that is an ADR
@@ -194,12 +195,21 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      lands before the commit, so a commit that then fails leaves only
      unreferenced content, never a reference to missing content, and
      nothing reads content except through a committed link (ADR 0005's
-     one fenced commit still decides what exists). Unreferenced
-     content is found by a sweep: the backend lists its digests, and
-     one with no instance link, older than a grace period, is
-     removed. The backend's interface is therefore put, get, list and
-     delete by digest. With no backend, the content is kept in
-     Postgres, in the commit's own transaction.
+     one fenced commit still decides what exists).
+   - **Publication and the sweep coordinate per digest, in
+     Postgres.** Every upload, a repeat of existing content included,
+     first upserts a pin row (digest, instance, time, the time
+     refreshed each time) and then writes the content. The commit that
+     links a digest locks its pin row, writes the link and drops the
+     pin. The sweep removes unreferenced content: holding the same row
+     lock, it deletes a digest's content, and its pin, only when the
+     digest has no link and no pin younger than a grace period. A
+     commit that finds its pin gone fails with a definite error, and
+     the writer uploads again; so no confirmed link ever points at
+     swept content. The backend's interface is put, get, list (for
+     content with no pin at all, such as after a crash between pin and
+     write) and delete by digest. With no backend, the content is kept
+     in Postgres, in the commit's own transaction, with no pins.
    - **The schema keeps purging possible.** Every record is keyed by
      its instance or its run, and an artifact's links name the
      instances that hold it, so an instance's records, and the
