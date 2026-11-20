@@ -178,20 +178,22 @@ consumer-facing reference is [docs/contract.md](../contract.md).
    - **The schema is kept as static as possible.** It holds only the
      records `store.Store` fixes: runs, ownership, triggers,
      checkpoints, the execution record, artifacts and their instance
-     links, the upload pins of a blob backend (below), cancel requests
-     and objects. Every
+     links, cancel requests and objects; plus one table of the store's
+     own bookkeeping for a blob backend, the upload pins (below),
+     created by the same migrations and empty without a backend. Every
      agent's data is a JSON payload in an object or a record entry, so
      a new agent, or a new version of one, never changes the schema.
-     The schema changes only when `store.Store` does, and that is an ADR
-     each time.
+     The schema changes only when `store.Store` does, or this ADR's
+     bookkeeping does, and that is an ADR each time.
    - **Artifact content may live outside Postgres.** The store takes
      an optional blob backend, a small interface the host implements
      (Morris: Cloud Storage), that holds artifact content by digest.
      The digest, size, media type and instance links stay in Postgres,
      committed atomically as before. **Content is written only for a
-     current owner:** the store (or the wire handler's upload route,
-     item 9) checks the instance's fence and the `Authorizer` before
-     it writes, and the write is content-addressed and write-once. It
+     current owner:** the store checks the instance's fence before it
+     writes, and the wire handler's upload route (item 9) also passes
+     the call to its `Authorizer` first; `store.Store` itself has no
+     authorizer. The write is content-addressed and write-once. It
      lands before the commit, so a commit that then fails leaves only
      unreferenced content, never a reference to missing content, and
      nothing reads content except through a committed link (ADR 0005's
@@ -207,9 +209,12 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      removes unreferenced content: holding the lock until the delete
      is done, it deletes a digest's content, and its pin, only when
      the digest has no link and no pin younger than a grace period. A
-     commit that finds its pin gone fails with a definite error, and
-     the writer uploads again; so no confirmed link ever points at
-     swept content. The backend's interface is put, get, list (for
+     commit that finds its pin gone links nothing and fails that
+     operation with a `*ConflictError` (kind `put_artifact`), a
+     class `store.IsDefinite` already treats as definite and the wire
+     keeps; the store's own `Commit`, in process or the wire client,
+     uploads again and retries, so a caller never sees it. No
+     confirmed link ever points at swept content. The backend's interface is put, get, list (for
      content with no pin at all, such as after a crash between pin and
      write) and delete by digest. With no backend, the content is kept
      in Postgres, in the commit's own transaction, with no pins.

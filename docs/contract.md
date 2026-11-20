@@ -236,7 +236,9 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
 - Migrations are expand-only. A release that raises `SchemaVersion`
   opens its notes with **"Database migration required"**.
 - The schema holds only `store.Store`'s fixed records (with ADR 0024's
-  additions, the cancel requests and the artifact-to-instance links).
+  additions, the cancel requests and the artifact-to-instance links),
+  plus the store's own upload pins for a blob backend (empty without
+  one).
   Agents keep their
   data as JSON payloads, so adding an agent never changes the schema.
 - **Artifact content can live elsewhere.** Pass an optional blob
@@ -245,14 +247,17 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
   size, media type and instance links stay in Postgres. Without one,
   content is kept in Postgres. The interface is put, get, list and
   delete by digest. Content is written only after the instance's fence
-  and the `Authorizer` are checked, before the commit, under a pin row
+  is checked (and, over the wire, the `Authorizer`: the store itself has
+  none), before the commit, under a pin row
   in Postgres that each upload refreshes. A per-digest advisory lock,
   taken by the upload's pin, the commit and the sweep whether or not a
   pin exists, serializes them: the commit checks the pin, links the
   digest and drops the pin, and the sweep removes content with no link
   and no recent pin while holding the lock, so a confirmed link
-  never points at swept content; a commit whose pin was swept fails
-  definitively, and the writer uploads again.
+  never points at swept content. A commit whose pin was swept fails
+  that operation with a `*ConflictError` (kind `put_artifact`), and the
+  store's `Commit`, in process or the wire client, uploads again and
+  retries, so callers never see it.
 - The schema keeps purging an instance's records possible later; the
   store has no delete today (ADR 0024, "Not decided here").
 
