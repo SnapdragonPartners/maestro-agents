@@ -94,9 +94,23 @@ consumer-facing reference is [docs/contract.md](../contract.md).
 
 5. **Starting a run can be checked without a run.**
    `Registry.CheckStart(agentType, triggerKind, config, budgets)` runs the
-   same checks an activation runs at the start (trigger kind, the
-   configuration against the type's schema, the budgets against its
-   limits; ADR 0011) and returns every failure as data. Morris checks a
+   same checks an activation runs at the start, by the same code (trigger
+   kind, the configuration against the type's schema, the budgets against
+   its limits with the type's defaults filling zero ones; ADR 0011), and
+   returns every failure as data, an `agent.StartProblem` each: the check,
+   the RUN-3 reason the start would fail with (`config_error`, or
+   `budget_unenforceable` for a budget the runtime cannot enforce, such
+   as a cost budget today), the budget or the configuration's JSON
+   Pointer where one applies, and a detail. An unregistered type is a
+   problem with no reason: `Activate` refuses such a run rather than
+   failing it. A start with configuration problems fails with
+   `config_error` listing them all, before any unenforceable budget. The
+   run's namespace and principal are not parameters: the host assigns
+   them, not the proposal, so the host checks them itself, and the start
+   still fails a run with `config_error` for them (ADR 0012 item 5,
+   ADR 0016 item 12). Nor does it check what only a model attempt shows,
+   such as a hard token budget on a request with no known-safe bound
+   (`budget_unenforceable` then, ADR 0014). Morris checks a
    proposed run with it before drawing the confirmation box, and the
    app's setup checks an agent's configuration with it before saving.
    A run that passed is still checked when it starts: the check is
@@ -456,7 +470,7 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     failure is a classified tool error. The replay harness stands in
     for the server. The issue's own ADR decides the details.
 
-18. **Gaps, each its own issue:** check before start (item 5, #35);
+18. **Gaps, each its own issue:** check before start (item 5, #35, built);
     cancel requests (item 6, #26); status (item 7, #27); the Postgres
     store (item 8, #28); the store's wire form and instance-linked
     artifact reads (item 9, #29); published artifacts (item 10, #30);

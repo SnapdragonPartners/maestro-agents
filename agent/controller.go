@@ -533,10 +533,11 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 		budgets = &a.budgets
 		start.entry.Budgets = budgets
 	}
-	if err := store.ValidJSON(config); err != nil {
-		return a.fail(ctx, ReasonConfigError, "configuration: "+err.Error())
-	}
-	if config != nil {
+	// The proposal's checks are the ones Registry.CheckStart makes (ADR
+	// 0024, item 5); they are refused after the host's inputs, and the
+	// configuration is recorded only if it is valid JSON.
+	problems := a.m.checkStart(a.run.TriggerKind, config, &a.budgets)
+	if config != nil && store.ValidJSON(config) == nil {
 		sum := sha256.Sum256(config)
 		start.entry.Config = hex.EncodeToString(sum[:])
 		start.config = &store.Artifact{Digest: start.entry.Config, MediaType: "application/json", Content: config}
@@ -544,25 +545,8 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	if e := a.checkHostInputs(ctx); e != nil {
 		return e
 	}
-	if !a.m.triggers[a.run.TriggerKind] {
-		return a.fail(ctx, ReasonConfigError, fmt.Sprintf(
-			"trigger kind %q is not one agent type %q declares (MAN-2)", a.run.TriggerKind, a.m.name))
-	}
-	if a.m.config != nil {
-		raw := config
-		if raw == nil {
-			raw = json.RawMessage("null")
-		}
-		if err := a.m.config.Validate(raw); err != nil {
-			return a.fail(ctx, ReasonConfigError, "configuration: "+err.Error())
-		}
-	}
-	if err := a.budgets.validate(); err != nil {
-		return a.fail(ctx, ReasonConfigError, "budgets: "+err.Error())
-	}
-	if a.budgets.Cost > 0 {
-		return a.refuseBudget(ctx, &budgetRefusal{ReasonBudgetUnenforceable, BudgetCost,
-			"cost budgets are not built yet (MVP.md, BUD-1)"})
+	if e := a.refuseStart(ctx, problems); e != nil {
+		return e
 	}
 	a.config = config
 	if ctx.Err() != nil {
