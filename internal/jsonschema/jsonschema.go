@@ -344,10 +344,14 @@ type ValidationError struct {
 	Problems []Problem
 }
 
+// String is the problem as Error lists it: its location, "(root)" for
+// the whole value, then its message.
+func (p Problem) String() string { return display(p.Pointer) + ": " + p.Message }
+
 func (e *ValidationError) Error() string {
 	parts := make([]string, len(e.Problems))
 	for i, p := range e.Problems {
-		parts[i] = display(p.Pointer) + ": " + p.Message
+		parts[i] = p.String()
 	}
 	return strings.Join(parts, "; ")
 }
