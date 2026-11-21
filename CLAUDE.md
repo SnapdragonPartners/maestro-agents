@@ -169,7 +169,7 @@ Load-bearing decisions so far:
   recorded run, so a model or prompt change is scored on a fresh store;
   an agent's own comparator lives with the agent (an LLM judge is the
   planned second comparator)
-  ([ADR 0020](docs/adr/0020-the-scoring-harness.md), items 1 to 3 and 6)
+  ([ADR 0020](docs/adr/0020-the-scoring-harness.md), items 1 to 3, 5 and 6)
 - Submitted runs (ADR 0021, items 1 to 4 and 14): a program lists
   submitted agent types (`Program.Submitted`, trigger kind
   `standalone.SubmittedKind`), which `Host.Submit` runs in process on a
@@ -186,7 +186,9 @@ Load-bearing decisions so far:
   [morris-agents](https://github.com/SnapdragonPartners/morris-agents)
   as its own module, with its design there as addepar ADRs 0001 to 0006;
   ADRs 0015, 0018 and 0019 here, and the agent's parts of ADRs 0020 to
-  0022, are history, each status line naming its new ADR
+  0022, are history, each status line naming its new ADR; ADR 0022's
+  credential, session, operator-name and request-check items (5 to 8)
+  stay in force here as the design of the multi-agent host (ADR 0024, #32)
 - `strictjson` and `regularfile` are public packages at the module root
   (ADR 0023), moved from `internal/` so agents in their own modules
   (morris-agents) decode operators' files and tools' arguments, and open

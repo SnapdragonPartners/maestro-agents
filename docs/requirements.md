@@ -844,11 +844,11 @@ Addepar import row out. Its requirements are drafted separately (the
 MVP because it has users waiting for it and exercises the hard parts of the
 library (recovery, idempotent writes, multimodal input) on a small surface.
 It is not free of outside dependencies: it needs four upstream changes
-(listed under *Delivery plan* below). It lives in this repository as `cmd/addepar`, both as a usable tool and as
-the reference implementation of an agent type; it may move later. (It
-has: it lives in
+(listed under *Delivery plan* below). It was built in this repository as `cmd/addepar`, both as a usable tool and as
+the reference implementation of an agent type, and has since moved: it
+lives in
 [morris-agents](https://github.com/SnapdragonPartners/morris-agents) as
-the module `addepar`, issue #37.) The
+the module `addepar` (issue #37). The
 same agent type later runs compiled into Morris (morris#569), which is
 Morris's acceptance test.
 
@@ -867,8 +867,9 @@ it in-process, as Go tools. An MCP server over the same package, for
 consumers outside Go, is a thin wrapper `maestro-cms` can add when one is
 wanted; the MVP does not wait for it.
 
-The intake agent's review UI is a web UI embedded in the `cmd/addepar`
-binary (`go:embed`) and served on localhost: it must show page images with
+The intake agent's review UI is a web UI embedded in the agent's binary
+(`go:embed`; `cmd/addepar` here, now in morris-agents) and served on
+localhost: it must show page images with
 highlighted evidence, which rules out a terminal UI, and a separate
 application would duplicate the store access the binary already has.
 

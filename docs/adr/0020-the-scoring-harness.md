@@ -1,6 +1,6 @@
 # 0020. The scoring harness
 
-- **Status:** Amended by ADR-0021; the harness (items 1 to 3 and 6) stays in force here; the intake agent's comparator and `addepar score` (items 4, 5 and 7 to 10) moved to morris-agents as [addepar ADR 0004](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0004-the-scoring-harness.md)
+- **Status:** Amended by ADR-0021; the harness, with its pass criterion (items 1 to 3, 5 and 6; `scoring.Report.Failed`), stays in force here; the intake agent's comparator and `addepar score`, its exit codes included (items 4 and 7 to 10, and item 5's mapping to exit codes), moved to morris-agents as [addepar ADR 0004](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0004-the-scoring-harness.md)
 - **Date:** 2026-11-16
 
 ## Context

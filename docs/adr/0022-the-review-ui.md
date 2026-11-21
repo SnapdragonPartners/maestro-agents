@@ -1,6 +1,6 @@
 # 0022. The review UI: `addepar serve`
 
-- **Status:** Accepted; `Host.Watch` (item 1) stays in force here; the review UI, `addepar serve`, moved to morris-agents as [addepar ADR 0006](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0006-the-review-ui.md)
+- **Status:** Accepted; `Host.Watch` (item 1) stays in force here, and so do the credential, session, operator-name and request-check items (5 to 8), as the design ADR 0024 builds the multi-agent host on (#32); the review UI, `addepar serve`, and its implementation of those items moved to morris-agents as [addepar ADR 0006](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0006-the-review-ui.md)
 - **Date:** 2026-11-18
 
 ## Context

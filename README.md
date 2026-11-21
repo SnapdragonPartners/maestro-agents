@@ -7,7 +7,7 @@ through [maestro-llms](https://github.com/SnapdragonPartners/maestro-llms).
 
 ## Status
 
-**Building the MVP** ([docs/MVP.md](docs/MVP.md)). The store interface and
+**MVP built; the agents split out** ([docs/MVP.md](docs/MVP.md)). The store interface and
 its reference stores (memory and files) exist, in `store/`, and so do agent
 types, the run controller for code and model states, budgets, forced
 wrap-up with the visible clock, manifests, namespace confinement, skills

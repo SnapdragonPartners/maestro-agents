@@ -60,6 +60,6 @@ template.
 | [0019](0019-the-extraction-agent-reads-the-pdf.md) | The extraction agent reads the PDF | Accepted; moved to morris-agents (addepar ADR 0003) |
 | [0020](0020-the-scoring-harness.md) | The scoring harness | Amended by ADR-0021; harness here, intake comparator moved to morris-agents (addepar ADR 0004) |
 | [0021](0021-review-writes-approval-and-export.md) | Review writes, approval and export | Amended by ADR-0022, ADR-0023; host items here, review and export moved to morris-agents (addepar ADR 0005) |
-| [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted; `Host.Watch` here, review UI moved to morris-agents (addepar ADR 0006) |
+| [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted; `Host.Watch` and items 5 to 8 here, review UI moved to morris-agents (addepar ADR 0006) |
 | [0023](0023-public-strictjson-and-regularfile.md) | Public `strictjson` and `regularfile` for agents in other modules | Accepted |
 | [0024](0024-the-external-contract.md) | The external contract | Proposed |
