@@ -1,6 +1,6 @@
 # 0021. Review writes, approval and export
 
-- **Status:** Amended by ADR-0022, ADR-0023
+- **Status:** Amended by ADR-0022, ADR-0023; the standalone host's submitted runs and in-process host (items 1 to 4 and 14) and strict decoding (item 13, as ADR-0023 amends it) stay in force here; the review agent type, approval and export moved to morris-agents as [addepar ADR 0005](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0005-review-writes-approval-and-export.md)
 - **Date:** 2026-11-17
 
 ## Context

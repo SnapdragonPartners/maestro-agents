@@ -1,6 +1,6 @@
 # 0022. The review UI: `addepar serve`
 
-- **Status:** Accepted
+- **Status:** Accepted; `Host.Watch` (item 1) stays in force here; the review UI, `addepar serve`, moved to morris-agents as [addepar ADR 0006](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0006-the-review-ui.md)
 - **Date:** 2026-11-18
 
 ## Context

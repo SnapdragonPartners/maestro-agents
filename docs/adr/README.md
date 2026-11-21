@@ -21,9 +21,13 @@ padded). Each ADR has **Status**, **Date**, **Context**, **Decision**,
 - ADRs are **append-only**. To change a decision, add a new ADR and set the
   old one's status to `Superseded by ADR-NNNN` (or `Amended by ADR-NNNN`
   for a partial change). Recording an amendment in the old ADR's status
-  line, and in the index below, is the only edit an accepted ADR gets.
+  line, and in the index below, is the only edit an accepted ADR gets;
+  so is recording a move.
 - Status values: `Proposed`, `Accepted`, `Amended by ADR-NNNN`,
-  `Superseded by ADR-NNNN`, `Deprecated`.
+  `Superseded by ADR-NNNN`, `Deprecated`. An ADR whose code moved to
+  another repository adds `moved to <repository> as <its ADR>` to its
+  status, saying which items, if any, stay in force here; the body stays
+  as history.
 - Keep them terse and binding. An ADR is a decision, not an essay.
 - Retrofitting an ADR for a decision already made is fine; date it to when
   the decision was taken.
@@ -49,13 +53,13 @@ template.
 | [0012](0012-namespace-confinement.md) | Namespace confinement | Accepted |
 | [0013](0013-skills-and-prompt-templates.md) | Skills and prompt templates | Accepted |
 | [0014](0014-model-client-and-attempt-admission.md) | The model client and attempt-level admission | Accepted |
-| [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Amended by ADR-0018, ADR-0021 |
+| [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Amended by ADR-0018, ADR-0021; moved to morris-agents (addepar ADR 0001) |
 | [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Accepted |
 | [0017](0017-the-standalone-host.md) | The standalone host | Amended by ADR-0020, ADR-0021 |
-| [0018](0018-the-intake-agent-type-and-the-vertical-slice.md) | The intake agent type and the vertical slice | Amended by ADR-0019, ADR-0021 |
-| [0019](0019-the-extraction-agent-reads-the-pdf.md) | The extraction agent reads the PDF | Accepted |
-| [0020](0020-the-scoring-harness.md) | The scoring harness | Amended by ADR-0021 |
-| [0021](0021-review-writes-approval-and-export.md) | Review writes, approval and export | Amended by ADR-0022, ADR-0023 |
-| [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted |
+| [0018](0018-the-intake-agent-type-and-the-vertical-slice.md) | The intake agent type and the vertical slice | Amended by ADR-0019, ADR-0021; moved to morris-agents (addepar ADR 0002) |
+| [0019](0019-the-extraction-agent-reads-the-pdf.md) | The extraction agent reads the PDF | Accepted; moved to morris-agents (addepar ADR 0003) |
+| [0020](0020-the-scoring-harness.md) | The scoring harness | Amended by ADR-0021; harness here, intake comparator moved to morris-agents (addepar ADR 0004) |
+| [0021](0021-review-writes-approval-and-export.md) | Review writes, approval and export | Amended by ADR-0022, ADR-0023; host items here, review and export moved to morris-agents (addepar ADR 0005) |
+| [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted; `Host.Watch` here, review UI moved to morris-agents (addepar ADR 0006) |
 | [0023](0023-public-strictjson-and-regularfile.md) | Public `strictjson` and `regularfile` for agents in other modules | Accepted |
 | [0024](0024-the-external-contract.md) | The external contract | Proposed |

@@ -1,6 +1,6 @@
 # 0019. The extraction agent reads the PDF
 
-- **Status:** Accepted
+- **Status:** Accepted; moved to morris-agents as [addepar ADR 0003](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0003-the-extraction-agent-reads-the-pdf.md)
 - **Date:** 2026-11-16
 
 ## Context

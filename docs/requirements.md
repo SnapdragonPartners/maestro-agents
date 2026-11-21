@@ -845,7 +845,10 @@ MVP because it has users waiting for it and exercises the hard parts of the
 library (recovery, idempotent writes, multimodal input) on a small surface.
 It is not free of outside dependencies: it needs four upstream changes
 (listed under *Delivery plan* below). It lives in this repository as `cmd/addepar`, both as a usable tool and as
-the reference implementation of an agent type; it may move later. The
+the reference implementation of an agent type; it may move later. (It
+has: it lives in
+[morris-agents](https://github.com/SnapdragonPartners/morris-agents) as
+the module `addepar`, issue #37.) The
 same agent type later runs compiled into Morris (morris#569), which is
 Morris's acceptance test.
 

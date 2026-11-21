@@ -1,6 +1,6 @@
 # 0015. The intake agent's verifier, exporter and test data
 
-- **Status:** Amended by ADR-0018, ADR-0021
+- **Status:** Amended by ADR-0018, ADR-0021; moved to morris-agents as [addepar ADR 0001](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0001-intake-verifier-exporter-and-test-data.md)
 - **Date:** 2026-11-12
 
 ## Context

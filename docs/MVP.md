@@ -14,6 +14,12 @@ operator's review and approval, and an Addepar CSV row with its evidence
 manifest out. That document's own later phases (registry mapping, history,
 the Addepar API) are not part of it.
 
+The executable was built here and has since moved, with its design
+(ADRs 0015, 0018, 0019 and the agent's parts of 0020 to 0022), to
+[morris-agents](https://github.com/SnapdragonPartners/morris-agents) as
+the module `addepar` (issue #37); the steps below record where it was
+built.
+
 The library is built as far as that executable needs, against the full
 [requirements](requirements.md). Nothing is cut from the requirements;
 what the MVP does not need is **deferred**, not dropped.

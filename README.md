@@ -15,29 +15,25 @@ and prompt templates, the model client with attempt-level budget
 admission, and the host seams for telemetry, logging and credentials, in
 `agent/`. The standalone host, which runs an agent type from a JSON
 configuration and which every agent's `main` calls, is in `standalone/`
-([ADR 0017](docs/adr/0017-the-standalone-host.md)). The intake agent,
-`cmd/addepar`, runs on the standalone host: its verifier and exporter,
-and the vertical slice (extraction, verification, crash recovery and
-fencing on the file store, [ADR
-0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md)), with the
-model reading the PDF itself beside its text ([ADR
-0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md)). The scoring
-harness, `scoring/`, runs an agent over a set of inputs and compares its
-outputs with an answer key; `addepar score` scores the intake agent
-([ADR 0020](docs/adr/0020-the-scoring-harness.md)). People's review
-actions and approvals are runs of a second agent type, submitted in
-process through the standalone host, and `addepar export` exports
-approved records ([ADR
-0021](docs/adr/0021-review-writes-approval-and-export.md)). `addepar serve`
-watches an operator's workspace and serves the review UI on localhost in
-one process, with browser-based first-run setup ([ADR
-0022](docs/adr/0022-the-review-ui.md)). Design decisions
+([ADR 0017](docs/adr/0017-the-standalone-host.md)), with in-process
+runs, submitted runs and the folder watch for programs that embed it. The
+scoring harness, `scoring/`, runs an agent over a set of inputs and
+compares its outputs with an answer key ([ADR
+0020](docs/adr/0020-the-scoring-harness.md)). The first agent built on
+the library, the capital-statement intake agent (`addepar`), now lives
+in [morris-agents](https://github.com/SnapdragonPartners/morris-agents),
+where each agent is its own Go module; the external contract every host,
+agent module and app wires against is [ADR
+0024](docs/adr/0024-the-external-contract.md), with its reference in
+[docs/contract.md](docs/contract.md). Design decisions
 are in the [ADRs](docs/adr/README.md).
 
 ## Layout
 
-The library lives at the module root and in its subpackages. Agent
-executables built on it live under `cmd/<agent>/`.
+The library lives at the module root and in its subpackages. Agents
+built on it live in their own modules, such as those in
+[morris-agents](https://github.com/SnapdragonPartners/morris-agents);
+an executable kept here would live under `cmd/<agent>/`.
 
 ## Development
 
