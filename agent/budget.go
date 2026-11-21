@@ -87,7 +87,7 @@ func (b Budgets) withDefaults(d *Budgets) Budgets { //nolint:gocritic // hugePar
 }
 
 func (b *Budgets) validate() error {
-	ps := b.problems()
+	ps := b.Problems()
 	errs := make([]error, 0, len(ps))
 	for _, p := range ps {
 		errs = append(errs, errors.New(p.Detail))
@@ -95,9 +95,13 @@ func (b *Budgets) validate() error {
 	return errors.Join(errs...) //nolint:wrapcheck // the caller adds its context
 }
 
-// problems lists each budget that is invalid, as a StartProblem naming it
-// (ADR 0011, item 8; ADR 0024, item 5).
-func (b *Budgets) problems() []StartProblem {
+// Problems lists each budget that is invalid, as a StartProblem naming it
+// (ADR 0011, item 8; ADR 0024, item 5): a negative budget, or an
+// estimated token budget with no limit. They are the budget problems
+// Registry.CheckStart reports, which no agent type's defaults change (a
+// default fills only a zero budget, and an estimated one takes none), so
+// a host can check budgets before it knows the agent type.
+func (b *Budgets) Problems() []StartProblem {
 	var ps []StartProblem
 	add := func(budget, format string, args ...any) {
 		ps = append(ps, StartProblem{Check: CheckBudgets, Reason: ReasonConfigError, Budget: budget, Detail: fmt.Sprintf(format, args...)})

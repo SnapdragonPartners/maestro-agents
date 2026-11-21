@@ -240,6 +240,11 @@ func (c *Config) Validate(p *Program) error {
 	}
 	if m.Name != "" {
 		errs = append(errs, c.validateAgainst(p, &m)...)
+	} else {
+		// Without the agent type, the budgets are still checked: no type's
+		// defaults change whether they are valid (agent.Budgets.Problems).
+		b := c.Budgets.budgets(time.Time{})
+		errs = append(errs, budgetErrors(b.Problems())...)
 	}
 	errs = append(errs, c.validateSubmitted(p)...)
 	errs = append(errs, c.Budgets.validate()...)
@@ -273,10 +278,19 @@ func (c *Config) validateAgainst(p *Program, m *agent.Manifest) []error {
 		case agent.CheckConfig:
 			errs = append(errs, fmt.Errorf("config: %s", sp.Detail))
 		case agent.CheckBudgets:
-			errs = append(errs, fmt.Errorf("budgets.%s: %s", sp.Budget, sp.Detail))
+			errs = append(errs, budgetErrors([]agent.StartProblem{sp})...)
 		default:
 			errs = append(errs, errors.New(sp.Detail))
 		}
+	}
+	return errs
+}
+
+// budgetErrors names each budget problem by its configuration key.
+func budgetErrors(ps []agent.StartProblem) []error {
+	errs := make([]error, len(ps))
+	for i, p := range ps {
+		errs[i] = fmt.Errorf("budgets.%s: %s", p.Budget, p.Detail)
 	}
 	return errs
 }
@@ -336,7 +350,7 @@ func (c *Config) instanceConfig() json.RawMessage {
 
 // validate checks what only the configuration decides, the deadline;
 // the budgets a run takes are checked as its start checks them
-// (validateAgainst).
+// (validateAgainst, or agent.Budgets.Problems without the agent type).
 func (b *BudgetsConfig) validate() []error {
 	if b.DeadlineAfter < 0 {
 		return []error{fmt.Errorf("budgets.deadline_after %s is negative", time.Duration(b.DeadlineAfter))}

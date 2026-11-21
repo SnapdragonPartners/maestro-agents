@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -186,6 +187,10 @@ func TestStartProblemJSON(t *testing.T) {
 			`{"check":"budgets","reason":"budget_unenforceable","budget":"cost","detail":"cost budgets are not built yet (MVP.md, BUD-1)"}`},
 		{agent.StartProblem{Check: agent.CheckAgentType, Detail: "x"}, `{"check":"agent_type","detail":"x"}`},
 	} {
+		// A value renders with fmt through its String (no struct dump).
+		if got := fmt.Sprint(tc.p); got != tc.p.String() || strings.HasPrefix(got, "{") {
+			t.Errorf("fmt.Sprint = %q, want %q", got, tc.p.String())
+		}
 		got, err := json.Marshal(tc.p)
 		if err != nil || string(got) != tc.want {
 			t.Errorf("Marshal = %s, %v; want %s", got, err, tc.want)

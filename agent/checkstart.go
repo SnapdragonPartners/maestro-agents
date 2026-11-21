@@ -83,7 +83,7 @@ func (m *machine) checkStart(triggerKind string, config json.RawMessage, budgets
 			Detail: fmt.Sprintf("trigger kind %q is not one agent type %q declares (MAN-2)", triggerKind, m.name)})
 	}
 	ps = append(ps, m.checkConfig(config)...)
-	ps = append(ps, budgets.problems()...)
+	ps = append(ps, budgets.Problems()...)
 	if budgets.Cost > 0 {
 		ps = append(ps, StartProblem{Check: CheckBudgets, Reason: ReasonBudgetUnenforceable, Budget: BudgetCost,
 			Detail: "cost budgets are not built yet (MVP.md, BUD-1)"})
@@ -144,7 +144,8 @@ func (a *activation) refuseStart(ctx context.Context, ps []StartProblem) *ending
 
 // String is the problem as a run's failure detail gives it: the
 // configuration's and budgets' problems prefixed with what they are about.
-func (p *StartProblem) String() string {
+// It has a value receiver, so a StartProblem renders with fmt as well.
+func (p StartProblem) String() string { //nolint:gocritic // hugeParam: a value receiver makes StartProblem a fmt.Stringer
 	switch p.Check {
 	case CheckConfig:
 		return "configuration: " + p.Detail
