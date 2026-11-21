@@ -7,7 +7,7 @@ GOLANGCI_VERSION ?= v1.64.8
 GOVULNCHECK_VERSION ?= v1.1.4
 
 # Compile every package, then build each agent under cmd/<agent>/ into
-# bin/<agent>. With no cmd/ directory yet, only the compile step runs.
+# bin/<agent>. With no cmd/ directory, only the compile step runs.
 build:
 	go build ./...
 	@for dir in cmd/*/; do \

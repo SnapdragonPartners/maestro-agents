@@ -10,8 +10,6 @@ github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3 h1:qgnWTiWs1G7AqcKZegFvkJD1
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3/go.mod h1:XtxD48QPInqoj+GMlcRlXHEYsoOxFnP6w2JgIZ9rDS4=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0 h1:Terj1CMW4+NY5CpWjSRkqLoxh2DkYDdv/FH2z0897Uc=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0/go.mod h1:7Ut2Qw9vcwpLW5Q4MBy43uSxXS7tK2yjs94OJ6j5thE=
-github.com/SnapdragonPartners/maestro-cms v0.9.0 h1:4Xw8gCj60XckXzsZgSkLGnYkZxCWaVcDNfAo26htkNM=
-github.com/SnapdragonPartners/maestro-cms v0.9.0/go.mod h1:7b61wFWY9v6FDHE6xi6EbTakEI7zyFs2EWO0MPdlUtw=
 github.com/SnapdragonPartners/maestro-llms v1.7.0 h1:6ux8A7S4KLeNwBkraYc+aueY4sH00KOBl4alIxYnVkY=
 github.com/SnapdragonPartners/maestro-llms v1.7.0/go.mod h1:zDbF5M0TkmHE7bpre8tz3Xii+byefiJRY3U6ypq3U2Y=
 github.com/anthropics/anthropic-sdk-go v1.84.0 h1:mnAhggc5H5A98JYmhQELT+j4J89PYBFKnnSvUTNwNd8=

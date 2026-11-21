@@ -281,8 +281,9 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     it from its own store: Morris on its runs
     page and in chat, the app host as downloads. An agent's export is a
     published artifact, and writing a copy into a local folder is a
-    host's choice, not the agent's (a change to ADR 0021, item 11, made
-    when the intake agent adopts it).
+    host's choice, not the agent's (a change to ADR 0021, item 11, now
+    morris-agents' addepar ADR 0005, item 11, made when the intake agent
+    adopts it).
 
 ### Layer 2: agent module and host
 
@@ -514,8 +515,9 @@ Each takes effect with the issue that builds it.
   ID, so a repeat finds the existing run rather than making another.
   Without one, the host still draws `submitted:<hex>` at random, never
   deduplicated, as today.
-- **ADR 0021, item 11:** an export is a published artifact (item 10),
-  and the folder copy is the host's.
+- **ADR 0021, item 11** (now morris-agents' addepar ADR 0005, item 11,
+  changed there when the intake agent adopts the contract): an export is
+  a published artifact (item 10), and the folder copy is the host's.
 - **ADR 0022, item 6:** the session token's variable becomes
   `MAESTRO_AGENTS_SESSION_TOKEN`, and the sign-in link moves off
   stdout, which carries the ready line alone (item 15): a launcher

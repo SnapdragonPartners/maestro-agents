@@ -1,6 +1,6 @@
 # 0018. The intake agent type and the vertical slice
 
-- **Status:** Amended by ADR-0019, ADR-0021
+- **Status:** Amended by ADR-0019, ADR-0021; moved to morris-agents as [addepar ADR 0002](https://github.com/SnapdragonPartners/morris-agents/blob/main/addepar/docs/adr/0002-the-intake-agent-type-and-the-vertical-slice.md)
 - **Date:** 2026-11-16
 
 ## Context

@@ -6,8 +6,6 @@ toolchain go1.26.11
 
 require github.com/SnapdragonPartners/maestro-llms v1.7.0
 
-require github.com/SnapdragonPartners/maestro-cms v0.9.0
-
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.24.3 // indirect

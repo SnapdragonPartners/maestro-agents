@@ -13,39 +13,36 @@ orchestrators**, including Maestro and Morris's planned orchestration layer.
 - Go 1.26 (toolchain pinned in `go.mod`)
 - LLM access goes through `maestro-llms`; `maestro-cms` may be used for
   content and retrieval
-- Agent executables live in this repository under `cmd/<agent>/`, beside the
-  library
+- Agents built on it live in their own modules, in
+  `SnapdragonPartners/morris-agents`; an executable kept here (such as an
+  example agent) would live under `cmd/<agent>/`
 
-Current state: **MVP, step 6 (the review UI) built; now splitting the
-agents out**: each agent moves to `SnapdragonPartners/morris-agents` as
-its own Go module, and this repository keeps the shared library (step 1,
-ADR 0023: `strictjson` and `regularfile` made public for them). The store interface,
-the memory and file stores and the conformance suite exist (`store/`), and
-so do agent types, the run controller for code and model states,
-budgets, forced wrap-up with the visible clock, manifests, namespace
-confinement, skills and prompt templates, the model client with
-attempt-level budget admission, and the host seams for telemetry,
-logging and credentials (`agent/`), and the standalone host
-(`standalone/`, ADR 0017). The intake agent, `cmd/addepar`, has its
-verifier and exporter (ADR 0015) and its agent type on the standalone
-host, with the vertical slice's evidence (ADR 0018), and the extraction
-agent, whose model reads the PDF beside its text (ADR 0019), and the
-scoring harness (`scoring/`, ADR 0020) with the intake agent's answer-key
-comparator (`addepar score`), and the review writes the UI stands on:
-submitted runs on the standalone host (`Host.Submit`), the review agent
-type with its append-only log and approval snapshots, and `addepar
-export` (ADR 0021), and the UI, `addepar serve`: the folder watch and
-the review pages in one process (`Host.Watch`, ADR 0022). The requirements are in
-[docs/requirements.md](docs/requirements.md), and what the MVP builds
-of them in [docs/MVP.md](docs/MVP.md). The run model, execution record
-and storage design are ADRs 0003 to 0006, the runtime's API ADRs 0007 to
-0014 and 0016, the standalone host ADR 0017, the scoring harness ADR 0020, the intake
-agent's own design ADRs 0015, 0018, 0019, 0021 and 0022, the public
-helpers for agents in other modules ADR 0023, and the external
-contract every consumer (Morris's worker, the macOS app, an agent's CLI)
-wires against ADR 0024, with its reference in
-[docs/contract.md](docs/contract.md); further design arrives with the
-code, each piece with its ADR.
+Current state: **MVP built; the agents split out**: each agent lives in
+`SnapdragonPartners/morris-agents` as its own Go module, the intake
+agent (`addepar`) first, and this repository keeps the shared library
+(ADR 0023: `strictjson` and `regularfile` public for them). The store
+interface, the memory and file stores and the conformance suite exist
+(`store/`), and so do agent types, the run controller for code and model
+states, budgets, forced wrap-up with the visible clock, manifests,
+namespace confinement, skills and prompt templates, the model client
+with attempt-level budget admission, and the host seams for telemetry,
+logging and credentials (`agent/`), the standalone host (`standalone/`,
+ADR 0017) with its in-process API, submitted runs and folder watch
+(ADRs 0020 to 0022), and the scoring harness (`scoring/`, ADR 0020).
+Next are the external contract's gaps (ADR 0024) and a small example
+agent to exercise the standalone host end to end (#39). The
+requirements are in [docs/requirements.md](docs/requirements.md), and
+what the MVP built of them in [docs/MVP.md](docs/MVP.md). The run model,
+execution record and storage design are ADRs 0003 to 0006, the
+runtime's API ADRs 0007 to 0014 and 0016, the standalone host ADR 0017
+(with the host items of ADRs 0020 to 0022), the scoring harness ADR
+0020, the public helpers for agents in other modules ADR 0023, and the
+external contract every consumer (Morris's worker, the macOS app, an
+agent's CLI) wires against ADR 0024, with its reference in
+[docs/contract.md](docs/contract.md); the intake agent's design (ADRs
+0015, 0018, 0019 and the agent's parts of 0020 to 0022) moved with it to
+morris-agents. Further design arrives with the code, each piece with its
+ADR.
 
 Load-bearing decisions so far:
 
@@ -145,17 +142,6 @@ Load-bearing decisions so far:
   keyed by the run context (`RunContext`, with the principal fixed at the
   run's start), as a `Secret` that never renders its value
   ([ADR 0016](docs/adr/0016-telemetry-logging-and-credentials.md))
-- The intake agent (`cmd/addepar`) verifies every record in code against
-  the PDF's layout-mode text (`maestro-cms`' pdftotext, Poppler): the seven
-  checks, with check 4 decided from the page's column headers, never the
-  record's claim; a copy-restricted PDF is read only under an operator's
-  recorded acceptance (until #17, running the agent is that acceptance:
-  ADR 0018 item 3); the exporter refuses anything not
-  approved, verified and accepted, and writes deterministic CSV bytes with
-  an evidence manifest. Real statements are client data and never
-  committed: they live in the gitignored `.local/addepar/`; committed tests
-  use synthetic statements
-  ([ADR 0015](docs/adr/0015-intake-verifier-exporter-and-test-data.md))
 - The standalone host is the package `standalone`: an agent's `main`
   passes `standalone.Main` a `Program` (registry, and optional extra model
   providers, policy and redactor); the configuration names the model
@@ -173,32 +159,6 @@ Load-bearing decisions so far:
   `jsonl`, `required` failing the start; SIGINT/SIGTERM shut down at the
   next step boundary; exit 0 complete, 1 incomplete, 2 usage
   ([ADR 0017](docs/adr/0017-the-standalone-host.md))
-- The intake agent type (`intake.Type`, `addepar-intake`) runs as `addepar
-  run` on the standalone host: `load` (code) stores the document, its
-  layout text and (ADR 0019) the PDF; `extract` (model) has the four
-  tools, all atomic local transactions (`get_document` since ADR 0019)
-  putting each object once (expected version zero) under the document's
-  SHA-256 (`documents/`, `pdfs/`, `sent/`, `attempts/`, `records/` in the
-  exporter's shape, `outcomes/`); `submit_extraction`
-  takes every record in the document and verifies each in code; at most
-  three submissions (config may lower), the last failure or a wrap-up
-  failure going to manual review; until #17, running the agent is the
-  recorded acceptance to read a copy-restricted PDF; TEST-5 and TEST-6 run
-  on the agent itself against the file store
-  ([ADR 0018](docs/adr/0018-the-intake-agent-type-and-the-vertical-slice.md))
-- The extraction agent reads the PDF (type version 2): `load` also stores
-  the PDF's bytes at `pdfs/<sha256>`; `get_document` returns the PDF as a
-  document part, sent only if it hashes to the document's SHA-256 and only
-  once per conversation (an atomic local transaction putting the marker
-  `sent/<sha256>`; a repeat call gets the text alone), then the layout
-  text, which the model copies values from, since code
-  verifies against it; a PDF over 100 pages or 20 MiB is read as text
-  alone, recorded on the document and each attempt; no-text PDFs still go
-  to manual review; every permission (reading and sending a
-  copy-restricted PDF included) is implicit until the gates are built
-  (#17, TOOL-4); real statements go to a live model in testing only
-  through Vertex AI or OpenAI
-  ([ADR 0019](docs/adr/0019-the-extraction-agent-reads-the-pdf.md))
 - The scoring harness (TEST-4) is the package `scoring`: `scoring.Run`
   runs inputs one at a time through the standalone host opened in process
   (`standalone.Open`, `Host.RunInput`, `Host.Store`; `standalone.Report`
@@ -206,48 +166,29 @@ Load-bearing decisions so far:
   per item: match, mismatch, missed, hallucination or exception (an input
   the key lacks is uncovered); a mismatch or hallucination, an error or
   an input not run fails it; an input already in the store reports its
-  recorded run, so a model or prompt change is scored on a fresh store.
-  The intake agent's comparator (`addepar score`) reads the answer key as
-  the template sheet saved as CSV (exporter's columns) and a hand-written
-  mapping, by statement SHA-256, from printed investor and fund to owner
-  and asset IDs, a stopgap: an LLM judge with a set of criteria is the
-  planned second comparator, to pair records with rows
-  ([ADR 0020](docs/adr/0020-the-scoring-harness.md))
-
-- Review actions are runs (ADR 0021): a program lists submitted agent
-  types (`Program.Submitted`, trigger kind `standalone.SubmittedKind`),
-  which `Host.Submit` runs in process on a caller's instance (run ID
-  `<instance>.<hex>`), serialized per instance with the scheduler, after
-  finishing any runnable run there (else `ErrBusy`); the review type
-  (`addepar-review`) runs on the document's instance and appends one
-  entry per action to `reviews/<sha>/<NN>/<MMM>`, claiming the number the
-  person saw (`seen`; stale is refused), never rewriting the extracted
-  record; a record's state is the log folded (`review.Current`), approved
-  only while an approval is the last entry, whose snapshot is what an
-  export exports (`exports/<run>`, files written after the commit: the CSV
-  in sight, the manifest hidden under the CSV's SHA-256; `addepar export
-  -rewrite RUN` writes a stored export's files again); a manual record
-  is checked like any other but its failed checks are downgraded warnings
-  to accept; a refusal is a completed run leaving `refusals/<run>`;
-  extraction records and every tool's arguments decode strictly (#21),
-  an absent or null amount is malformed, and the intake type is version 3;
-  the operator's workspace is `Inbox/`, `Exports/` and a hidden `.agent/`
-  ([ADR 0021](docs/adr/0021-review-writes-approval-and-export.md))
-- The review UI is `addepar serve` (ADR 0022): one process running the
-  folder watch in process (`Host.Watch`, beside `Submit` on the same
-  per-instance locks) and the UI (`cmd/addepar/internal/ui`, `net/http`
-  + `html/template` + `embed`, forms that work without JavaScript, JSON
-  routes under `/api/`); the workspace (default `~/Documents/Addepar
-  Intake`) is created by serve, its configuration `.agent/config.json`
-  written by browser setup (Anthropic or OpenAI), the API key in the
-  user's config dir, never the workspace; loopback only, Host check,
-  CSRF token, Origin check, CSP, `Referrer-Policy: same-origin`; the
-  session from `ADDEPAR_SESSION_TOKEN` or a random token, valid for the
-  process's life, exchanged at `/auth/session?token=` for a cookie (or a
-  bearer for `/api/`), the maestro-macos contract; a typed operator name
-  per session is every action's `by`; evidence boxes from maestro-cms
-  word boxes on the pdftoppm-rendered page, every copy on the cited page
-  ([ADR 0022](docs/adr/0022-the-review-ui.md))
+  recorded run, so a model or prompt change is scored on a fresh store;
+  an agent's own comparator lives with the agent (an LLM judge is the
+  planned second comparator)
+  ([ADR 0020](docs/adr/0020-the-scoring-harness.md), items 1 to 3, 5 and 6)
+- Submitted runs (ADR 0021, items 1 to 4 and 14): a program lists
+  submitted agent types (`Program.Submitted`, trigger kind
+  `standalone.SubmittedKind`), which `Host.Submit` runs in process on a
+  caller's instance (run ID `<instance>.<hex>`), serialized per instance
+  with the scheduler, after finishing any runnable run there (else
+  `ErrBusy`); one store serves one configuration, its submitted types
+  included; `standalone.Open` opens any configuration (`ErrNotOneShot`
+  for `RunInput` on a watch), and `Host.Watch` runs the folder watch in
+  process beside `Submit` on the same per-instance locks (ADR 0022,
+  item 1)
+- The capital-statement intake agent (`addepar`: verifier and exporter,
+  agent type, extraction from the PDF, comparator, review, export and
+  the review UI) moved to
+  [morris-agents](https://github.com/SnapdragonPartners/morris-agents)
+  as its own module, with its design there as addepar ADRs 0001 to 0006;
+  ADRs 0015, 0018 and 0019 here, and the agent's parts of ADRs 0020 to
+  0022, are history, each status line naming its new ADR; ADR 0022's
+  credential, session, operator-name and request-check items (5 to 8)
+  stay in force here as the design of the multi-agent host (ADR 0024, #32)
 - `strictjson` and `regularfile` are public packages at the module root
   (ADR 0023), moved from `internal/` so agents in their own modules
   (morris-agents) decode operators' files and tools' arguments, and open
@@ -286,7 +227,8 @@ Sibling checkouts live next to this one (`../<name>`):
 | Repository | Relationship |
 |---|---|
 | `maestro-llms` | Dependency: provider-neutral chat, embeddings, tool loop, limiter |
-| `maestro-cms` | Dependency: the intake agent's PDF text layer (`pdftotext` layout mode); content ingestion, chunking, embedding and retrieval as needed |
+| `maestro-cms` | Shared library: content ingestion, chunking, embedding and retrieval as needed (not a dependency since the intake agent left) |
+| `morris-agents` | The agents built on this library, each its own Go module (the intake agent, `addepar`, first) |
 | `buggrit` | Source of elements to incorporate; also reviews this repo's PRs |
 | `maestro` | Source of elements to incorporate; an orchestrator that manages agents |
 | `morris` | Its planned orchestration layer will manage agents; this workflow follows Morris's |
@@ -355,13 +297,7 @@ internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
 regularfile/         # Opening an operator's file only if regular, never hanging on a FIFO (ADR 0017, 0023); public for agents in other modules
 strictjson/          # The strict JSON decoder for operators' files and agents' records and tool arguments (ADR 0017, 0020, 0021, 0023); public for agents in other modules
-cmd/addepar/         # The capital-statement intake agent (ADR 0015, 0018, 0019, 0020, 0021, 0022): `run` (standalone host), `verify`, `score`, `export` and `serve`;
-                     #   config.example.json; internal/ holds intake (the agent type, its tools, TEST-5/6),
-                     #   decimal, document (hash, pdfinfo, layout text), review (the review type, its log, approval, export),
-                     #   score (answer key, mapping, comparator), statement (the record),
-                     #   verify (the seven checks), export (CSV + manifest), synthpdf (test PDFs),
-                     #   ui (the review UI: pages, JSON routes, sessions, evidence boxes)
-.local/              # Gitignored machine-local data; .local/addepar/ holds the real sample statements
+.local/              # Gitignored machine-local data, one subdirectory per concern
 docs/requirements.md # Library requirements (input to the design ADRs)
 docs/MVP.md          # MVP scope: what the MVP builds, what is deferred
 docs/contract.md     # The external contract: what hosts, agent modules and the app rely on (ADR 0024)
@@ -375,9 +311,9 @@ API takes shape; update this section in the PR that adds them.
 
 ## Makefile Targets
 
-- `make build` — Compile all packages, and build each `cmd/<agent>` to `bin/<agent>`
-- `make test` — Unit tests with the race detector and coverage (no network, no keys; the intake agent's PDF tests need Poppler's `pdftotext` and `pdfinfo` and skip without them, except in CI, which sets `ADDEPAR_REQUIRE_POPPLER`)
-- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites; the intake agent's real-sample tests read `.local/addepar/`)
+- `make build` — Compile all packages, and build each `cmd/<agent>`, if any, to `bin/<agent>`
+- `make test` — Unit tests with the race detector and coverage (no network, no keys)
+- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites)
 - `make lint` — `go vet` + `golangci-lint run` (read-only; also checks formatting and imports)
 - `make vuln` — `govulncheck ./...`
 - `make test-coverage` — HTML coverage report in `coverage/`

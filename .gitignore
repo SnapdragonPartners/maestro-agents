@@ -28,6 +28,6 @@ go.work.sum
 
 # Machine-local data that must never be committed, such as real client
 # documents used in local acceptance tests (this repository is public). One
-# subdirectory per concern, as in Morris: .local/addepar/ holds the intake
-# agent's real sample statements and their hand-written records.
+# subdirectory per concern, as in Morris. (The intake agent's real sample
+# statements, once .local/addepar/, moved with it to morris-agents.)
 .local/
