@@ -237,6 +237,7 @@ func durability(t testing.TB, h Harness) {
 	if _, err := s.EnqueueTrigger(ctx, store.Trigger{Instance: instance, ID: "queued"}); err != nil {
 		t.Fatalf("EnqueueTrigger: %v", err)
 	}
+	req := requestCancel(t, s, runID, store.CancelSuperseded)
 
 	s = h.Reopen(t, s, o)
 	t.Cleanup(func() { _ = s.Close() })
@@ -271,6 +272,9 @@ func durability(t testing.TB, h Harness) {
 	}
 	if tr, rerr := s.Triggers(ctx, instance); rerr != nil || len(tr) != 1 || tr[0].ID != "queued" {
 		t.Fatalf("triggers after reopen = %+v, %v", tr, rerr)
+	}
+	if got, ok, rerr := s.CancelRequest(ctx, runID); rerr != nil || !ok || !got.RequestedAt.Equal(req.RequestedAt) || got.Cause != req.Cause {
+		t.Fatalf("cancel request after reopen = %+v, %v, %v; want %+v", got, ok, rerr, req)
 	}
 	b := claim(t, s, instance, ownerB)
 	if b.Epoch != a.Epoch+1 {

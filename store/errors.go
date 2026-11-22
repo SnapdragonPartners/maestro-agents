@@ -18,7 +18,8 @@ var (
 	// caller. Nothing was applied.
 	ErrInvalid = errors.New("store: invalid request")
 
-	// ErrNotFound reports that a record does not exist.
+	// ErrNotFound reports that a record does not exist. A write that
+	// returns it wrote nothing.
 	ErrNotFound = errors.New("store: not found")
 
 	// ErrNotClaimable rejects a claim because the instance has a live
@@ -68,13 +69,14 @@ func (e *ConflictError) IsObjectConflict() bool {
 
 // IsDefinite reports whether a write (a commit or a control-plane write)
 // that returned err definitely landed (nil) or definitely did not:
-// [ErrOwnership], [ErrInvalid], [ErrNotClaimable], [ErrInstanceBusy] and a
+// [ErrOwnership], [ErrInvalid], [ErrNotFound] (a cancel request for an
+// unknown run), [ErrNotClaimable], [ErrInstanceBusy] and a
 // [*ConflictError]. Any other error is indeterminate: the write may have
 // landed, and the caller learns what happened by reading durable state
 // (ADR 0005, item 3).
 func IsDefinite(err error) bool {
 	var conflict *ConflictError
 	return err == nil || errors.Is(err, ErrOwnership) || errors.Is(err, ErrInvalid) ||
-		errors.Is(err, ErrNotClaimable) || errors.Is(err, ErrInstanceBusy) ||
+		errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotClaimable) || errors.Is(err, ErrInstanceBusy) ||
 		errors.As(err, &conflict)
 }

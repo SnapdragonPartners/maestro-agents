@@ -181,6 +181,7 @@ func TestEndingByContextCause(t *testing.T) {
 	}{
 		{agent.ErrSuperseded, store.StatusCancelled, store.Reason{Code: agent.ReasonSuperseded}},
 		{fmt.Errorf("wrapped: %w", agent.ErrOperator), store.StatusCancelled, store.Reason{Code: agent.ReasonOperator}},
+		{agent.ErrUnauthorized, store.StatusCancelled, store.Reason{Code: agent.ReasonUnauthorized}},
 		{&agent.BudgetExhausted{Budget: "deadline"}, store.StatusFailed, store.Reason{Code: agent.ReasonBudgetExhausted, Budget: "deadline"}},
 		{errors.New("SIGTERM"), store.StatusRunnable, store.Reason{Code: agent.ReasonShutdown}},
 		{nil, store.StatusRunnable, store.Reason{Code: agent.ReasonShutdown}},

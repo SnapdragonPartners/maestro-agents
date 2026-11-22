@@ -211,7 +211,10 @@ func (w *watcher) dispatch(ctx context.Context) {
 		if len(w.inflight) >= w.concurrency() || ctx.Err() != nil {
 			return
 		}
-		if w.inflight[c.Instance] || w.refused[c.Run] || now.Before(w.notBefore[c.Instance]) {
+		if w.inflight[c.Instance] || w.refused[c.Run] {
+			continue
+		}
+		if now.Before(w.notBefore[c.Instance]) && !w.cancelRequested(ctx, c.Run) {
 			continue
 		}
 		run, err := w.st.Run(ctx, c.Run)
@@ -233,6 +236,19 @@ func (w *watcher) dispatch(ctx context.Context) {
 		w.inflight[c.Instance] = true
 		go func() { w.results <- w.activate(ctx, &run) }()
 	}
+}
+
+// cancelRequested reports whether a run has a cancel request: such a run
+// is claimed at once, past its retry delay, so its activation commits
+// cancelled (ADR 0024, item 6). A failed read counts as none; the run is
+// claimed after its delay all the same.
+func (w *watcher) cancelRequested(ctx context.Context, run string) bool {
+	_, ok, err := w.st.CancelRequest(ctx, run)
+	if err != nil {
+		w.logger.Warn("standalone: cannot read a run's cancel request", "run", run, "error_class", errorClass(err))
+		w.fatal = w.fatal || errors.Is(err, store.ErrUnusable)
+	}
+	return ok && err == nil
 }
 
 // done records an activation's result. During a shutdown, a run left

@@ -215,3 +215,41 @@ type Event struct {
 	// the entry the event projects.
 	Seq uint64 `json:"seq"`
 }
+
+// CancelCause is why a run is asked to stop from outside (ADR 0024, item
+// 6): a closed set, each the reason of the cancelled run it leads to
+// (RUN-2, RUN-3).
+type CancelCause string
+
+// The three cancellation causes.
+const (
+	// CancelOperator: an operator stopped the run.
+	CancelOperator CancelCause = "operator"
+	// CancelSuperseded: the host superseded the run.
+	CancelSuperseded CancelCause = "superseded"
+	// CancelUnauthorized: the run's principal no longer holds the
+	// authority the run started under.
+	CancelUnauthorized CancelCause = "unauthorized"
+)
+
+// Valid reports whether c is one of the three causes.
+func (c CancelCause) Valid() bool {
+	switch c {
+	case CancelOperator, CancelSuperseded, CancelUnauthorized:
+		return true
+	}
+	return false
+}
+
+// CancelRequest is a run's cancel request (ADR 0024, item 6): a record of
+// its own, keyed by the run, never part of the run record, so a request
+// never changes the run record's version and never makes the owning
+// activation's commit conflict. A run has at most one, and its first
+// cause stands. The request only asks: the run's own commit decides, and
+// a run that is terminal keeps its outcome.
+type CancelRequest struct {
+	// RequestedAt is when the request was recorded, by the store's clock.
+	RequestedAt time.Time   `json:"requested_at"`
+	Run         string      `json:"run"`
+	Cause       CancelCause `json:"cause"`
+}

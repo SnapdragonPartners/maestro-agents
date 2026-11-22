@@ -121,6 +121,7 @@ func runIndexDir(inst string) string        { return instanceDir(inst) + "/runs"
 func runIndexPath(inst, trig string) string { return runIndexDir(inst) + "/" + trig + ".json" }
 func runPath(run string) string             { return "runs/" + run + "/run.json" }
 func recordDir(run string) string           { return "runs/" + run + "/record" }
+func cancelPath(run string) string          { return "runs/" + run + "/cancel.json" }
 func objectDir(ns string) string            { return "objects/" + ns }
 func objectPath(ns, key string) string      { return objectDir(ns) + "/" + key + ".json" }
 func artifactPath(digest string) string     { return "artifacts/" + digest }

@@ -117,7 +117,10 @@ func (h *host) activate(ctx context.Context, run *store.Run) *result {
 	}
 	fence := own.Fence()
 	actx, cancel := context.WithCancelCause(ctx)
-	beat := h.startHeartbeat(actx, cancel, fence)
+	// The heartbeat outlives the activation's context: a cancelled
+	// activation still holds the claim until its final commit.
+	life, stopBeat := context.WithCancel(context.WithoutCancel(ctx))
+	beat := h.startHeartbeat(life, cancel, fence)
 	in := agent.ActivationInput{
 		Client:    h.client,
 		Scope:     store.Scope{Kind: store.ScopeRun, ID: run.ID},
@@ -134,6 +137,7 @@ func (h *host) activate(ctx context.Context, run *store.Run) *result {
 	}
 	out, err := h.ctrl.Activate(actx, in)
 	cancel(nil)
+	stopBeat()
 	if fatal := <-beat; fatal != nil {
 		// The store must be reopened: whatever the activation returned,
 		// the host stops (ADR 0017, item 10).
@@ -173,9 +177,13 @@ func (h *host) afterError(ctx context.Context, run *store.Run, err error, fence 
 	return r
 }
 
-// startHeartbeat renews the claim's lease until ctx ends. Its channel
-// delivers one value when it has stopped: the store.ErrUnusable that
-// stopped it, after cancelling the activation (ADR 0017, item 10), or nil.
+// startHeartbeat renews the claim's lease until ctx ends; the host ends
+// it when the activation returns. A heartbeat that returns a cancel
+// request cancels the activation with the request's cause (ADR 0024, item
+// 6) and goes on renewing the lease until the activation's final commit.
+// Its channel delivers one value when it has stopped: the
+// store.ErrUnusable that stopped it, after cancelling the activation (ADR
+// 0017, item 10), or nil.
 func (h *host) startHeartbeat(ctx context.Context, cancel context.CancelCauseFunc, f store.Fence) <-chan error {
 	done := make(chan error, 1)
 	go func() {
@@ -183,14 +191,22 @@ func (h *host) startHeartbeat(ctx context.Context, cancel context.CancelCauseFun
 		defer func() { done <- fatal }()
 		t := time.NewTicker(h.heartbeat)
 		defer t.Stop()
+		requested := false
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
 			}
-			_, err := h.st.Heartbeat(context.WithoutCancel(ctx), f, leaseDuration)
+			_, req, err := h.st.Heartbeat(context.WithoutCancel(ctx), f, leaseDuration)
 			switch {
+			case err == nil && req != nil && !requested:
+				// A cancel request: the activation commits cancelled
+				// with its cause at its next safe point (ADR 0024,
+				// item 6; ADR 0017, item 18 as amended).
+				requested = true
+				h.logger.Info("standalone: cancel requested", "instance", f.Instance, "run", req.Run, "cause", string(req.Cause))
+				cancel(fmt.Errorf("cancel request: %w", agent.CancelCause(req.Cause)))
 			case err == nil:
 			case errors.Is(err, store.ErrOwnership):
 				if h.releasedByUs(ctx, f) {

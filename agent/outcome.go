@@ -68,16 +68,36 @@ const (
 	ReasonSuperseded = "superseded"
 	// ReasonOperator: cancelled; an operator cancelled the run.
 	ReasonOperator = "operator"
+	// ReasonUnauthorized: cancelled; the run's principal no longer holds
+	// the authority the run started under (ADR 0024, item 6).
+	ReasonUnauthorized = "unauthorized"
 )
 
 // Cancellation causes. A host cancels an activation with
 // context.WithCancelCause and one of these (or an error wrapping one) to
-// cancel the run (RUN-2); any other cause, or none, is a shutdown, which
-// keeps the run's disposition (ADR 0003, item 17).
+// cancel the run (RUN-2, ADR 0024 item 6); any other cause, or none, is a
+// shutdown, which keeps the run's disposition (ADR 0003, item 17).
 var (
-	ErrSuperseded = errors.New("agent: run superseded")
-	ErrOperator   = errors.New("agent: run cancelled by an operator")
+	ErrSuperseded   = errors.New("agent: run superseded")
+	ErrOperator     = errors.New("agent: run cancelled by an operator")
+	ErrUnauthorized = errors.New("agent: run's principal lost its authority")
 )
+
+// CancelCause returns the cancellation cause for a cancel request's cause
+// (ADR 0024, item 6): ErrOperator, ErrSuperseded or ErrUnauthorized, or
+// nil for a cause that is not one of the three. A host whose heartbeat
+// returns a cancel request cancels the activation with it.
+func CancelCause(c store.CancelCause) error {
+	switch c {
+	case store.CancelOperator:
+		return ErrOperator
+	case store.CancelSuperseded:
+		return ErrSuperseded
+	case store.CancelUnauthorized:
+		return ErrUnauthorized
+	}
+	return nil
+}
 
 // BudgetExhausted is the context cause with which the runtime's time
 // budgets end an activation (BUD-2): the run fails with

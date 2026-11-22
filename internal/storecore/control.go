@@ -81,24 +81,93 @@ func (e *Engine) checkFence(f store.Fence) (string, ownershipFile, error) {
 }
 
 // Heartbeat implements store.ControlPlane.
-func (e *Engine) Heartbeat(ctx context.Context, f store.Fence, lease time.Duration) (store.Ownership, error) {
+func (e *Engine) Heartbeat(ctx context.Context, f store.Fence, lease time.Duration) (store.Ownership, *store.CancelRequest, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Ownership{}, fmt.Errorf("store: heartbeat not started: %w", err)
+		return store.Ownership{}, nil, fmt.Errorf("store: heartbeat not started: %w", err)
 	}
 	if lease <= 0 {
-		return store.Ownership{}, fmt.Errorf("%w: a heartbeat needs a positive lease", store.ErrInvalid)
+		return store.Ownership{}, nil, fmt.Errorf("%w: a heartbeat needs a positive lease", store.ErrInvalid)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if err := e.usable(); err != nil {
-		return store.Ownership{}, err
+		return store.Ownership{}, nil, err
 	}
-	_, cur, err := e.checkFence(f)
+	inst, cur, err := e.checkFence(f)
 	if err != nil {
-		return store.Ownership{}, err
+		return store.Ownership{}, nil, err
+	}
+	// The request is read before the lease is extended, so a heartbeat
+	// that fails to read it changes nothing.
+	var req *store.CancelRequest
+	run, ok, err := e.activeRun(inst)
+	if err != nil {
+		return store.Ownership{}, nil, err
+	}
+	if ok {
+		r, found, err := e.readCancel(run.ID)
+		if err != nil {
+			return store.Ownership{}, nil, err
+		}
+		if found {
+			req = &r
+		}
 	}
 	e.leases[f.Instance] = e.now().Add(lease)
-	return e.ownership(f.Instance, cur), nil
+	return e.ownership(f.Instance, cur), req, nil
+}
+
+// readCancel reads a run's cancel request. The caller holds mu.
+func (e *Engine) readCancel(id string) (store.CancelRequest, bool, error) {
+	enc, err := component("run", id)
+	if err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	var req store.CancelRequest
+	found, err := readJSON(e.b, cancelPath(enc), &req)
+	return req, found, err
+}
+
+// RequestCancel implements store.ControlPlane.
+func (e *Engine) RequestCancel(ctx context.Context, run string, cause store.CancelCause) (store.CancelRequest, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return store.CancelRequest{}, false, fmt.Errorf("store: cancel request not started: %w", err)
+	}
+	enc, err := component("run", run)
+	if err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	if !cause.Valid() {
+		return store.CancelRequest{}, false, fmt.Errorf("%w: cancel cause %q", store.ErrInvalid, cause)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err = e.usable(); err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	r, ok, err := e.readRun(run)
+	if err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	if !ok {
+		return store.CancelRequest{}, false, fmt.Errorf("%w: run %q", store.ErrNotFound, run)
+	}
+	existing, found, err := e.readCancel(run)
+	if err != nil || found {
+		return existing, found, err
+	}
+	if r.Status.Terminal() {
+		return store.CancelRequest{}, false, nil
+	}
+	req := store.CancelRequest{RequestedAt: e.now().UTC(), Run: run, Cause: cause}
+	data, err := marshal(req)
+	if err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	if err := e.apply([]Write{{Path: cancelPath(enc), Data: data}}); err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	return req, true, nil
 }
 
 // Release implements store.ControlPlane.

@@ -8,15 +8,18 @@
 //     fenced on the instance's owner epoch and applied atomically: all of a
 //     commit's operations land or none do.
 //   - Writes outside an activation (claims, heartbeats, triggers, run
-//     creation) are the control plane's own, each a single compare-and-set
-//     with no fence ([ControlPlane]).
+//     creation, cancel requests) are the control plane's own, each a
+//     single compare-and-set with no fence ([ControlPlane]). A cancel
+//     request is a record of its own, never part of the run record (ADR
+//     0024, item 6).
 //   - Reads are unfenced ([Reader]). Reads of shared objects may be stale;
 //     an owner's reads of its own instance's records, and of artifacts, are
 //     fresh.
 //
 // A commit's error is one of three kinds. A nil error means the commit
 // landed. [ErrOwnership], a [*ConflictError] or [ErrInvalid] means it did
-// not, and nothing was applied ([IsDefinite] reports these). Any other
+// not, and nothing was applied ([IsDefinite] reports these, with the
+// control plane's own definite errors). Any other
 // error is indeterminate: the commit may have landed, and the caller stops
 // and learns what happened by reading durable state.
 //
