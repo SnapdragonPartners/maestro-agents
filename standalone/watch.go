@@ -102,7 +102,11 @@ type watcher struct {
 	// refused holds runs not to activate again while the process lives:
 	// ErrNotActivatable, or another configuration's.
 	refused map[string]bool
-	results chan *result
+	// expedited holds runs claimed past their retry delay for a cancel
+	// request: once each, so a cancellation that fails backs off as any
+	// other activation does (Codex round 1 on 85a8abb).
+	expedited map[string]bool
+	results   chan *result
 	// interrupted counts activations a shutdown or a store failure left
 	// unfinished.
 	interrupted int
@@ -122,6 +126,7 @@ func (h *host) watch(ctx context.Context) int {
 		notBefore: map[string]time.Time{},
 		backoff:   map[string]time.Duration{},
 		refused:   map[string]bool{},
+		expedited: map[string]bool{},
 		results:   make(chan *result),
 	}
 	wctx, stop := context.WithCancelCause(ctx)
@@ -214,7 +219,7 @@ func (w *watcher) dispatch(ctx context.Context) {
 		if w.inflight[c.Instance] || w.refused[c.Run] {
 			continue
 		}
-		if now.Before(w.notBefore[c.Instance]) && !w.cancelRequested(ctx, c.Run) {
+		if w.delayed(ctx, c, now) {
 			continue
 		}
 		run, err := w.st.Run(ctx, c.Run)
@@ -238,9 +243,24 @@ func (w *watcher) dispatch(ctx context.Context) {
 	}
 }
 
+// delayed reports whether a claimable run waits out its retry delay. A
+// run with a cancel request is claimed past it once (ADR 0024, item 6);
+// after that the delay holds, so a cancellation that keeps failing backs
+// off like any other activation (Codex round 1 on 85a8abb).
+func (w *watcher) delayed(ctx context.Context, c store.Claimable, now time.Time) bool {
+	if !now.Before(w.notBefore[c.Instance]) {
+		return false
+	}
+	if w.expedited[c.Run] || !w.cancelRequested(ctx, c.Run) {
+		return true
+	}
+	w.expedited[c.Run] = true
+	return false
+}
+
 // cancelRequested reports whether a run has a cancel request: such a run
-// is claimed at once, past its retry delay, so its activation commits
-// cancelled (ADR 0024, item 6). A failed read counts as none; the run is
+// is claimed at once, past its retry delay, once, so its activation
+// commits cancelled (ADR 0024, item 6). A failed read counts as none; the run is
 // claimed after its delay all the same.
 func (w *watcher) cancelRequested(ctx context.Context, run string) bool {
 	_, ok, err := w.st.CancelRequest(ctx, run)

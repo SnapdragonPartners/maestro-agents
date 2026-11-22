@@ -912,3 +912,41 @@ func TestHeartbeatCancelRequest(t *testing.T) {
 		t.Fatal("the heartbeat did not stop")
 	}
 }
+
+// TestWatchBacksOffAFailingCancellation: a run with a cancel request is
+// claimed past its retry delay once; if that claim fails too, the retry
+// delay holds again, rather than a hot loop of claims while the request
+// stays (Codex round 1 on 85a8abb).
+func TestWatchBacksOffAFailingCancellation(t *testing.T) {
+	pr := newProbe()
+	inbox := t.TempDir()
+	st := &faultyStore{Store: memstore.New(), claimFailures: 1000}
+	h := watchHost(t, pr, st, inbox)
+	writeFile(t, filepath.Join(inbox, "a.txt"), "fine")
+	sum := sha256.Sum256([]byte("fine"))
+	run := "sha256-" + hex.EncodeToString(sum[:])
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int)
+	go func() { done <- h.watch(ctx) }()
+	claims := func() int {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return st.claims
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for claims() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the run was never claimed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, recorded, err := st.RequestCancel(context.Background(), run, store.CancelOperator); err != nil || !recorded {
+		t.Fatalf("RequestCancel = %v, %v", recorded, err)
+	}
+	time.Sleep(minRetryDelay / 2)
+	if n := claims(); n != 2 {
+		t.Fatalf("%d claims within half the retry delay; want 2 (the first, then one expedited by the request)", n)
+	}
+	cancel()
+	<-done
+}
