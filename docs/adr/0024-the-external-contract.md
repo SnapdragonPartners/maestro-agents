@@ -171,6 +171,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      request, and its scheduler claims a run with one at once, past any
      retry delay. A request with a cause outside the three ends the
      activation with `ErrStoreFailure`: the store broke its contract.
+     A heartbeat that returns one does not cancel: the standalone host
+     logs it as an error and lets the activation go on, so the run is
+     never reported cancelled or shut down for it, and its next
+     activation ends with `ErrStoreFailure`.
      The request is not part of the execution record: the run's
      `cancelled` outcome entry is.
 
@@ -263,10 +267,11 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      wire form proves the same contract as the store behind it.
    - Every error keeps its class across the wire. The definite errors
      (`ErrOwnership`, `ErrInvalid`, `*ConflictError` with its current
-     version, `ErrNotClaimable`, `ErrInstanceBusy`) arrive as
-     themselves, and so does `ErrNotFound`, which stays what it is
-     today: a read's answer, not a definite error (`store.IsDefinite`
-     is unchanged). Anything the client cannot classify, a dropped
+     version, `ErrNotClaimable`, `ErrInstanceBusy`, and `ErrNotFound`,
+     a read's answer and, from a write, a definite one: since #26
+     `store.IsDefinite` counts it, because `RequestCancel` for an
+     unknown run wrote nothing; item 6) arrive as themselves. Anything
+     the client cannot classify, a dropped
      connection included, is indeterminate, and the host rereads
      before retrying (ADR 0003, item 14).
    - The handler authenticates nothing itself. The host wraps it with
@@ -525,6 +530,9 @@ Each takes effect with the issue that builds it.
   `Committer`'s "a commit whose operations change nothing … cannot
   fail after those checks" no longer covers it. The doc comments in
   `store/store.go` and `store/ops.go` change with #29.
+- **ADR 0006, item 7:** `ErrNotFound` joins the definite errors
+  `store.IsDefinite` reports: a write that returns it, `RequestCancel`
+  for an unknown run (item 6), wrote nothing. Built with #26.
 - **ADR 0005, items 4 and 5, and ADR 0006:** the store's records gain
   the cancel request (one per run, first cause stands) and the
   artifact-to-instance link. The control plane gains `RequestCancel`,

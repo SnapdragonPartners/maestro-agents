@@ -950,3 +950,43 @@ func TestWatchBacksOffAFailingCancellation(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// badCauseStore returns a cancel request with a cause outside the three
+// from every heartbeat, as a broken host store would.
+type badCauseStore struct{ store.Store }
+
+func (b badCauseStore) Heartbeat(ctx context.Context, f store.Fence, lease time.Duration) (store.Ownership, *store.CancelRequest, error) {
+	own, _, err := b.Store.Heartbeat(ctx, f, lease)
+	return own, &store.CancelRequest{Run: "r1", Cause: "bored"}, err //nolint:wrapcheck // a test double
+}
+
+// TestHeartbeatUnknownCancelCause: a request whose cause is not one of
+// the three is the store breaking its contract: the heartbeat logs it as
+// an error and neither cancels the activation nor stops renewing (buggrit
+// on PR #42; ADR 0024 item 6, as built).
+func TestHeartbeatUnknownCancelCause(t *testing.T) {
+	ctx := context.Background()
+	mem := memstore.New()
+	var logs bytes.Buffer // read only after the heartbeat has stopped
+	h := &host{st: badCauseStore{mem}, heartbeat: 5 * time.Millisecond, logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	own, err := mem.Claim(ctx, "i1", "me", leaseDuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	life, stop := context.WithCancel(ctx)
+	beat := h.startHeartbeat(life, cancel, own.Fence())
+	time.Sleep(50 * time.Millisecond)
+	stop()
+	if fatal := <-beat; fatal != nil {
+		t.Fatalf("heartbeat ended with %v", fatal)
+	}
+	if actx.Err() != nil {
+		t.Fatalf("an unknown cause cancelled the activation: %v", context.Cause(actx))
+	}
+	out := logs.String()
+	if !strings.Contains(out, "unknown cause") || strings.Contains(out, "cancel requested") || strings.Count(out, "unknown cause") != 1 {
+		t.Fatalf("logs: %s", out)
+	}
+}

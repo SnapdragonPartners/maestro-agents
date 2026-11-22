@@ -294,11 +294,12 @@ against the client.
   - `*ConflictError`, with the current version
   - `ErrNotClaimable`
   - `ErrInstanceBusy`
-  - `ErrNotFound`, a read's answer, which is not a definite error
-    today and stays so
+  - `ErrNotFound`: a read's answer, and from a write (`RequestCancel`
+    for an unknown run) a definite one, since nothing was written
 
-  Anything else is indeterminate (`store.IsDefinite` is false), a
-  dropped connection included. Reread before retrying.
+  `store.IsDefinite` reports all of these. Anything else is
+  indeterminate, a dropped connection included. Reread before
+  retrying.
 - **Authentication is the host's.** Wrap the handler with your own. Pass
   an `Authorizer`, which sees each call's operation and the instance,
   run and namespace it concerns. Morris uses it to confine a run's token

@@ -203,10 +203,19 @@ func (h *host) startHeartbeat(ctx context.Context, cancel context.CancelCauseFun
 			case err == nil && req != nil && !requested:
 				// A cancel request: the activation commits cancelled
 				// with its cause at its next safe point (ADR 0024,
-				// item 6; ADR 0017, item 18 as amended).
+				// item 6; ADR 0017, item 18 as amended). A cause
+				// outside the three is the store breaking its
+				// contract: never a cancellation or a shutdown; the
+				// run's next activation ends with ErrStoreFailure.
 				requested = true
+				cause := agent.CancelCause(req.Cause)
+				if cause == nil {
+					h.logger.Error("standalone: cancel request with an unknown cause; the store broke its contract",
+						"instance", f.Instance, "run", req.Run)
+					continue
+				}
 				h.logger.Info("standalone: cancel requested", "instance", f.Instance, "run", req.Run, "cause", string(req.Cause))
-				cancel(fmt.Errorf("cancel request: %w", agent.CancelCause(req.Cause)))
+				cancel(fmt.Errorf("cancel request: %w", cause))
 			case err == nil:
 			case errors.Is(err, store.ErrOwnership):
 				if h.releasedByUs(ctx, f) {
