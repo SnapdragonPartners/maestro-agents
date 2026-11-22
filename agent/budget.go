@@ -87,23 +87,41 @@ func (b Budgets) withDefaults(d *Budgets) Budgets { //nolint:gocritic // hugePar
 }
 
 func (b *Budgets) validate() error {
-	var errs []error
-	if b.Tokens.Limit < 0 {
-		errs = append(errs, fmt.Errorf("token budget %d is negative", b.Tokens.Limit))
-	}
-	if b.Tokens.Estimated && b.Tokens.Limit == 0 {
-		errs = append(errs, errors.New("token budget is estimated but sets no limit"))
-	}
-	if b.Turns < 0 {
-		errs = append(errs, fmt.Errorf("turn budget %d is negative", b.Turns))
-	}
-	if b.ActiveTime < 0 {
-		errs = append(errs, fmt.Errorf("active-time budget %s is negative", b.ActiveTime))
-	}
-	if b.Cost < 0 {
-		errs = append(errs, fmt.Errorf("cost budget %d is negative", b.Cost))
+	ps := b.Problems()
+	errs := make([]error, 0, len(ps))
+	for _, p := range ps {
+		errs = append(errs, errors.New(p.Detail))
 	}
 	return errors.Join(errs...) //nolint:wrapcheck // the caller adds its context
+}
+
+// Problems lists each budget that is invalid, as a StartProblem naming it
+// (ADR 0011, item 8; ADR 0024, item 5): a negative budget, or an
+// estimated token budget with no limit. They are the budget problems
+// Registry.CheckStart reports, which no agent type's defaults change (a
+// default fills only a zero budget, and an estimated one takes none), so
+// a host can check budgets before it knows the agent type.
+func (b *Budgets) Problems() []StartProblem {
+	var ps []StartProblem
+	add := func(budget, format string, args ...any) {
+		ps = append(ps, StartProblem{Check: CheckBudgets, Reason: ReasonConfigError, Budget: budget, Detail: fmt.Sprintf(format, args...)})
+	}
+	if b.Tokens.Limit < 0 {
+		add(BudgetTokens, "token budget %d is negative", b.Tokens.Limit)
+	}
+	if b.Tokens.Estimated && b.Tokens.Limit == 0 {
+		add(BudgetTokens, "token budget is estimated but sets no limit")
+	}
+	if b.Turns < 0 {
+		add(BudgetTurns, "turn budget %d is negative", b.Turns)
+	}
+	if b.ActiveTime < 0 {
+		add(BudgetActiveTime, "active-time budget %s is negative", b.ActiveTime)
+	}
+	if b.Cost < 0 {
+		add(BudgetCost, "cost budget %d is negative", b.Cost)
+	}
+	return ps
 }
 
 // Consumption is what a run has consumed of its budgets (BUD-1, BUD-4),

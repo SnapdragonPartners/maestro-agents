@@ -185,10 +185,14 @@ func TestValidate(t *testing.T) {
 		edit func(*Config)
 		want string
 	}{
-		"no agent type":      {func(c *Config) { c.AgentType = "" }, "agent_type is required"},
-		"unregistered":       {func(c *Config) { c.AgentType = "nope" }, `"nope" is not registered`},
-		"no namespace":       {func(c *Config) { c.Namespace = "" }, "namespace is required"},
-		"namespace too long": {func(c *Config) { c.Namespace = strings.Repeat("N", 81) }, "namespace: "},
+		"no agent type": {func(c *Config) { c.AgentType = "" }, "agent_type is required"},
+		"unregistered":  {func(c *Config) { c.AgentType = "nope" }, `"nope" is not registered`},
+		// Every problem at once (ADR 0017, item 7): the budgets are checked
+		// without the agent type.
+		"unregistered, budgets": {func(c *Config) { c.AgentType, c.Budgets.Turns = "nope", -1 }, "budgets.turns: turn budget -1 is negative"},
+		"no type, budgets":      {func(c *Config) { c.AgentType, c.Budgets.Tokens = "", -1 }, "budgets.tokens: token budget -1 is negative"},
+		"no namespace":          {func(c *Config) { c.Namespace = "" }, "namespace is required"},
+		"namespace too long":    {func(c *Config) { c.Namespace = strings.Repeat("N", 81) }, "namespace: "},
 		"undeclared trigger": {func(c *Config) {
 			c.AgentType = "modeled"
 			c.Trigger = TriggerConfig{Kind: agent.TriggerFolder, Dir: "/x"}
@@ -198,8 +202,8 @@ func TestValidate(t *testing.T) {
 		"schema rejects":     {func(c *Config) { c.Config = []byte(`{"greeting":5}`) }, "config: "},
 		"schema null":        {func(c *Config) { c.Config = nil }, "must be object, not null"},
 		"schema extra":       {func(c *Config) { c.Config = []byte(`{"other":"x"}`) }, "config: "},
-		"negative tokens":    {func(c *Config) { c.Budgets.Tokens = -1 }, "budgets.tokens -1 is negative"},
-		"estimated no limit": {func(c *Config) { c.Budgets.TokensEstimated = true }, "tokens_estimated is set"},
+		"negative tokens":    {func(c *Config) { c.Budgets.Tokens = -1 }, "budgets.tokens: token budget -1 is negative"},
+		"estimated no limit": {func(c *Config) { c.Budgets.TokensEstimated = true }, "budgets.tokens: token budget is estimated but sets no limit"},
 		"negative turns":     {func(c *Config) { c.Budgets.Turns = -1 }, "budgets.turns"},
 		"negative active":    {func(c *Config) { c.Budgets.ActiveTime = -1 }, "budgets.active_time"},
 		"negative deadline":  {func(c *Config) { c.Budgets.DeadlineAfter = -1 }, "budgets.deadline_after"},

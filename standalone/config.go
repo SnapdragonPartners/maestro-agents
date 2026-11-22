@@ -11,7 +11,6 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 
 	"github.com/SnapdragonPartners/maestro-agents/agent"
-	"github.com/SnapdragonPartners/maestro-agents/internal/jsonschema"
 	"github.com/SnapdragonPartners/maestro-agents/internal/storecore"
 )
 
@@ -240,7 +239,12 @@ func (c *Config) Validate(p *Program) error {
 		add("namespace: %v", err)
 	}
 	if m.Name != "" {
-		errs = append(errs, c.validateAgainst(&m)...)
+		errs = append(errs, c.validateAgainst(p, &m)...)
+	} else {
+		// Without the agent type, the budgets are still checked: no type's
+		// defaults change whether they are valid (agent.Budgets.Problems).
+		b := c.Budgets.budgets(time.Time{})
+		errs = append(errs, budgetErrors(b.Problems())...)
 	}
 	errs = append(errs, c.validateSubmitted(p)...)
 	errs = append(errs, c.Budgets.validate()...)
@@ -259,22 +263,34 @@ func (c *Config) Validate(p *Program) error {
 	return errors.Join(errs...) //nolint:wrapcheck // the caller names the file
 }
 
-// validateAgainst checks what the agent type's manifest decides: the
-// trigger kind and the instance configuration.
-func (c *Config) validateAgainst(m *agent.Manifest) []error {
+// validateAgainst checks what the agent type decides, with the checks
+// the run's start makes (agent.Registry.CheckStart, ADR 0024 item 5): the
+// trigger kind, the instance configuration and the budgets, each problem
+// named by its configuration key.
+func (c *Config) validateAgainst(p *Program, m *agent.Manifest) []error {
 	var errs []error
-	if c.Trigger.Kind != "" && !contains(m.Triggers, c.Trigger.Kind) {
-		errs = append(errs, fmt.Errorf("trigger.kind %q is not one agent type %q declares (%s)", c.Trigger.Kind, m.Name, strings.Join(m.Triggers, ", ")))
+	for _, sp := range p.Registry.CheckStart(m.Name, c.Trigger.Kind, c.instanceConfig(), c.Budgets.budgets(time.Time{})) {
+		switch sp.Check {
+		case agent.CheckTriggerKind:
+			if c.Trigger.Kind != "" { // a missing kind is reported once, by the trigger's checks
+				errs = append(errs, fmt.Errorf("trigger.kind %q is not one agent type %q declares (%s)", c.Trigger.Kind, m.Name, strings.Join(m.Triggers, ", ")))
+			}
+		case agent.CheckConfig:
+			errs = append(errs, fmt.Errorf("config: %s", sp.Detail))
+		case agent.CheckBudgets:
+			errs = append(errs, budgetErrors([]agent.StartProblem{sp})...)
+		default:
+			errs = append(errs, errors.New(sp.Detail))
+		}
 	}
-	if m.Config != nil {
-		s, err := jsonschema.Compile(m.Config)
-		if err != nil {
-			// Registration compiled it; this cannot happen.
-			return append(errs, fmt.Errorf("agent type %q: its configuration schema: %w", m.Name, err))
-		}
-		if err := s.Validate(c.instanceConfig()); err != nil {
-			errs = append(errs, fmt.Errorf("config: %w", err))
-		}
+	return errs
+}
+
+// budgetErrors names each budget problem by its configuration key.
+func budgetErrors(ps []agent.StartProblem) []error {
+	errs := make([]error, len(ps))
+	for i, p := range ps {
+		errs[i] = fmt.Errorf("budgets.%s: %s", p.Budget, p.Detail)
 	}
 	return errs
 }
@@ -303,22 +319,21 @@ func (c *Config) validateSubmitted(p *Program) []error {
 			errs = append(errs, fmt.Errorf("submitted agent type %q is not registered", t))
 			continue
 		}
-		if !contains(m.Triggers, SubmittedKind) {
-			errs = append(errs, fmt.Errorf("submitted agent type %q does not declare the trigger kind %q", t, SubmittedKind))
-		}
 		if c.Model == nil {
 			// A submitted type with a model state needs the route as much
 			// as the configured type does; the route's own checks run once,
 			// for the configured type.
 			errs = append(errs, c.validateModel(p, &m)...)
 		}
-		if m.Config != nil {
-			s, err := jsonschema.Compile(m.Config)
-			if err == nil {
-				err = s.Validate(json.RawMessage("null"))
-			}
-			if err != nil {
-				errs = append(errs, fmt.Errorf("submitted agent type %q must take no configuration: %w", t, err))
+		// As Submit starts it: no configuration and the type's budgets.
+		for _, sp := range p.Registry.CheckStart(t, SubmittedKind, json.RawMessage("null"), agent.Budgets{}) {
+			switch sp.Check {
+			case agent.CheckTriggerKind:
+				errs = append(errs, fmt.Errorf("submitted agent type %q does not declare the trigger kind %q", t, SubmittedKind))
+			case agent.CheckConfig:
+				errs = append(errs, fmt.Errorf("submitted agent type %q must take no configuration: %s", t, sp.Detail))
+			default:
+				errs = append(errs, fmt.Errorf("submitted agent type %q: %s", t, sp.Detail))
 			}
 		}
 	}
@@ -333,24 +348,14 @@ func (c *Config) instanceConfig() json.RawMessage {
 	return c.Config
 }
 
+// validate checks what only the configuration decides, the deadline;
+// the budgets a run takes are checked as its start checks them
+// (validateAgainst, or agent.Budgets.Problems without the agent type).
 func (b *BudgetsConfig) validate() []error {
-	var errs []error
-	if b.Tokens < 0 {
-		errs = append(errs, fmt.Errorf("budgets.tokens %d is negative", b.Tokens))
-	}
-	if b.TokensEstimated && b.Tokens == 0 {
-		errs = append(errs, errors.New("budgets.tokens_estimated is set but budgets.tokens is not"))
-	}
-	if b.Turns < 0 {
-		errs = append(errs, fmt.Errorf("budgets.turns %d is negative", b.Turns))
-	}
-	if b.ActiveTime < 0 {
-		errs = append(errs, fmt.Errorf("budgets.active_time %s is negative", time.Duration(b.ActiveTime)))
-	}
 	if b.DeadlineAfter < 0 {
-		errs = append(errs, fmt.Errorf("budgets.deadline_after %s is negative", time.Duration(b.DeadlineAfter)))
+		return []error{fmt.Errorf("budgets.deadline_after %s is negative", time.Duration(b.DeadlineAfter))}
 	}
-	return errs
+	return nil
 }
 
 // budgets returns the run's budgets as of now.
@@ -550,13 +555,4 @@ func (l *LogConfig) validate() []error {
 		errs = append(errs, fmt.Errorf("log.format %q is not text or json", l.Format))
 	}
 	return errs
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

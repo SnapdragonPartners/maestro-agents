@@ -200,9 +200,12 @@ Load-bearing decisions so far:
   ([ADR 0023](docs/adr/0023-public-strictjson-and-regularfile.md))
 - The external contract (ADR 0024, Proposed; reference
   [docs/contract.md](docs/contract.md)) is one interface for every
-  consumer, JSON at every seam: the existing seams as they stand, plus
-  planned gaps, each its own issue: `Registry.CheckStart`; cancel
-  requests (`ControlPlane.RequestCancel`, surfaced by `Heartbeat`); a
+  consumer, JSON at every seam: the existing seams as they stand
+  (`Registry.CheckStart` now among them: the start's own checks of
+  trigger kind, configuration and budgets, without a run, every problem
+  an `agent.StartProblem` with the reason the start would fail with; the
+  host checks the namespace and principal itself), plus planned gaps,
+  each its own issue: cancel requests (`ControlPlane.RequestCancel`, surfaced by `Heartbeat`); a
   derived status taxonomy (`agent.Status`: phase `queued`, `running`,
   `waiting`, `stopping` or terminal with RUN-3's reason, and progress);
   a Postgres store whose migrations follow `maestro-llms`'
