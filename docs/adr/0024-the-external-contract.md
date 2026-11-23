@@ -495,6 +495,14 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     offer fails with `config_error`. Calls carry the run context, and a
     failure is a classified tool error. The replay harness stands in
     for the server. The issue's own ADR decides the details.
+    - **As built (#23, [ADR 0025](0025-mcp-served-tools.md)):** the
+      source is supplied per activation, `ActivationInput.ToolSources`
+      (`agent.ToolSource`, keyed by source name); the start also records
+      the granted tools' definitions, and a later activation whose
+      source changed one fails the run with `tool_error`; a source's
+      error is classified `unreachable`, `source_error` or `unknown`;
+      the stand-in is `agent/agenttest.Source`. The MCP adapter
+      (`mcptools`) is a nested module, built after maestro-llms#194.
 
 18. **Gaps, each its own issue:** check before start (item 5, #35, built);
     cancel requests (item 6, #26, built); status (item 7, #27); the Postgres

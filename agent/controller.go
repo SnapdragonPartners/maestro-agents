@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/SnapdragonPartners/maestro-llms/llms"
+
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
@@ -126,6 +128,14 @@ type ActivationInput struct {
 	// authority; one that is not valid UTF-8 fails the start with
 	// ReasonConfigError.
 	Principal string
+	// ToolSources are the tool sources serving the agent type's served
+	// tools (TOOL-6, ADR 0025), by the source names its tools declare,
+	// built by the host for the run's principal. The run's start requires
+	// each granted served tool to be offered (ReasonConfigError
+	// otherwise) and records its definition; a later activation's sources
+	// must offer the same definitions (ReasonToolError otherwise). The
+	// runtime never closes a source.
+	ToolSources map[string]ToolSource
 	// Budgets are the run's budgets (BUD-1, ADR 0009), recorded when the
 	// run starts and fixed for the run: a later activation ignores this
 	// field. A zero token, turn or active-time budget takes the agent
@@ -210,8 +220,12 @@ type activation struct {
 	// principal is the run's principal (ADR 0016, item 12), fixed when
 	// the run started.
 	principal string
-	run       store.Run
-	cs        checkpointState
+	// sources are the host's tool sources; served the run's served tool
+	// definitions, recorded at its start (ADR 0025).
+	sources map[string]ToolSource
+	served  map[string]llms.ToolDefinition
+	run     store.Run
+	cs      checkpointState
 	// budgets are the run's budgets; used is what it has consumed of them
 	// as of the entries committed, its active time as of the activation's
 	// start (activeBase; consumed adds the time since clockStart).
@@ -275,7 +289,7 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 	}
 	a := &activation{
 		c: c, m: m, fence: in.Fence, run: run, scope: in.Scope, nextCk: 1, client: in.Client, maxSteps: max(in.MaxSteps, 0),
-		namespace: in.Namespace, principal: in.Principal,
+		namespace: in.Namespace, principal: in.Principal, sources: in.ToolSources,
 		// A run not yet started takes the agent type's defaults for the
 		// budgets the host leaves unset (ADR 0011, item 7), here, before
 		// the activation's clocks are installed from them; a started run
@@ -405,6 +419,9 @@ func (a *activation) restore(ctx context.Context, c *store.Checkpoint) error {
 		}
 		a.config = cfg
 	}
+	if err := a.restoreServed(ctx); err != nil {
+		return err
+	}
 	a.own, a.ckSeq = true, c.Seq
 	return nil
 }
@@ -516,6 +533,9 @@ func (a *activation) start(ctx context.Context, config json.RawMessage) *ending 
 	if !a.own {
 		return a.startRun(ctx, config)
 	}
+	if e := a.verifyServed(ctx); e != nil {
+		return e
+	}
 	if a.cs.AgentVersion == a.m.version {
 		return nil
 	}
@@ -578,6 +598,9 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	if e := a.refuseStart(ctx, problems); e != nil {
 		return e
 	}
+	if e := a.startServed(ctx, start); e != nil {
+		return e
+	}
 	a.config = config
 	if ctx.Err() != nil {
 		// The start is prepared, so a terminal ending records it.
@@ -593,7 +616,7 @@ func (a *activation) startRun(ctx context.Context, config json.RawMessage) *endi
 	}
 	cs := checkpointState{
 		AgentType: a.m.name, AgentVersion: a.m.version, State: a.m.initial, Data: data, Step: 1, Config: start.entry.Config,
-		Budgets: budgets, Namespace: a.namespace, Principal: a.principal,
+		Budgets: budgets, Namespace: a.namespace, Principal: a.principal, Served: start.entry.Served,
 	}
 	b := a.entries()
 	start.add(b)
@@ -642,13 +665,18 @@ func (a *activation) checkHostInputs(ctx context.Context) *ending {
 type runStart struct {
 	manifest *store.Artifact
 	config   *store.Artifact
-	entry    RunStarted
+	// served is the served tool definitions' artifact (ADR 0025).
+	served *store.Artifact
+	entry  RunStarted
 }
 
 func (r *runStart) add(b *entries) {
 	b.ops = append(b.ops, store.PutArtifactOp(*r.manifest))
 	if r.config != nil {
 		b.ops = append(b.ops, store.PutArtifactOp(*r.config))
+	}
+	if r.served != nil {
+		b.ops = append(b.ops, store.PutArtifactOp(*r.served))
 	}
 	b.add(1, EntryRunStarted, &r.entry)
 }

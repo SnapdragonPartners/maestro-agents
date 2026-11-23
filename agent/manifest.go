@@ -104,7 +104,11 @@ type ToolManifest struct {
 	Version  string   `json:"version,omitempty"`
 	Approval Approval `json:"approval,omitempty"`
 	// Identity is the tool's content identity: a SHA-256, in hex.
-	Identity    string          `json:"identity"`
+	Identity string `json:"identity"`
+	// Source names a served tool's tool source (ADR 0025): its identity
+	// covers its declaration, and its description and schema are its
+	// source's, recorded when a run starts.
+	Source      string          `json:"source,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 }
 
@@ -113,19 +117,21 @@ type ToolManifest struct {
 const identityFormat = "maestro-agents/tool-identity/1"
 
 // toolIdentity returns a tool's content identity (ADR 0011, item 3): the
-// SHA-256 of a fixed JSON encoding of its definition, effect, write
-// contract and version. The schema is compacted, so formatting alone does
+// SHA-256 of a fixed JSON encoding of its definition, source (a served
+// tool's, ADR 0025 item 2; omitted for an in-process tool, whose identity
+// is unchanged), effect, write contract and version. The schema is compacted, so formatting alone does
 // not change it.
-func toolIdentity(def *llms.ToolDefinition, effect Effect, contract WriteContract, version string) string {
+func toolIdentity(def *llms.ToolDefinition, source string, effect Effect, contract WriteContract, version string) string {
 	b, err := json.Marshal(struct {
 		Format      string          `json:"format"`
 		Name        string          `json:"name"`
+		Source      string          `json:"source,omitempty"`
 		Description string          `json:"description"`
 		Effect      Effect          `json:"effect"`
 		Contract    WriteContract   `json:"contract"`
 		Version     string          `json:"version"`
 		InputSchema json.RawMessage `json:"input_schema,omitempty"`
-	}{identityFormat, def.Name, def.Description, effect, contract, version, compactJSON(def.InputSchema)})
+	}{identityFormat, def.Name, source, def.Description, effect, contract, version, compactJSON(def.InputSchema)})
 	if err != nil {
 		// Every field is a string or JSON registration has validated.
 		panic(fmt.Sprintf("agent: encode tool identity: %v", err))
@@ -193,7 +199,8 @@ func (t *Type[D]) toolManifest(tool *Tool[D]) ToolManifest {
 	return ToolManifest{
 		Name: tool.Definition.Name, Description: tool.Definition.Description,
 		InputSchema: compactJSON(tool.Definition.InputSchema), Effect: tool.Effect, Contract: tool.Contract,
-		Version: v, Approval: tool.Approval, Identity: toolIdentity(&tool.Definition, tool.Effect, tool.Contract, v),
+		Version: v, Approval: tool.Approval, Identity: toolIdentity(&tool.Definition, tool.Source, tool.Effect, tool.Contract, v),
+		Source: tool.Source,
 	}
 }
 

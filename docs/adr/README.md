@@ -63,3 +63,4 @@ template.
 | [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted; `Host.Watch` and items 5 to 8 here, review UI moved to morris-agents (addepar ADR 0006) |
 | [0023](0023-public-strictjson-and-regularfile.md) | Public `strictjson` and `regularfile` for agents in other modules | Accepted |
 | [0024](0024-the-external-contract.md) | The external contract | Proposed |
+| [0025](0025-mcp-served-tools.md) | MCP-served tools | Proposed |
