@@ -56,6 +56,9 @@ It amends, item by item:
   `tool_error`): by item 6, a served call's error fails the run only for
   a write the server failed or never answered; otherwise it is a
   model-visible error.
+- ADR 0016 item 2 (the fields an event carries): by item 6, a tool
+  result's event also carries a served call's failure class, as its
+  `ErrorKind`.
 - ADR 0011 item 3 (a tool's content identity): by item 2, a served
   tool's identity covers its source, effect, contract and version, not
   its definition, which is fixed per run instead.

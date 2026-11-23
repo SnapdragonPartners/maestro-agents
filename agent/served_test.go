@@ -180,6 +180,8 @@ func TestServedToolStartChecks(t *testing.T) {
 	failing := new(agenttest.Source)
 	failing.FailList(errors.New("connection refused"))
 	badSchema := new(agenttest.Source).Add(createDef, nil).Add(llms.ToolDefinition{Name: "search", InputSchema: json.RawMessage(`{`)}, nil)
+	badText := new(agenttest.Source).Add(createDef, nil).Add(llms.ToolDefinition{Name: "search", Description: "\xff"}, nil)
+	dup := listing{ok, []llms.ToolDefinition{createDef, searchDef, searchDef}}
 	cases := map[string]struct {
 		src  agent.ToolSource
 		want string
@@ -188,6 +190,8 @@ func TestServedToolStartChecks(t *testing.T) {
 		"tool missing":  {lacking, `does not offer tool "create"`},
 		"list fails":    {failing, "connection refused"},
 		"invalid input": {badSchema, `tool "search" input schema`},
+		"invalid text":  {badText, `tool "search" description is not valid UTF-8`},
+		"listed twice":  {dup, `lists tool "search" twice`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -215,6 +219,15 @@ func TestServedToolStartChecks(t *testing.T) {
 		t.Fatalf("CheckToolSources(no served tools) = %+v", ps)
 	}
 }
+
+// listing is a tool source whose listing is fixed, duplicates included,
+// which agenttest.Source cannot list.
+type listing struct {
+	agent.ToolSource
+	defs []llms.ToolDefinition
+}
+
+func (l listing) Tools(context.Context) ([]llms.ToolDefinition, error) { return l.defs, nil }
 
 // tc2 is a call with empty arguments.
 func tc2(id, name string) llms.ToolCall { return tc(id, name, `{}`) }

@@ -54,7 +54,7 @@ template.
 | [0013](0013-skills-and-prompt-templates.md) | Skills and prompt templates | Accepted |
 | [0014](0014-model-client-and-attempt-admission.md) | The model client and attempt-level admission | Accepted |
 | [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Amended by ADR-0018, ADR-0021; moved to morris-agents (addepar ADR 0001) |
-| [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Accepted |
+| [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Amended by ADR-0025 |
 | [0017](0017-the-standalone-host.md) | The standalone host | Amended by ADR-0020, ADR-0021, ADR-0024 |
 | [0018](0018-the-intake-agent-type-and-the-vertical-slice.md) | The intake agent type and the vertical slice | Amended by ADR-0019, ADR-0021; moved to morris-agents (addepar ADR 0002) |
 | [0019](0019-the-extraction-agent-reads-the-pdf.md) | The extraction agent reads the PDF | Accepted; moved to morris-agents (addepar ADR 0003) |
