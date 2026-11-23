@@ -49,10 +49,10 @@ Contents:
 | `Registry.Manifest(name)` | exists ([ADR 0011](adr/0011-manifests.md)) | The type's `Manifest` value (and whether the type exists), whose JSON form is the catalogue entry: name, version, triggers, configuration schema, default budgets, states, tools, skills, templates. Morris builds its catalogue and its "propose a run" tool from it. |
 | `Registry.CheckStart(agentType, triggerKind, config, budgets)` | exists ([ADR 0024](adr/0024-the-external-contract.md), item 5) | Checks a start without a run: the trigger kind, the configuration against the type's schema, and the budgets (the type's defaults filling zero ones), returning every problem as `[]agent.StartProblem` (`check`, `reason`, and `budget` or `pointer` where they apply, `detail`). `reason` is what the start would fail with: `config_error`, or `budget_unenforceable` for a cost budget; an unregistered type has none (`Activate` refuses the run). The namespace and principal are not checked: the host assigns them and checks them itself. Use it before a confirmation box or before saving a setup. The start itself checks again, with the same code. |
 | `ControlPlane.EnqueueTrigger`, `CreateRun`, `RemoveTrigger` | exists ([ADR 0005](adr/0005-storage-one-fenced-commit.md)) | Create a run, idempotently on (instance, trigger ID). |
-| `ControlPlane.Claim`, `Heartbeat`, `Release` | exists ([ADR 0003](adr/0003-run-model-identities-and-activation-results.md)) | Lease the instance before activating, and keep the lease alive. |
+| `ControlPlane.Claim`, `Heartbeat`, `Release` | exists ([ADR 0003](adr/0003-run-model-identities-and-activation-results.md)) | Lease the instance before activating, and keep the lease alive. `Heartbeat` also returns the active run's cancel request, if any (below). |
 | `agent.NewController(store, registry, opts...)` | exists | One controller serves every instance, concurrently. |
 | `Controller.Activate(ctx, ActivationInput)` | exists ([ADR 0007](adr/0007-agent-types-and-the-run-controller.md)) | Run a claimed run up to `MaxSteps` steps, or to its end. |
-| `ControlPlane.RequestCancel(ctx, run, cause)` | planned (#26) | Stop a run, whoever is executing it (below). |
+| `ControlPlane.RequestCancel(ctx, run, cause)`, `Reader.CancelRequest(run)` | exists ([ADR 0024](adr/0024-the-external-contract.md), item 6) | Stop a run, whoever is executing it (below). |
 | `agent.Status`, `agent.InstanceStatus` | planned (#27) | Section 2. |
 
 `ActivationInput` (exists) carries:
@@ -80,10 +80,10 @@ acts under. Morris passes the user who clicked Confirm.
    lease:
    - a heartbeat that finds ownership gone cancels the activation's
      context;
-   - (planned) a heartbeat that returns a cancel request cancels it with
-     `context.WithCancelCause` and the matching cause:
-     `agent.ErrOperator`, `agent.ErrSuperseded` or (planned)
-     `agent.ErrUnauthorized`.
+   - a heartbeat that returns a cancel request cancels it with
+     `context.WithCancelCause` and the matching cause,
+     `agent.CancelCause(req.Cause)`: `agent.ErrOperator`,
+     `agent.ErrSuperseded` or `agent.ErrUnauthorized`.
 4. **Read the result.**
    - An `Outcome` means its commit is confirmed. The activation released
      the claim in that commit.
@@ -110,11 +110,11 @@ depend on the status:
 | `waiting` | the awaited input (STM-8, planned, #34); no run enters `waiting` before then |
 | `succeeded` | `changed`, `no_change` |
 | `failed` | `budget_exhausted`, `budget_unenforceable`, `model_error`, `tool_error`, `invalid_output`, `wrap_up_failed`, `object_conflict`, `state_error`, `config_error` |
-| `cancelled` | `operator`, `superseded`; `unauthorized` (planned, #26) |
+| `cancelled` | `operator`, `superseded`, `unauthorized` |
 
 There is no stored `running` status. Section 2 derives one.
 
-### Stopping a run (planned, #26)
+### Stopping a run (exists, ADR 0024 item 6)
 
 `RequestCancel(ctx, run, cause)` records a cancel request, with the cause
 `operator`, `superseded` or `unauthorized`. Use `unauthorized` when the
@@ -128,11 +128,26 @@ record, so it never makes the executing activation's commit conflict.
 `Reader.CancelRequest(run)` reads it, and it does nothing to a terminal
 run.
 
+```go
+req, recorded, err := st.RequestCancel(ctx, runID, store.CancelOperator)
+// req: {"requested_at": "...", "run": "...", "cause": "operator"}
+// recorded false: the run was already terminal, and nothing was recorded.
+// A run that already has a request returns it, its first cause standing.
+// An unknown run is store.ErrNotFound; another cause, store.ErrInvalid.
+
+own, req, err := st.Heartbeat(ctx, fence, lease) // req is nil, or the request
+if req != nil {
+	cancel(agent.CancelCause(req.Cause)) // the activation's CancelCauseFunc
+}
+```
+
 - **If the run is executing,** the executing host learns of the request
   from its next heartbeat and cancels the activation with the matching
   cause. The run commits `cancelled` at its next safe point.
 - **If the run is ready,** the next activation commits `cancelled`
-  before taking any step, so the host claims it at once.
+  before taking any step, so the host claims it at once (the standalone
+  host does, past any retry delay). The request decides even over a
+  deadline already passed.
 
 The status shows phase `stopping` until the run is terminal.
 
@@ -279,11 +294,12 @@ against the client.
   - `*ConflictError`, with the current version
   - `ErrNotClaimable`
   - `ErrInstanceBusy`
-  - `ErrNotFound`, a read's answer, which is not a definite error
-    today and stays so
+  - `ErrNotFound`: a read's answer, and from a write (`RequestCancel`
+    for an unknown run) a definite one, since nothing was written
 
-  Anything else is indeterminate (`store.IsDefinite` is false), a
-  dropped connection included. Reread before retrying.
+  `store.IsDefinite` reports all of these. Anything else is
+  indeterminate, a dropped connection included. Reread before
+  retrying.
 - **Authentication is the host's.** Wrap the handler with your own. Pass
   an `Authorizer`, which sees each call's operation and the instance,
   run and namespace it concerns. Morris uses it to confine a run's token

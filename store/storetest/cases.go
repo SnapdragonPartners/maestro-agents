@@ -41,6 +41,10 @@ func cases() []testCase {
 		{name: "EmptyBytes", fn: testEmptyBytes},
 		{name: "ConflictReportsCommittedVersion", fn: testConflictReportsCommittedVersion},
 		{name: "InvalidUTF8", fn: testInvalidUTF8},
+		{name: "CancelRequest", fn: testCancelRequest},
+		{name: "CancelRequestTerminalRun", fn: testCancelRequestTerminalRun},
+		{name: "CancelRequestBeforeFinalCommit", fn: testCancelRequestBeforeFinalCommit},
+		{name: "CancelRequestRacesFinalCommit", fn: testCancelRequestRacesFinalCommit},
 	}
 }
 
@@ -93,13 +97,13 @@ func testHeartbeat(t testing.TB, h Harness) {
 	e := setup(t, h)
 	ctx := context.Background()
 	e.clk.Advance(lease / 2)
-	got, err := e.s.Heartbeat(ctx, e.own.Fence(), lease)
-	if err != nil || !got.LeaseExpiry.Equal(e.clk.Now().Add(lease)) || got.Epoch != e.own.Epoch {
-		t.Fatalf("Heartbeat = %+v, %v", got, err)
+	got, req, err := e.s.Heartbeat(ctx, e.own.Fence(), lease)
+	if err != nil || !got.LeaseExpiry.Equal(e.clk.Now().Add(lease)) || got.Epoch != e.own.Epoch || req != nil {
+		t.Fatalf("Heartbeat = %+v, %+v, %v; want the extended lease and no cancel request", got, req, err)
 	}
 	// A heartbeat after expiry still succeeds while nobody has claimed.
 	e.clk.Advance(2 * lease)
-	if _, err = e.s.Heartbeat(ctx, e.own.Fence(), lease); err != nil {
+	if _, _, err = e.s.Heartbeat(ctx, e.own.Fence(), lease); err != nil {
 		t.Fatalf("heartbeat after expiry, unclaimed: %v", err)
 	}
 	if _, err = e.s.Claim(ctx, instance, "owner-b", lease); !errors.Is(err, store.ErrNotClaimable) {
@@ -107,7 +111,7 @@ func testHeartbeat(t testing.TB, h Harness) {
 	}
 	e.clk.Advance(2 * lease)
 	claim(t, e.s, instance, "owner-b")
-	_, err = e.s.Heartbeat(ctx, e.own.Fence(), lease)
+	_, _, err = e.s.Heartbeat(ctx, e.own.Fence(), lease)
 	wantErr(t, err, store.ErrOwnership)
 }
 

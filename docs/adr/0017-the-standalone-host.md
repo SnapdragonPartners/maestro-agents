@@ -1,6 +1,6 @@
 # 0017. The standalone host
 
-- **Status:** Amended by ADR-0020, ADR-0021
+- **Status:** Amended by ADR-0020, ADR-0021, ADR-0024
 - **Date:** 2026-11-14
 
 ## Context

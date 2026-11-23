@@ -204,8 +204,14 @@ Load-bearing decisions so far:
   (`Registry.CheckStart` now among them: the start's own checks of
   trigger kind, configuration and budgets, without a run, every problem
   an `agent.StartProblem` with the reason the start would fail with; the
-  host checks the namespace and principal itself), plus planned gaps,
-  each its own issue: cancel requests (`ControlPlane.RequestCancel`, surfaced by `Heartbeat`); a
+  host checks the namespace and principal itself; and cancel requests:
+  `ControlPlane.RequestCancel(run, cause)` records a `store.CancelRequest`,
+  a record of its own beside the run record, unfenced, first cause
+  standing (`operator`, `superseded` or `unauthorized`, the third a new
+  RUN-3 reason), ignored by a terminal run; `Heartbeat` returns the active
+  run's request, and the host cancels with `agent.CancelCause`; an
+  activation that finds one at its start commits `cancelled` before any
+  step), plus planned gaps, each its own issue: a
   derived status taxonomy (`agent.Status`: phase `queued`, `running`,
   `waiting`, `stopping` or terminal with RUN-3's reason, and progress);
   a Postgres store whose migrations follow `maestro-llms`'

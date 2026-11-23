@@ -152,6 +152,31 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      next heartbeat or the next start, whichever comes first. This
      works the same in process and across the wire, so Morris's Stop
      button and the app's need nothing of their own.
+   - **As built (#26):** `RequestCancel` returns the stored request
+     (`store.CancelRequest`: run, cause, the store's time) and whether
+     the run has one: a terminal run with none returns `recorded` false
+     and records nothing, a run with one returns it whatever cause is
+     given, and an unknown run returns `ErrNotFound`, which
+     `store.IsDefinite` now counts as definite (nothing was written); a
+     cause outside the three returns `ErrInvalid`. `Heartbeat` returns
+     the instance's non-terminal run's request as a third value
+     (`*store.CancelRequest`, nil for none). `agent.CancelCause` maps a
+     request's cause to its error, the cause a host cancels with. The
+     controller reads the request after the run and its record, before
+     writing anything, and cancels the activation with its cause before
+     the run's clocks start, so the request decides over a deadline
+     already passed; the run's start, if it has not landed, is recorded
+     with the cancelled ending, as for any activation cancelled before
+     it starts (REC-1). The standalone host's heartbeat cancels on a
+     request, and its scheduler claims a run with one at once, past any
+     retry delay. A request with a cause outside the three ends the
+     activation with `ErrStoreFailure`: the store broke its contract.
+     A heartbeat that returns one does not cancel: the standalone host
+     logs it as an error and lets the activation go on, so the run is
+     never reported cancelled or shut down for it, and its next
+     activation ends with `ErrStoreFailure`.
+     The request is not part of the execution record: the run's
+     `cancelled` outcome entry is.
 
 7. **A run's status is derived, never stored twice.**
    - `agent.Status(ctx, reader, runID)` computes a `RunStatus` from the
@@ -242,10 +267,11 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      wire form proves the same contract as the store behind it.
    - Every error keeps its class across the wire. The definite errors
      (`ErrOwnership`, `ErrInvalid`, `*ConflictError` with its current
-     version, `ErrNotClaimable`, `ErrInstanceBusy`) arrive as
-     themselves, and so does `ErrNotFound`, which stays what it is
-     today: a read's answer, not a definite error (`store.IsDefinite`
-     is unchanged). Anything the client cannot classify, a dropped
+     version, `ErrNotClaimable`, `ErrInstanceBusy`, and `ErrNotFound`,
+     a read's answer and, from a write, a definite one: since #26
+     `store.IsDefinite` counts it, because `RequestCancel` for an
+     unknown run wrote nothing; item 6) arrive as themselves. Anything
+     the client cannot classify, a dropped
      connection included, is indeterminate, and the host rereads
      before retrying (ADR 0003, item 14).
    - The handler authenticates nothing itself. The host wraps it with
@@ -471,7 +497,7 @@ consumer-facing reference is [docs/contract.md](../contract.md).
     for the server. The issue's own ADR decides the details.
 
 18. **Gaps, each its own issue:** check before start (item 5, #35, built);
-    cancel requests (item 6, #26); status (item 7, #27); the Postgres
+    cancel requests (item 6, #26, built); status (item 7, #27); the Postgres
     store (item 8, #28); the store's wire form and instance-linked
     artifact reads (item 9, #29); published artifacts (item 10, #30);
     requests, blocks and bundles (items 11 to 14, #31); the app host and
@@ -504,6 +530,9 @@ Each takes effect with the issue that builds it.
   `Committer`'s "a commit whose operations change nothing … cannot
   fail after those checks" no longer covers it. The doc comments in
   `store/store.go` and `store/ops.go` change with #29.
+- **ADR 0006, item 7:** `ErrNotFound` joins the definite errors
+  `store.IsDefinite` reports: a write that returns it, `RequestCancel`
+  for an unknown run (item 6), wrote nothing. Built with #26.
 - **ADR 0005, items 4 and 5, and ADR 0006:** the store's records gain
   the cancel request (one per run, first cause stands) and the
   artifact-to-instance link. The control plane gains `RequestCancel`,

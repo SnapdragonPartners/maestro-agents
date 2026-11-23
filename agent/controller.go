@@ -158,6 +158,15 @@ func (c *Controller) Activate(ctx context.Context, in ActivationInput) (Outcome,
 		return Outcome{}, err
 	}
 	c.logger.Info("agent: activation started", "run", a.run.ID, "instance", a.run.Instance, "agent_type", a.run.AgentType, "epoch", a.fence.Epoch)
+	if a.cancel != nil {
+		// A cancel request found at the start cancels the activation
+		// before its clocks, so its cause decides the ending, and the run
+		// commits cancelled before it takes any step (ADR 0024, item 6).
+		var cancel context.CancelCauseFunc
+		ctx, cancel = context.WithCancelCause(ctx)
+		defer cancel(nil)
+		cancel(fmt.Errorf("cancel request recorded at %s: %w", a.cancel.RequestedAt.Format(time.RFC3339), CancelCause(a.cancel.Cause)))
+	}
 	ctx, stop := a.clocks(ctx)
 	defer stop()
 	e := a.start(ctx, in.Config)
@@ -181,8 +190,10 @@ type activation struct {
 	// clockStart is when this activation's clocks started (ADR 0009).
 	clockStart time.Time
 	client     *ModelClient
-	m          *machine
-	c          *Controller
+	// cancel is the run's cancel request, if begin found one.
+	cancel *store.CancelRequest
+	m      *machine
+	c      *Controller
 	// model is the model state running, if any.
 	model *modelRun
 	// tail is what the execution record holds past the checkpoint.
@@ -298,7 +309,26 @@ func (c *Controller) begin(ctx context.Context, in *ActivationInput) (*activatio
 	if err := a.readTail(ctx, after); err != nil {
 		return nil, err
 	}
+	if err := a.readCancel(ctx); err != nil {
+		return nil, err
+	}
 	return a, nil
+}
+
+// readCancel reads the run's cancel request (ADR 0024, item 6). A cause
+// that is not one of the three is the store breaking its contract.
+func (a *activation) readCancel(ctx context.Context) error {
+	req, ok, err := a.c.store.CancelRequest(durable(ctx), a.run.ID)
+	switch {
+	case err != nil:
+		return storeFailure(err)
+	case !ok:
+		return nil
+	case CancelCause(req.Cause) == nil:
+		return storeFailure(fmt.Errorf("run %q has a cancel request with unknown cause %q", a.run.ID, req.Cause))
+	}
+	a.cancel = &req
+	return nil
 }
 
 // activatableRun reads the run record and refuses a run this activation
@@ -857,6 +887,8 @@ func (a *activation) endByCause(ctx context.Context) *ending {
 		out = OutcomeEntry{Status: store.StatusCancelled, Reason: store.Reason{Code: ReasonSuperseded}}
 	case errors.Is(cause, ErrOperator):
 		out = OutcomeEntry{Status: store.StatusCancelled, Reason: store.Reason{Code: ReasonOperator}}
+	case errors.Is(cause, ErrUnauthorized):
+		out = OutcomeEntry{Status: store.StatusCancelled, Reason: store.Reason{Code: ReasonUnauthorized}}
 	case errors.As(cause, &budget):
 		out = OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: ReasonBudgetExhausted, Budget: budget.Budget}}
 	}

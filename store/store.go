@@ -49,8 +49,11 @@ type ControlPlane interface {
 
 	// Heartbeat extends the lease of the fenced owner, which may already
 	// have expired as long as nobody has claimed since. A moved epoch or
-	// owner returns [ErrOwnership].
-	Heartbeat(ctx context.Context, f Fence, lease time.Duration) (Ownership, error)
+	// owner returns [ErrOwnership]. It also returns the cancel request of
+	// the instance's non-terminal run, or nil if it has none, so the
+	// owner cancels its activation with the request's cause (ADR 0024,
+	// item 6).
+	Heartbeat(ctx context.Context, f Fence, lease time.Duration) (Ownership, *CancelRequest, error)
 
 	// Release clears the fenced owner, keeping the epoch. A host uses it
 	// to give up a claim after an activation's store failure (ADR 0003,
@@ -75,6 +78,20 @@ type ControlPlane interface {
 	// runnable at version 1, with r's Status, Reason, Version and
 	// timestamps ignored.
 	CreateRun(ctx context.Context, r Run) (run Run, created bool, err error)
+
+	// RequestCancel records a cancel request for a run (ADR 0024, item
+	// 6), with no fence: anyone may ask, whoever executes the run. It is
+	// idempotent and the first cause stands: if the run has a request it
+	// is returned unchanged, whatever cause is given. A run already
+	// terminal is left alone: nothing is recorded, and recorded is false
+	// (unless it has an earlier request, which is returned). The request
+	// is serialized with commits, so a run's final commit either lands
+	// first, and the run keeps its outcome, or lands after the request,
+	// which its owner then finds at the next heartbeat or activation. It
+	// changes neither the run record nor its version. A cause that is not
+	// one of the three returns [ErrInvalid]; an unknown run returns
+	// [ErrNotFound].
+	RequestCancel(ctx context.Context, run string, cause CancelCause) (req CancelRequest, recorded bool, err error)
 }
 
 // Reader holds the unfenced reads (ADR 0005, item 5). An owner's reads,
@@ -93,6 +110,10 @@ type Reader interface {
 
 	// Run returns a run record, or [ErrNotFound].
 	Run(ctx context.Context, id string) (Run, error)
+
+	// CancelRequest returns the run's cancel request, if it has one
+	// (ADR 0024, item 6). An unknown run returns [ErrNotFound].
+	CancelRequest(ctx context.Context, run string) (req CancelRequest, ok bool, err error)
 
 	// ActiveRun returns the instance's non-terminal run, if it has one.
 	ActiveRun(ctx context.Context, instance string) (run Run, ok bool, err error)

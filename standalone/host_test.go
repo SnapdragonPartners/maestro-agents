@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -657,12 +659,12 @@ type faultyStore struct {
 	claims         int
 }
 
-func (f *faultyStore) Heartbeat(ctx context.Context, fence store.Fence, lease time.Duration) (store.Ownership, error) {
+func (f *faultyStore) Heartbeat(ctx context.Context, fence store.Fence, lease time.Duration) (store.Ownership, *store.CancelRequest, error) {
 	f.mu.Lock()
 	fatal := f.heartbeatFatal
 	f.mu.Unlock()
 	if fatal {
-		return store.Ownership{}, fmt.Errorf("poisoned: %w", store.ErrUnusable)
+		return store.Ownership{}, nil, fmt.Errorf("poisoned: %w", store.ErrUnusable)
 	}
 	return f.Store.Heartbeat(ctx, fence, lease) //nolint:wrapcheck // a test double
 }
@@ -773,5 +775,218 @@ func TestWatchStopsOnAnUnusableStore(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the watch kept going on an unusable store")
+	}
+}
+
+// waitRun polls a run until it is terminal, failing after a few seconds.
+func waitRun(t *testing.T, st store.Store, id string) store.Run {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r, err := st.Run(context.Background(), id)
+		if err == nil && r.Status.Terminal() {
+			return r
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("run %s did not end", id)
+	return store.Run{}
+}
+
+// TestWatchCancelRequestAtHeartbeat: a cancel request recorded while a run
+// executes reaches the activation at the next heartbeat, and the run
+// commits cancelled with the request's cause (ADR 0024, item 6; ADR 0017,
+// item 18 as amended).
+func TestWatchCancelRequestAtHeartbeat(t *testing.T) {
+	pr := newProbe()
+	inbox := t.TempDir()
+	st := memstore.New()
+	h := watchHost(t, pr, st, inbox)
+	h.heartbeat = 20 * time.Millisecond
+	writeFile(t, filepath.Join(inbox, "a.txt"), "block until shutdown")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int)
+	go func() { done <- h.watch(ctx) }()
+	run := waitFor(t, pr.started, 1)[0]
+	if _, recorded, err := st.RequestCancel(context.Background(), run, store.CancelUnauthorized); err != nil || !recorded {
+		t.Fatalf("RequestCancel = %v, %v", recorded, err)
+	}
+	r := waitRun(t, st, run)
+	if r.Status != store.StatusCancelled || r.Reason.Code != agent.ReasonUnauthorized {
+		t.Fatalf("run = %s/%+v; want cancelled/unauthorized", r.Status, r.Reason)
+	}
+	cancel()
+	if code := <-done; code != ExitComplete {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+// TestWatchClaimsACancelRequestedRunAtOnce: a run waiting out its retry
+// delay is claimed at once when it has a cancel request, and its
+// activation commits cancelled before any step (ADR 0024, item 6).
+func TestWatchClaimsACancelRequestedRunAtOnce(t *testing.T) {
+	pr := newProbe()
+	inbox := t.TempDir()
+	st := &faultyStore{Store: memstore.New(), claimFailures: 1}
+	h := watchHost(t, pr, st, inbox)
+	writeFile(t, filepath.Join(inbox, "a.txt"), "fine")
+	sum := sha256.Sum256([]byte("fine"))
+	run := "sha256-" + hex.EncodeToString(sum[:])
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int)
+	go func() { done <- h.watch(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st.mu.Lock()
+		claims := st.claims
+		st.mu.Unlock()
+		if claims >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the run was never claimed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	failed := time.Now()
+	if _, recorded, err := st.RequestCancel(context.Background(), run, store.CancelOperator); err != nil || !recorded {
+		t.Fatalf("RequestCancel = %v, %v", recorded, err)
+	}
+	r := waitRun(t, st, run)
+	if d := time.Since(failed); d >= minRetryDelay {
+		t.Fatalf("claimed after %s, not before the %s retry delay", d, minRetryDelay)
+	}
+	if r.Status != store.StatusCancelled || r.Reason.Code != agent.ReasonOperator || len(pr.started) != 0 {
+		t.Fatalf("run = %s/%+v, %d steps started; want cancelled/operator with none", r.Status, r.Reason, len(pr.started))
+	}
+	cancel()
+	<-done
+}
+
+// TestHeartbeatCancelRequest: a heartbeat that returns a cancel request
+// cancels the activation with the request's cause, once, and goes on
+// renewing the lease until the host stops it, so a cancelled activation
+// keeps its claim until its final commit (ADR 0024, item 6).
+func TestHeartbeatCancelRequest(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	h := &host{st: st, heartbeat: 5 * time.Millisecond, logger: slog.New(slog.DiscardHandler)}
+	if _, _, err := st.CreateRun(ctx, store.Run{ID: "r1", Instance: "i1", AgentType: "probe", TriggerID: "t1"}); err != nil {
+		t.Fatal(err)
+	}
+	own, err := st.Claim(ctx, "i1", "me", leaseDuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	life, stop := context.WithCancel(ctx)
+	beat := h.startHeartbeat(life, cancel, own.Fence())
+	if _, _, err = st.RequestCancel(ctx, "r1", store.CancelUnauthorized); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-actx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancel request did not cancel the activation")
+	}
+	if !errors.Is(context.Cause(actx), agent.ErrUnauthorized) {
+		t.Fatalf("cause = %v, want ErrUnauthorized", context.Cause(actx))
+	}
+	first, err := st.Ownership(ctx, "i1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	later, err := st.Ownership(ctx, "i1")
+	if err != nil || !later.LeaseExpiry.After(first.LeaseExpiry) {
+		t.Fatalf("lease %v then %v (%v): the heartbeat stopped renewing after the request", first.LeaseExpiry, later.LeaseExpiry, err)
+	}
+	stop()
+	select {
+	case fatal := <-beat:
+		if fatal != nil {
+			t.Fatalf("heartbeat ended with %v", fatal)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the heartbeat did not stop")
+	}
+}
+
+// TestWatchBacksOffAFailingCancellation: a run with a cancel request is
+// claimed past its retry delay once; if that claim fails too, the retry
+// delay holds again, rather than a hot loop of claims while the request
+// stays (Codex round 1 on 85a8abb).
+func TestWatchBacksOffAFailingCancellation(t *testing.T) {
+	pr := newProbe()
+	inbox := t.TempDir()
+	st := &faultyStore{Store: memstore.New(), claimFailures: 1000}
+	h := watchHost(t, pr, st, inbox)
+	writeFile(t, filepath.Join(inbox, "a.txt"), "fine")
+	sum := sha256.Sum256([]byte("fine"))
+	run := "sha256-" + hex.EncodeToString(sum[:])
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int)
+	go func() { done <- h.watch(ctx) }()
+	claims := func() int {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return st.claims
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for claims() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the run was never claimed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, recorded, err := st.RequestCancel(context.Background(), run, store.CancelOperator); err != nil || !recorded {
+		t.Fatalf("RequestCancel = %v, %v", recorded, err)
+	}
+	time.Sleep(minRetryDelay / 2)
+	if n := claims(); n != 2 {
+		t.Fatalf("%d claims within half the retry delay; want 2 (the first, then one expedited by the request)", n)
+	}
+	cancel()
+	<-done
+}
+
+// badCauseStore returns a cancel request with a cause outside the three
+// from every heartbeat, as a broken host store would.
+type badCauseStore struct{ store.Store }
+
+func (b badCauseStore) Heartbeat(ctx context.Context, f store.Fence, lease time.Duration) (store.Ownership, *store.CancelRequest, error) {
+	own, _, err := b.Store.Heartbeat(ctx, f, lease)
+	return own, &store.CancelRequest{Run: "r1", Cause: "bored"}, err //nolint:wrapcheck // a test double
+}
+
+// TestHeartbeatUnknownCancelCause: a request whose cause is not one of
+// the three is the store breaking its contract: the heartbeat logs it as
+// an error and neither cancels the activation nor stops renewing (buggrit
+// on PR #42; ADR 0024 item 6, as built).
+func TestHeartbeatUnknownCancelCause(t *testing.T) {
+	ctx := context.Background()
+	mem := memstore.New()
+	var logs bytes.Buffer // read only after the heartbeat has stopped
+	h := &host{st: badCauseStore{mem}, heartbeat: 5 * time.Millisecond, logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	own, err := mem.Claim(ctx, "i1", "me", leaseDuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	life, stop := context.WithCancel(ctx)
+	beat := h.startHeartbeat(life, cancel, own.Fence())
+	time.Sleep(50 * time.Millisecond)
+	stop()
+	if fatal := <-beat; fatal != nil {
+		t.Fatalf("heartbeat ended with %v", fatal)
+	}
+	if actx.Err() != nil {
+		t.Fatalf("an unknown cause cancelled the activation: %v", context.Cause(actx))
+	}
+	out := logs.String()
+	if !strings.Contains(out, "unknown cause") || strings.Contains(out, "cancel requested") || strings.Count(out, "unknown cause") != 1 {
+		t.Fatalf("logs: %s", out)
 	}
 }

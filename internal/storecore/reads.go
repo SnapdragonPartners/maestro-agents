@@ -88,6 +88,25 @@ func (e *Engine) Run(ctx context.Context, id string) (store.Run, error) {
 	return run, nil
 }
 
+// CancelRequest implements store.Reader.
+func (e *Engine) CancelRequest(ctx context.Context, run string) (store.CancelRequest, bool, error) {
+	if _, err := component("run", run); err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	if err := e.rlock(ctx); err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	defer e.mu.RUnlock()
+	_, ok, err := e.readRun(run)
+	if err != nil {
+		return store.CancelRequest{}, false, err
+	}
+	if !ok {
+		return store.CancelRequest{}, false, fmt.Errorf("%w: run %q", store.ErrNotFound, run)
+	}
+	return e.readCancel(run)
+}
+
 // ActiveRun implements store.Reader.
 func (e *Engine) ActiveRun(ctx context.Context, instance string) (store.Run, bool, error) {
 	inst, err := component("instance", instance)
