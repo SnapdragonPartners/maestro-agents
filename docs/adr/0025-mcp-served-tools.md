@@ -133,9 +133,10 @@ It amends, item by item:
    check `CheckToolSources` (`"tool_sources"`). A listing that names a
    tool twice, or offers a granted tool with a description that is not
    valid UTF-8 or a schema that is not valid JSON, is a problem too: the
-   record could not keep the definition exactly. The definitions of the granted tools are
-   recorded in `run_started` (`RunStarted.Served`: name, description,
-   compacted schema), so the model is offered the same definition on
+   record could not keep the definition exactly. The definitions of the
+   granted tools (name, description, compacted schema) are recorded in an
+   artifact whose digest `run_started` holds (`RunStarted.Served`), so
+   the model is offered the same definition on
    every turn of the run and the record shows what it was offered.
    Tools a source offers but the type does not grant are ignored: a
    grant is by name (TOOL-1). A later activation lists its sources again

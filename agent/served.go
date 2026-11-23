@@ -105,7 +105,9 @@ func failureContent(name string, f Failure) string {
 // same code path. Each source the type declares must be present, list
 // its tools, and offer every tool the type grants from it. It returns
 // every problem it finds, in a stable order, and none for a type with no
-// served tools. Like CheckStart it is advice: the start checks again.
+// served tools. An unregistered type is one CheckAgentType problem with
+// no reason, as from CheckStart. Like CheckStart it is advice: the start
+// checks again.
 func (r *Registry) CheckToolSources(ctx context.Context, agentType string, sources map[string]ToolSource) []StartProblem {
 	m, ok := r.lookup(agentType)
 	if !ok {
