@@ -11,8 +11,8 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/store"
 )
 
-// The checks a run's start makes of what its proposal decides (ADR 0024,
-// item 5), as StartProblem.Check names them.
+// The checks a run's start makes (ADR 0024 item 5, ADR 0025 item 4), as
+// StartProblem.Check names them.
 const (
 	// CheckAgentType: the agent type is not registered. The start makes
 	// no run failure of it: Activate refuses the run with
@@ -27,13 +27,20 @@ const (
 	// CheckBudgets: a budget is invalid, or one the runtime cannot
 	// enforce (ADR 0009, ADR 0011 item 8).
 	CheckBudgets = "budgets"
+	// CheckToolSources: a tool source the agent type declares is missing
+	// or cannot list its tools, or does not offer a served tool the type
+	// grants, or offers one the record could not keep (ADR 0025, item 4).
+	// It is the only check that calls out of the process, so
+	// Registry.CheckStart does not make it: Registry.CheckToolSources
+	// does, and the start does.
+	CheckToolSources = "tool_sources"
 )
 
 // StartProblem is one reason a run's start would be refused (ADR 0024,
 // item 5).
 type StartProblem struct {
 	// Check is the check that failed: CheckAgentType, CheckTriggerKind,
-	// CheckConfig or CheckBudgets.
+	// CheckConfig, CheckBudgets or CheckToolSources.
 	Check string `json:"check"`
 	// Reason is the RUN-3 reason the start would fail the run with:
 	// ReasonConfigError, or ReasonBudgetUnenforceable for a budget the

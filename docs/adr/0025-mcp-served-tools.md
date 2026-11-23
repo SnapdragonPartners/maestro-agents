@@ -41,6 +41,28 @@ tool's content identity, which the manifest lists and recovery enforces
 with no result is reissued only if its contract makes that safe
 (TOOL-12); telemetry projects the committed entries (ADR 0016).
 
+It amends, item by item:
+
+- ADR 0003 item 12 and ADR 0007 item 4 (what `ActivationInput`
+  carries): by item 3, it also carries the run's tool sources.
+- ADR 0004 item 2 (what `run_started` holds) and ADR 0007 item 8 (the
+  checkpoint's contents): by item 4, they also record the digest of the
+  artifact holding the run's served tool definitions.
+- ADR 0008 item 3 (a tool is `Tool[D]` with its `Execute`): by item 1, a
+  tool may instead be served, with `Tool.Source` and no `Execute`.
+- ADR 0008 item 8 (the entry payloads): by item 6, `ResultEntry` also
+  records a served call's failure class.
+- ADR 0008 item 15 (a tool's returned error fails the run with
+  `tool_error`): by item 6, a served call's error fails the run only for
+  a write the server failed or never answered; otherwise it is a
+  model-visible error.
+- ADR 0011 item 3 (a tool's content identity): by item 2, a served
+  tool's identity covers its source, effect, contract and version, not
+  its definition, which is fixed per run instead.
+- ADR 0011 item 4 (tools from outside the agent type join by name, their
+  version from the host or the server): by items 1 and 2, a served tool
+  is declared by the agent type, and its version is the type's.
+
 ## Decision
 
 1. **A served tool is declared by the agent type, not discovered.** An

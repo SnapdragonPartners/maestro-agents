@@ -131,8 +131,11 @@ func Fail(err error) Handler {
 }
 
 // Sequence returns a handler that runs hs in turn, one per call, and the
-// last for every call after.
+// last for every call after. It panics if hs is empty.
 func Sequence(hs ...Handler) Handler {
+	if len(hs) == 0 {
+		panic("agenttest: Sequence with no handlers")
+	}
 	var (
 		mu sync.Mutex
 		n  int

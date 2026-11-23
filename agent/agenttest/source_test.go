@@ -52,3 +52,12 @@ func TestSource(t *testing.T) {
 		t.Fatalf("Call(f) = %v", err)
 	}
 }
+
+func TestSequenceEmpty(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("Sequence() did not panic")
+		}
+	}()
+	agenttest.Sequence()
+}

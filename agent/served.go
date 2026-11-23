@@ -76,11 +76,6 @@ const (
 	FailureUnknown Failure = "unknown"
 )
 
-// CheckToolSources is the start check of the tool sources (ADR 0025, item
-// 4): a source the type declares is missing or cannot list its tools, or
-// does not offer a tool the type grants.
-const CheckToolSources = "tool_sources"
-
 // classify returns a served call's failure class.
 func classify(err error) Failure {
 	switch {
