@@ -170,13 +170,39 @@ func (m *machine) listServed(ctx context.Context, sources map[string]ToolSource)
 					continue
 				}
 			}
-			defs[tool] = llms.ToolDefinition{Name: tool, Description: d.Description, InputSchema: compactJSON(d.InputSchema)}
+			nd, err := normalizeDef(llms.ToolDefinition{Name: tool, Description: d.Description, InputSchema: d.InputSchema})
+			if err != nil {
+				problem("tool source %q: tool %q: %v", name, tool, err)
+				continue
+			}
+			defs[tool] = nd
 		}
 	}
 	if len(ps) > 0 {
 		return nil, ps
 	}
 	return defs, nil
+}
+
+// normalizeDef returns a definition in the form the record restores it
+// in: encoded and decoded as the served artifact is (which escapes <, >
+// and & and writes a nil schema as null), the schema compacted, and a
+// null schema nil. A listing and a restored record compare equal exactly
+// when their definitions do (ADR 0025, item 4).
+func normalizeDef(d llms.ToolDefinition) (llms.ToolDefinition, error) {
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return d, fmt.Errorf("encode definition: %w", err)
+	}
+	var out llms.ToolDefinition
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return d, fmt.Errorf("decode definition: %w", err)
+	}
+	out.InputSchema = compactJSON(out.InputSchema)
+	if string(out.InputSchema) == "null" {
+		out.InputSchema = nil
+	}
+	return out, nil
 }
 
 // servedFrom returns the served tools the type grants from a source,
@@ -246,7 +272,11 @@ func (a *activation) restoreServed(ctx context.Context) error {
 	}
 	a.served = make(map[string]llms.ToolDefinition, len(list))
 	for _, d := range list {
-		a.served[d.Name] = d
+		nd, err := normalizeDef(d)
+		if err != nil {
+			return storeFailure(fmt.Errorf("agent: served tool definition %q: %w", d.Name, err))
+		}
+		a.served[nd.Name] = nd
 	}
 	return nil
 }
@@ -282,7 +312,7 @@ func (a *activation) verifyServed(ctx context.Context) *ending {
 		case !ok:
 			return a.fail(ctx, ReasonToolError, fmt.Sprintf(
 				"served tool %q has no definition recorded at the run's start (ADR 0025, item 4)", name))
-		case rec.Description != cur.Description || !bytes.Equal(compactJSON(rec.InputSchema), cur.InputSchema):
+		case rec.Description != cur.Description || !bytes.Equal(rec.InputSchema, cur.InputSchema):
 			return a.fail(ctx, ReasonToolError, fmt.Sprintf(
 				"tool source %q changed the definition of tool %q since the run started (ADR 0025, item 4)", a.m.served[name], name))
 		}

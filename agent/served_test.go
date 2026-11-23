@@ -372,6 +372,28 @@ func TestServedToolLaterActivation(t *testing.T) {
 			t.Fatalf("second = %+v", out)
 		}
 	})
+	// A definition the record cannot hold byte for byte (a nil schema,
+	// written as null; <, > and & in a schema, escaped) restores equal to
+	// the unchanged listing (Codex round 1).
+	for name, schema := range map[string]json.RawMessage{
+		"nil schema":          nil,
+		"HTML characters":     json.RawMessage(`{"type":"object","properties":{"q":{"type":"string","pattern":"<a>&b"}}}`),
+		"description escapes": json.RawMessage(`{"type":"object"}`),
+	} {
+		t.Run("unchanged "+name, func(t *testing.T) {
+			def := searchDef
+			def.InputSchema = schema
+			def.Description = "Find <docs> & more."
+			src := servedSource(agenttest.Text("ok"), nil).Add(def, agenttest.Text("ok"))
+			r := newServedRun(t, src, script...)
+			if out := r.activate(1); out.Status != store.StatusRunnable {
+				t.Fatalf("first = %+v", out)
+			}
+			if out := r.activate(0); !out.Status.Terminal() || out.Reason.Code == agent.ReasonToolError {
+				t.Fatalf("second = %+v", out)
+			}
+		})
+	}
 	t.Run("source missing", func(t *testing.T) {
 		r := newServedRun(t, servedSource(agenttest.Text("ok"), nil), script...)
 		if out := r.activate(1); out.Status != store.StatusRunnable {
