@@ -136,8 +136,27 @@ type Tool[D any] struct {
 	// refused at registration (ADR 0011, item 9).
 	Approval Approval
 
-	// Definition is the schema offered to the model.
+	// Source, if set, names the tool source that serves the tool (TOOL-6,
+	// ADR 0025): one of ActivationInput.ToolSources, an MCP server, say.
+	// A served tool has no Execute; declare one with ServedTool.
+	Source string
+
+	// Definition is the schema offered to the model. A served tool
+	// declares its name only: its description and input schema are its
+	// source's, fixed when the run starts (ADR 0025, item 4).
 	Definition llms.ToolDefinition
+}
+
+// ServedTool declares a tool served by the named tool source (TOOL-6, ADR
+// 0025, item 1): the host provides the source per activation
+// (ActivationInput.ToolSources), name is the tool's name on it and the
+// name the model sees, and the agent type classifies its effect and write
+// contract, as for any tool; a server's hints do not. A served tool
+// cannot return object operations, so it cannot declare
+// ContractAtomicLocal, and its result cannot transition, so it cannot be
+// a wrap-up tool.
+func ServedTool[D any](source, name string, effect Effect, contract WriteContract) Tool[D] {
+	return Tool[D]{Source: source, Effect: effect, Contract: contract, Definition: llms.ToolDefinition{Name: name}}
 }
 
 // Effect is a tool's effect classification (TOOL-2).
@@ -403,16 +422,9 @@ func (m *erasedModel) wrapUpTools() ([]*erasedTool, llms.ToolChoice) {
 	return out, llms.ToolChoice{Type: llms.ToolChoiceAuto}
 }
 
-// definitions returns the tool definitions the state offers, in order.
-func (m *erasedModel) definitions() []llms.ToolDefinition {
-	defs := make([]llms.ToolDefinition, len(m.tools))
-	for i, t := range m.tools {
-		defs[i] = t.def
-	}
-	return defs
-}
-
 type erasedTool struct {
+	// source names a served tool's source (ADR 0025); exec is nil for one.
+	source   string
 	exec     func(ctx context.Context, env *Env, creds CredentialProvider, data json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error)
 	effect   Effect
 	contract WriteContract
@@ -444,6 +456,8 @@ func compactJSON(raw json.RawMessage) json.RawMessage {
 }
 
 type erasedResult struct {
+	// failure classifies a served call's failure (ADR 0025, item 6).
+	failure Failure
 	content string
 	to      string
 	data    json.RawMessage
@@ -480,7 +494,7 @@ func eraseModel[D any](ms *ModelState[D], typeVersion string, skills []*skill) *
 	for i := range ms.Tools {
 		t := ms.Tools[i]
 		exec := t.Execute
-		et := &erasedTool{def: t.Definition, effect: t.Effect, contract: t.Contract}
+		et := &erasedTool{def: t.Definition, effect: t.Effect, contract: t.Contract, source: t.Source}
 		// The schema's bytes are the declaration's own: registration keeps
 		// a copy, compacted as the recorded parameters hold it, so what is
 		// sent is what is recorded (ADR 0008, item 8).
@@ -489,7 +503,13 @@ func eraseModel[D any](ms *ModelState[D], typeVersion string, skills []*skill) *
 		if version == "" {
 			version = typeVersion
 		}
-		et.identity = toolIdentity(&et.def, t.Effect, t.Contract, version)
+		et.identity = toolIdentity(&et.def, t.Source, t.Effect, t.Contract, version)
+		if t.Source != "" {
+			// A served tool runs through its source (ADR 0025, item 5).
+			em.tools = append(em.tools, et)
+			em.byName[t.Definition.Name] = et
+			continue
+		}
 		atomicLocal := t.Contract == ContractAtomicLocal
 		et.exec = func(ctx context.Context, env *Env, creds CredentialProvider, raw json.RawMessage, call llms.ToolCall, action ActionID, key string, wrapUp bool) (erasedResult, error) {
 			d, err := decodeData[D](raw)
@@ -560,8 +580,6 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 			return t.invalid("model state %q tool %d has no name", s.Name, i)
 		case seen[name]:
 			return t.invalid("model state %q declares tool %q twice", s.Name, name)
-		case tool.Execute == nil:
-			return t.invalid("model state %q tool %q has no Execute", s.Name, name)
 		case !utf8.ValidString(name) || !utf8.ValidString(tool.Definition.Description):
 			return t.invalid("model state %q tool %d has a name or description that is not valid UTF-8", s.Name, i)
 		case !utf8.ValidString(tool.Version):
@@ -575,6 +593,9 @@ func (t *Type[D]) checkModel(s *State[D]) error {
 			}
 		}
 		seen[name] = true
+		if err := t.checkExecution(s, tool); err != nil {
+			return err
+		}
 		if err := t.checkEffect(tool); err != nil {
 			return err
 		}
@@ -602,15 +623,53 @@ func (t *Type[D]) checkWrapUp(s *State[D]) error {
 	for i := range s.Model.Tools {
 		declared[s.Model.Tools[i].Definition.Name] = true
 	}
+	served := map[string]bool{}
+	for i := range s.Model.Tools {
+		if s.Model.Tools[i].Source != "" {
+			served[s.Model.Tools[i].Definition.Name] = true
+		}
+	}
 	seen := map[string]bool{}
 	for _, name := range w.Tools {
 		switch {
+		case served[name]:
+			return t.invalid("model state %q wrap-up names served tool %q, whose result cannot transition (ADR 0025, item 1)", s.Name, name)
 		case !declared[name]:
 			return t.invalid("model state %q wrap-up names tool %q, which the state does not declare", s.Name, name)
 		case seen[name]:
 			return t.invalid("model state %q wrap-up names tool %q twice", s.Name, name)
 		}
 		seen[name] = true
+	}
+	return nil
+}
+
+// checkExecution checks how a tool executes: an in-process tool has an
+// Execute, a served tool its source (ADR 0025, item 1).
+func (t *Type[D]) checkExecution(s *State[D], tool *Tool[D]) error {
+	if tool.Source != "" {
+		return t.checkServed(s, tool)
+	}
+	if tool.Execute == nil {
+		return t.invalid("model state %q tool %q has no Execute", s.Name, tool.Definition.Name)
+	}
+	return nil
+}
+
+// checkServed checks a served tool's declaration (ADR 0025, item 1): its
+// source provides its definition and executes it, and it cannot return
+// object operations.
+func (t *Type[D]) checkServed(s *State[D], tool *Tool[D]) error {
+	name := tool.Definition.Name
+	switch {
+	case !utf8.ValidString(tool.Source):
+		return t.invalid("model state %q tool %q source is not valid UTF-8", s.Name, name)
+	case tool.Execute != nil:
+		return t.invalid("served tool %q sets Execute; its source executes it (ADR 0025, item 1)", name)
+	case tool.Definition.Description != "" || tool.Definition.InputSchema != nil:
+		return t.invalid("served tool %q declares a description or schema; its source provides them (ADR 0025, item 1)", name)
+	case tool.Contract == ContractAtomicLocal:
+		return t.invalid("served tool %q declares %s; a served tool returns no object operations (ADR 0025, item 1)", name, ContractAtomicLocal)
 	}
 	return nil
 }

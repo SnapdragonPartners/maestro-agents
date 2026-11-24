@@ -25,7 +25,7 @@ Contents:
 4. [Requests and responses](#4-requests-and-responses)
 5. [What an agent module exports](#5-what-an-agent-module-exports)
 6. [The app process](#6-the-app-process)
-7. [Planned: MCP tools](#7-planned-mcp-tools)
+7. [MCP tools](#7-mcp-tools)
 
 ## 1. Running agents: what a host provides and calls
 
@@ -39,7 +39,7 @@ Contents:
 | Credentials | `agent.CredentialProvider` | exists ([ADR 0016](adr/0016-telemetry-logging-and-credentials.md)) | Serves a tool a credential at call time, keyed by the run context (run, principal). Never reaches agent code. |
 | Telemetry | `agent.Sink`, `agent.Redactor` | exists (ADR 0016) | One event per committed record entry: IDs, names, counts and codes, never content. Free text leaves only through the redactor. |
 | Logging | `*slog.Logger` | exists (ADR 0016) | One logger for the runtime, agent types and tools. |
-| MCP tool source | in `ActivationInput` | planned (#23) | See section 7. |
+| Tool sources | `agent.ToolSource`, in `ActivationInput.ToolSources` | exists ([ADR 0025](adr/0025-mcp-served-tools.md)); the MCP adapter `mcptools` planned | Serves an agent type's served tools (an MCP server, say). Built for the run's principal; the host owns its transport, token and renewal. See section 7. |
 
 ### What the host calls
 
@@ -48,6 +48,7 @@ Contents:
 | `agent.NewRegistry`, `Registry.Register` | exists | Register each agent type explicitly (MAN-3). |
 | `Registry.Manifest(name)` | exists ([ADR 0011](adr/0011-manifests.md)) | The type's `Manifest` value (and whether the type exists), whose JSON form is the catalogue entry: name, version, triggers, configuration schema, default budgets, states, tools, skills, templates. Morris builds its catalogue and its "propose a run" tool from it. |
 | `Registry.CheckStart(agentType, triggerKind, config, budgets)` | exists ([ADR 0024](adr/0024-the-external-contract.md), item 5) | Checks a start without a run: the trigger kind, the configuration against the type's schema, and the budgets (the type's defaults filling zero ones), returning every problem as `[]agent.StartProblem` (`check`, `reason`, and `budget` or `pointer` where they apply, `detail`). `reason` is what the start would fail with: `config_error`, or `budget_unenforceable` for a cost budget; an unregistered type has none (`Activate` refuses the run). The namespace and principal are not checked: the host assigns them and checks them itself. Use it before a confirmation box or before saving a setup. The start itself checks again, with the same code. |
+| `Registry.CheckToolSources(ctx, agentType, sources)` | exists ([ADR 0025](adr/0025-mcp-served-tools.md), item 4) | The start's check of the tool sources, without a run: each source the type declares present and listing its tools, and offering every served tool the type grants. Problems are `[]agent.StartProblem` with check `tool_sources` and reason `config_error`; an unregistered type is one problem with check `agent_type` and no reason, as from `CheckStart`. Unlike `CheckStart` it makes network calls. |
 | `ControlPlane.EnqueueTrigger`, `CreateRun`, `RemoveTrigger` | exists ([ADR 0005](adr/0005-storage-one-fenced-commit.md)) | Create a run, idempotently on (instance, trigger ID). |
 | `ControlPlane.Claim`, `Heartbeat`, `Release` | exists ([ADR 0003](adr/0003-run-model-identities-and-activation-results.md)) | Lease the instance before activating, and keep the lease alive. `Heartbeat` also returns the active run's cancel request, if any (below). |
 | `agent.NewController(store, registry, opts...)` | exists | One controller serves every instance, concurrently. |
@@ -61,7 +62,9 @@ Contents:
 - the scope (the run) and the fence from the claim;
 - the configuration, the namespace, the principal and the budgets,
   which are recorded when the run starts and fixed for the run;
-- `MaxSteps`.
+- `MaxSteps`;
+- the tool sources, by the source names the type's served tools declare
+  (section 7).
 
 The **principal** is the host's opaque name for whose authority the run
 acts under. Morris passes the user who clicked Confirm.
@@ -491,18 +494,44 @@ own namespace, trigger, inbox and configuration under the workspace. It
 serves generic request and status pages, plus each bundle's renderer.
 Its configuration format and workspace layout come with its ADR.
 
-## 7. Planned: MCP tools
+## 7. MCP tools
 
 Issue [#23](https://github.com/SnapdragonPartners/maestro-agents/issues/23)
-(TOOL-6):
+(TOOL-6), [ADR 0025](adr/0025-mcp-served-tools.md). The runtime's seam
+exists; the MCP adapter (`mcptools`, a nested module of its own) is
+planned, after maestro-llms#194.
 
-- The host passes a per-run tool source in `ActivationInput`. The host
-  owns its transport and its token, and renews the token.
-- A manifest grants MCP-served tools by name, exactly as it grants
-  in-process tools. A start whose granted tool the server does not offer
-  fails with `config_error`.
-- Every call carries the run context, and the server re-checks the
-  principal.
-- An unreachable server or a dropped session is a classified tool
-  error, never a crash.
-- The replay harness stands in for the server in tests.
+- **Granting.** An agent type grants a served tool in a model state's
+  `Tools` with `agent.ServedTool[D](source, name, effect, contract)`,
+  beside its own tools. The type, not the server, classifies the
+  effect and contract. A served tool cannot be a wrap-up exit or
+  declare `atomic_local`. The manifest lists it with its `source` and no
+  schema.
+- **Sources.** The host passes `ActivationInput.ToolSources`, an
+  `agent.ToolSource` per source name, built for the run's principal.
+  The host owns the transport, the token and its renewal, reconnecting
+  and closing; the runtime never closes a source.
+- **Start.** The start lists each source and requires every granted
+  served tool: a missing source, a failed listing or a missing tool
+  fails the run with `config_error` (`Registry.CheckToolSources` runs
+  the same check without a run). The granted tools' definitions are
+  recorded with the run's start (`RunStarted.Served`), and the model is
+  offered those for the whole run. A later activation whose sources
+  lack a tool or offer a different definition fails the run with
+  `tool_error`.
+- **Calls.** A served call takes the in-process path: policy,
+  permission, attempt and result records, wrap-up, telemetry. The
+  source receives an `agent.ServedCall`: the call, its run context (the
+  server re-checks the principal), its action identity and, for a
+  write, its idempotency key.
+- **Failures.** A result with `IsError` is model-visible. A source's
+  error is classified by what it wraps and recorded as
+  `ResultEntry.Failure` (and the result event's `error_kind`):
+  `unreachable` (`agent.ErrSourceUnreachable`: never sent),
+  `source_error` (`agent.ErrSourceError`: the server answered with an
+  error) or `unknown`. A read's failure, and an unreachable write, are
+  model-visible errors the model may retry within its budgets; a write
+  the server failed fails the run with `tool_error`, and one sent and
+  not answered is an unknown outcome (TOOL-12) and fails it too.
+- **Tests.** `agent/agenttest.Source` stands in for a server: scripted
+  tools, failure injection and a log of the calls it received.

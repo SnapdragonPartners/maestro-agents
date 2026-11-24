@@ -120,7 +120,7 @@ wait:
 | TOOL-3 | Build | `allow` and `deny`; default hook allows |
 | TOOL-4 | Contract | The hook can answer `pending` and the manifest can declare a mode; a type declaring either mode is refused at registration, and a `pending` answer for a type with none fails the run as a configuration error, until approval is built |
 | TOOL-5 | Build | |
-| TOOL-6 | Deferred | MCP tools; the registry must not assume tools are in-process |
+| TOOL-6 | Build | Built after the MVP (ADR 0025): served tools beside in-process ones through the `agent.ToolSource` seam, with `agent/agenttest.Source` standing in for a server. Deferred: the MCP adapter `mcptools` (after maestro-llms#194) and exposing a registry over MCP (the reverse direction) |
 | TOOL-7 | Build | Policy, idempotency, redaction, the visible clock and output caps; per-tool circuit breaking is deferred |
 | TOOL-8 | Build | Run context and credential provider; the intake tools need no credentials |
 | TOOL-9, 10 | Build | |
@@ -256,8 +256,8 @@ Every part deferred above, in no fixed order:
 - extending a budget-exhausted run (RUN-3);
 - cost budgets (BUD-1) and the active-time pause for in-process waits
   (BUD-2);
-- MCP tools (TOOL-6), including exposing the intake agent's tools over
-  MCP;
+- the rest of MCP tools (TOOL-6): the MCP adapter `mcptools` and
+  exposing a registry over MCP (the served-tool seam is built, ADR 0025);
 - host chat loops (LOOP-4), with chat exposure (TOOL-1) and the chat
   completion policy (LOOP-3);
 - per-tool circuit breaking (TOOL-7);

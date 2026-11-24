@@ -202,11 +202,15 @@ type machine struct {
 	config   *jsonschema.Schema
 	// templates are the type's parsed prompt templates, nil if none.
 	templates *template.Template
-	manifest  encodedManifest
-	name      string
-	version   string
-	initial   string
-	defaults  Budgets
+	// served maps each served tool the type grants, in any state, to its
+	// tool source (ADR 0025); sources are those sources, sorted.
+	served   map[string]string
+	manifest encodedManifest
+	name     string
+	version  string
+	initial  string
+	sources  []string
+	defaults Budgets
 }
 
 type erasedState struct {
@@ -292,7 +296,29 @@ func (t *Type[D]) compile() (*machine, error) {
 		}
 		m.states[s.Name] = es
 	}
+	t.compileServed(m)
 	return m, nil
+}
+
+// compileServed sets the served tools the type grants, in any state, and
+// their sources (ADR 0025). check has made a tool name name one tool.
+func (t *Type[D]) compileServed(m *machine) {
+	for i := range t.States {
+		if t.States[i].Model == nil {
+			continue
+		}
+		for j := range t.States[i].Model.Tools {
+			if tool := &t.States[i].Model.Tools[j]; tool.Source != "" {
+				if m.served == nil {
+					m.served = map[string]string{}
+				}
+				m.served[tool.Definition.Name] = tool.Source
+				m.sources = append(m.sources, tool.Source)
+			}
+		}
+	}
+	slices.Sort(m.sources)
+	m.sources = slices.Compact(m.sources)
 }
 
 // compileManifest sets what the machine enforces of the type's manifest
@@ -414,7 +440,7 @@ func (t *Type[D]) checkTools() error {
 			if name == ReadSkillTool {
 				return t.invalid("model state %q declares tool %q, the built-in read-skill tool's name (ADR 0013)", t.States[i].Name, name)
 			}
-			id := toolIdentity(&tool.Definition, tool.Effect, tool.Contract, t.toolVersion(tool))
+			id := toolIdentity(&tool.Definition, tool.Source, tool.Effect, tool.Contract, t.toolVersion(tool))
 			if prev, ok := identities[name]; ok && prev != id {
 				return t.invalid("tool %q is declared with different definitions, effects, contracts or versions in two states (ADR 0011, item 3)", name)
 			}

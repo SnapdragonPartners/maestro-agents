@@ -42,7 +42,8 @@ type Event struct {
 	// From and To are a transition's states.
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
-	// ErrorKind classifies a model_failure.
+	// ErrorKind classifies a model_failure, or a served call's failure in
+	// a result (ADR 0025, item 6).
 	ErrorKind string `json:"error_kind,omitempty"`
 
 	// Tool, Effect, Permission and Result describe a permission, attempt
@@ -234,7 +235,7 @@ var projections = map[string]projection{ //nolint:gochecknoglobals // a fixed ta
 		ev.Tool, ev.Call, ev.Effect = p.Tool, p.Call, p.Effect
 	}),
 	EntryResult: project(func(ev *Event, p *ResultEntry) {
-		ev.Tool, ev.Call, ev.Result, ev.IsError = p.Tool, p.Call, p.Status, p.IsError
+		ev.Tool, ev.Call, ev.Result, ev.IsError, ev.ErrorKind = p.Tool, p.Call, p.Status, p.IsError, string(p.Failure)
 	}),
 	EntryTransition: project(func(ev *Event, p *TransitionEntry) {
 		ev.From, ev.To = p.From, p.To

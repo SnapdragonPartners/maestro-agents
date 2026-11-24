@@ -1,6 +1,6 @@
 # 0003. Run model: identities, stored status and activation results
 
-- **Status:** Amended by ADR-0007, ADR-0012, ADR-0016, ADR-0024
+- **Status:** Amended by ADR-0007, ADR-0012, ADR-0016, ADR-0024, ADR-0025
 - **Date:** 2026-11-07
 
 ## Context

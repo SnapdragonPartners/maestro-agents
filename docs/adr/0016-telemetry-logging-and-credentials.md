@@ -1,6 +1,6 @@
 # 0016. Telemetry, logging and credentials
 
-- **Status:** Accepted
+- **Status:** Amended by ADR-0025
 - **Date:** 2026-11-13
 
 ## Context

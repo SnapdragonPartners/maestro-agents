@@ -319,7 +319,7 @@ func (r *modelRun) load(ctx context.Context) *ending {
 	// and part of the transcript when its turn completes.
 	r.unsent = req.Messages
 	req.Messages = nil
-	req.Tools = r.ms.definitions()
+	req.Tools = r.definitions()
 	return r.setParams(ctx, &req)
 }
 
@@ -346,7 +346,7 @@ func (r *modelRun) setParams(ctx context.Context, req *llms.ChatRequest) *ending
 // next attempt, so every attempt's parameters are what was sent (ADR 0008,
 // item 8).
 func (r *modelRun) offerTools(ctx context.Context) *ending {
-	defs := r.ms.definitions()
+	defs := r.definitions()
 	have, herr := json.Marshal(r.params.Tools)
 	want, werr := json.Marshal(defs)
 	if herr == nil && werr == nil && bytes.Equal(have, want) {
@@ -410,7 +410,7 @@ func (r *modelRun) prepare(ctx context.Context) (req llms.ChatRequest, tools []t
 	req.Tools = nil
 	tools = make([]toolloop.Tool, len(offered))
 	for i, t := range offered {
-		tools[i] = toolloop.Tool{Definition: t.def, Execute: r.execute}
+		tools[i] = toolloop.Tool{Definition: r.def(t), Execute: r.execute}
 	}
 	return req, tools, nil, false
 }
@@ -1104,13 +1104,20 @@ func (r *modelRun) permission(ctx context.Context, tool *erasedTool, call *llms.
 // unknown records a write's unknown outcome and fails the run (ADR 0004,
 // item 11).
 func (r *modelRun) unknown(ctx context.Context, i int, at *AttemptEntry) *ending {
+	return r.failCall(ctx, i, at, ResultUnknown, "", "outcome unknown", fmt.Sprintf(
+		"call %d (%s): a %s write was attempted and its outcome is unknown (TOOL-12)", i, at.Tool, at.Contract))
+}
+
+// failCall records a call's result with status and failure and fails the
+// run with tool_error in the same commit: a write whose outcome is
+// unknown, or that its tool source failed (ADR 0025, item 6).
+func (r *modelRun) failCall(ctx context.Context, i int, at *AttemptEntry, status ResultStatus, failure Failure, content, detail string) *ending {
 	a, t := r.a, r.turn
 	b := a.entries()
 	r.addPending(b)
-	res := &resultRecord{Content: "outcome unknown", IsError: true}
-	b.add(t.step, EntryResult, &ResultEntry{Call: i, Tool: at.Tool, Status: ResultUnknown, Result: b.artifact(res), IsError: true})
-	out := OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: ReasonToolError}, Detail: fmt.Sprintf(
-		"call %d (%s): a %s write was attempted and its outcome is unknown (TOOL-12)", i, at.Tool, at.Contract)}
+	res := &resultRecord{Content: content, IsError: true}
+	b.add(t.step, EntryResult, &ResultEntry{Call: i, Tool: at.Tool, Status: status, Result: b.artifact(res), IsError: true, Failure: failure})
+	out := OutcomeEntry{Status: store.StatusFailed, Reason: store.Reason{Code: ReasonToolError}, Detail: detail}
 	if ctx.Err() != nil {
 		return a.endByCause(ctx)
 	}
@@ -1127,6 +1134,9 @@ func (r *modelRun) unknown(ctx context.Context, i int, at *AttemptEntry) *ending
 // run executes an attempted call and commits its result, re-running an
 // atomic local transaction whose operations conflict (ADR 0005, item 10).
 func (r *modelRun) run(ctx context.Context, i int, tool *erasedTool, at *AttemptEntry) (*resultRecord, bool, error) {
+	if tool.source != "" {
+		return r.runServed(ctx, i, tool, at)
+	}
 	a, t := r.a, r.turn
 	call := t.calls[i]
 	for attempt := 0; ; attempt++ {
@@ -1239,6 +1249,7 @@ func (r *modelRun) commitResult(ctx context.Context, i int, tool *erasedTool, re
 	b.ops = append(b.ops, res.ops...)
 	b.add(t.step, EntryResult, &ResultEntry{
 		Call: i, Tool: tool.def.Name, Status: ResultExecuted, Result: b.artifact(rec), Ops: res.ops, IsError: rec.IsError,
+		Failure: res.failure,
 	})
 	prev := t.results[i]
 	t.results[i] = rec

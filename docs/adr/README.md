@@ -41,20 +41,20 @@ template.
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-serial-execution-within-an-agent-instance.md) | Serial execution within an agent instance | Accepted |
-| [0003](0003-run-model-identities-and-activation-results.md) | Run model: identities, stored status and activation results | Amended by ADR-0007, ADR-0012, ADR-0016, ADR-0024 |
-| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016 |
+| [0003](0003-run-model-identities-and-activation-results.md) | Run model: identities, stored status and activation results | Amended by ADR-0007, ADR-0012, ADR-0016, ADR-0024, ADR-0025 |
+| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0025 |
 | [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Amended by ADR-0006, ADR-0012, ADR-0024 |
 | [0006](0006-store-interface.md) | The store interface | Amended by ADR-0008, ADR-0016, ADR-0024 |
-| [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0016 |
-| [0008](0008-model-states.md) | Model states | Amended by ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016 |
+| [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0016, ADR-0025 |
+| [0008](0008-model-states.md) | Model states | Amended by ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0025 |
 | [0009](0009-budgets.md) | Budgets | Amended by ADR-0010, ADR-0011, ADR-0014, ADR-0016 |
 | [0010](0010-wrap-up-and-the-visible-clock.md) | Wrap-up and the visible clock | Amended by ADR-0014 |
-| [0011](0011-manifests.md) | Manifests | Amended by ADR-0012, ADR-0013, ADR-0016 |
+| [0011](0011-manifests.md) | Manifests | Amended by ADR-0012, ADR-0013, ADR-0016, ADR-0025 |
 | [0012](0012-namespace-confinement.md) | Namespace confinement | Accepted |
 | [0013](0013-skills-and-prompt-templates.md) | Skills and prompt templates | Accepted |
 | [0014](0014-model-client-and-attempt-admission.md) | The model client and attempt-level admission | Accepted |
 | [0015](0015-intake-verifier-exporter-and-test-data.md) | The intake agent's verifier, exporter and test data | Amended by ADR-0018, ADR-0021; moved to morris-agents (addepar ADR 0001) |
-| [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Accepted |
+| [0016](0016-telemetry-logging-and-credentials.md) | Telemetry, logging and credentials | Amended by ADR-0025 |
 | [0017](0017-the-standalone-host.md) | The standalone host | Amended by ADR-0020, ADR-0021, ADR-0024 |
 | [0018](0018-the-intake-agent-type-and-the-vertical-slice.md) | The intake agent type and the vertical slice | Amended by ADR-0019, ADR-0021; moved to morris-agents (addepar ADR 0002) |
 | [0019](0019-the-extraction-agent-reads-the-pdf.md) | The extraction agent reads the PDF | Accepted; moved to morris-agents (addepar ADR 0003) |
@@ -63,3 +63,4 @@ template.
 | [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted; `Host.Watch` and items 5 to 8 here, review UI moved to morris-agents (addepar ADR 0006) |
 | [0023](0023-public-strictjson-and-regularfile.md) | Public `strictjson` and `regularfile` for agents in other modules | Accepted |
 | [0024](0024-the-external-contract.md) | The external contract | Proposed |
+| [0025](0025-mcp-served-tools.md) | MCP-served tools | Proposed |

@@ -28,7 +28,9 @@ namespace confinement, skills and prompt templates, the model client
 with attempt-level budget admission, and the host seams for telemetry,
 logging and credentials (`agent/`), the standalone host (`standalone/`,
 ADR 0017) with its in-process API, submitted runs and folder watch
-(ADRs 0020 to 0022), and the scoring harness (`scoring/`, ADR 0020).
+(ADRs 0020 to 0022), the scoring harness (`scoring/`, ADR 0020), and
+MCP-served tools' runtime seam (`agent.ToolSource`, ADR 0025; the MCP
+adapter `mcptools`, a nested module, follows maestro-llms#194).
 Next are the external contract's gaps (ADR 0024) and a small example
 agent to exercise the standalone host end to end (#39). The
 requirements are in [docs/requirements.md](docs/requirements.md), and
@@ -39,7 +41,8 @@ runtime's API ADRs 0007 to 0014 and 0016, the standalone host ADR 0017
 0020, the public helpers for agents in other modules ADR 0023, and the
 external contract every consumer (Morris's worker, the macOS app, an
 agent's CLI) wires against ADR 0024, with its reference in
-[docs/contract.md](docs/contract.md); the intake agent's design (ADRs
+[docs/contract.md](docs/contract.md), and MCP-served tools ADR 0025;
+the intake agent's design (ADRs
 0015, 0018, 0019 and the agent's parts of 0020 to 0022) moved with it to
 morris-agents. Further design arrives with the code, each piece with its
 ADR.
@@ -228,6 +231,25 @@ Load-bearing decisions so far:
   `Bundle`; and the app process contract
   (`MAESTRO_AGENTS_SESSION_TOKEN`, `-addr` with port 0, one JSON ready
   line on stdout, `/healthz`, SIGTERM)
+- MCP-served tools (TOOL-6, ADR 0025, Proposed): an agent type grants a
+  served tool with `agent.ServedTool[D](source, name, effect, contract)`
+  beside its own (its effect and contract the type's, never the
+  server's; no wrap-up exit, no `atomic_local`; its identity covers its
+  source); the host passes `ActivationInput.ToolSources`
+  (`agent.ToolSource`: `Tools`, `Call(*ServedCall)` with run context,
+  action and a write's idempotency key), built for the run's principal
+  and owned by the host; the start lists each source and requires every
+  granted tool (`config_error`, check `tool_sources`;
+  `Registry.CheckToolSources` without a run) and records the
+  definitions (`RunStarted.Served`), which the model is offered for the
+  run; a later activation whose source changed one fails with
+  `tool_error`; a source's error is `unreachable`
+  (`ErrSourceUnreachable`), `source_error` (`ErrSourceError`) or
+  `unknown`, recorded as `ResultEntry.Failure`: a read's failure and an
+  unreachable write are model-visible, a write the server failed or
+  never answered fails the run with `tool_error`; `agent/agenttest.Source`
+  stands in for a server; the MCP adapter `mcptools` is a nested module
+  (own tags, requires a released root) after maestro-llms#194
 
 ### Related repositories
 
@@ -295,9 +317,10 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials (ADR 0007-0014, 0016)
+agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials, served tools (ADR 0007-0014, 0016, 0025)
 standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017); in process (ADR 0020); submitted runs (ADR 0021); in-process watch (ADR 0022)
 scoring/             # The scoring harness (TEST-4): run inputs, compare with an answer key, report (ADR 0020)
+agent/agenttest/     # Stand-ins for the runtime's host seams in tests: a scripted tool source (ADR 0025)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock

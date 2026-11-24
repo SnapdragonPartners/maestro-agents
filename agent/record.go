@@ -66,8 +66,12 @@ type RunStarted struct {
 	// Principal is the run's principal (TOOL-8, ADR 0016 item 12); empty
 	// for the host's own authority, and in the start of a run refused for
 	// a principal that is not valid UTF-8.
-	Principal string          `json:"principal,omitempty"`
-	Trigger   json.RawMessage `json:"trigger,omitempty"`
+	Principal string `json:"principal,omitempty"`
+	// Served is the digest of the artifact holding the definitions of the
+	// served tools the type grants, as their sources offered them at the
+	// run's start (ADR 0025, item 4); empty for a type with none.
+	Served  string          `json:"served,omitempty"`
+	Trigger json.RawMessage `json:"trigger,omitempty"`
 	Clock
 }
 
@@ -237,12 +241,14 @@ const (
 // what the model receives; Ops are an atomic local transaction's object
 // operations, committed with the entry.
 type ResultEntry struct {
-	Tool    string       `json:"tool"`
-	Status  ResultStatus `json:"status"`
-	Result  string       `json:"result,omitempty"`
-	Ops     []store.Op   `json:"ops,omitempty"`
-	Call    int          `json:"call"`
-	IsError bool         `json:"is_error,omitempty"`
+	Tool   string       `json:"tool"`
+	Status ResultStatus `json:"status"`
+	Result string       `json:"result,omitempty"`
+	// Failure classifies a served call's failure (ADR 0025, item 6).
+	Failure Failure    `json:"failure,omitempty"`
+	Ops     []store.Op `json:"ops,omitempty"`
+	Call    int        `json:"call"`
+	IsError bool       `json:"is_error,omitempty"`
 	Clock
 }
 
@@ -267,9 +273,12 @@ type checkpointState struct {
 	// Namespace is the run's object-store namespace (ADR 0012).
 	Namespace string `json:"namespace"`
 	// Principal is the run's principal (ADR 0016, item 12).
-	Principal string          `json:"principal,omitempty"`
-	Data      json.RawMessage `json:"data"`
-	Step      uint64          `json:"step"`
+	Principal string `json:"principal,omitempty"`
+	// Served is RunStarted.Served, the run's served tool definitions
+	// (ADR 0025, item 4).
+	Served string          `json:"served,omitempty"`
+	Data   json.RawMessage `json:"data"`
+	Step   uint64          `json:"step"`
 }
 
 // modelProgress is a model state's transcript at a step boundary (STM-6):
