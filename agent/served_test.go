@@ -49,6 +49,7 @@ type servedRun struct {
 	c       *agent.Controller
 	sources map[string]agent.ToolSource
 	client  *testllm.FakeChatClient
+	fences  []store.Fence // each activation's claim, in order
 }
 
 func newServedRun(t *testing.T, src agent.ToolSource, script ...llms.ChatResponse) *servedRun {
@@ -71,6 +72,7 @@ func (r *servedRun) activate(maxSteps int) agent.Outcome {
 func (r *servedRun) activateCtx(ctx context.Context, maxSteps int) agent.Outcome {
 	r.t.Helper()
 	fence := claim(r.t, r.s) //nolint:contextcheck // claiming is the test's setup, outside the activation
+	r.fences = append(r.fences, fence)
 	out, err := r.c.Activate(ctx, agent.ActivationInput{
 		Fence: fence, Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, Principal: "alice",
 		Client: modelClient(r.client), MaxSteps: maxSteps, ToolSources: r.sources,
@@ -251,8 +253,8 @@ func TestServedToolCalls(t *testing.T) {
 		if c.Run != wantRC || c.Action.Scope != wantRC.Scope || c.Action.Call != i {
 			t.Fatalf("call %d = %+v", i, c)
 		}
-		if c.Fence.Instance != inst || c.Fence.Owner == "" || c.Fence.Epoch == 0 {
-			t.Fatalf("call %d fence = %+v, want the activation's claim", i, c.Fence)
+		if c.Fence != r.fences[0] {
+			t.Fatalf("call %d fence = %+v, want the activation's claim %+v", i, c.Fence, r.fences[0])
 		}
 	}
 	if calls[0].IdempotencyKey != "" || string(calls[0].ToolCall.Parameters) != `{"q":"x"}` {
@@ -450,8 +452,8 @@ func TestServedToolRecovery(t *testing.T) {
 				}
 				// The reissue carries the new claim's fence and the same
 				// action, so the same key: the fence is never in the key.
-				if calls[1].Fence.Epoch <= calls[0].Fence.Epoch || calls[1].Fence.Instance != calls[0].Fence.Instance {
-					t.Fatalf("reissue fence = %+v after %+v, want a later epoch", calls[1].Fence, calls[0].Fence)
+				if calls[0].Fence != r.fences[0] || calls[1].Fence != r.fences[1] || calls[1].Fence.Epoch <= calls[0].Fence.Epoch {
+					t.Fatalf("call fences = %+v, %+v; want each activation's claim %+v, the second later", calls[0].Fence, calls[1].Fence, r.fences)
 				}
 				if calls[0].Action.IdempotencyKey() != calls[1].Action.IdempotencyKey() {
 					t.Fatal("the reissue's key changed")

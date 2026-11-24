@@ -176,7 +176,16 @@ It amends, item by item:
    epoch is current and deduplicates it by the key. Staleness is the
    epoch's to tell, deduplication the key's; putting the fence, or any
    attempt marker, into the key would defeat deduplication across
-   claims.
+   claims. A destination's refusal of a stale epoch reaches the
+   runtime as whatever class the source gives it (for an MCP server's
+   JSON-RPC error, `source_error`), and that class never reaches the
+   record: the store refuses the superseded claim's commit of the call's
+   result by the same epoch check (ADR 0005), so the activation ends
+   with an error and no outcome (ADR 0003 item 14). The run's current
+   claim then finds at most the call's attempt, if the superseded claim
+   committed it before losing the instance, and resolves it as recovery
+   does (ADR 0008 item 18: a read is issued again, a write follows its
+   contract). No result is recorded for the refused call.
 
 6. **Failure is classified, never a crash.** A result with `IsError`
    (MCP's `isError`) is model-visible, as for any tool: the server's
@@ -249,8 +258,9 @@ It amends, item by item:
    `mcptools.New(dial func(ctx) (*mcpclient.Session, error)) *Source`
    adapts a session to `ToolSource`: it dials on first use, redials
    after a failure that dropped the session, and closes with
-   `Source.Close`. It sends the `ServedCall`'s run context, action and
-   idempotency key in the call's MCP `_meta`, and maps the client's
+   `Source.Close`. It sends the `ServedCall`'s run context, fence
+   (instance, owner and epoch, item 5), action and idempotency key in
+   the call's MCP `_meta`, and maps the client's
    errors to item 6's classes. `mcpclient` cannot yet do either (it sets
    no `_meta` and does not tell an unsent call from an unanswered one),
    which is asked of `maestro-llms` in maestro-llms#194, since every

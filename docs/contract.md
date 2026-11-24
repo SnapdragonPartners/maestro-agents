@@ -533,10 +533,12 @@ planned, after maestro-llms#194.
   call in the recorded model turn. It is unique within the run and the
   same on every issue of the call, whichever claim issues it. A write's
   idempotency key is `ActionID.IdempotencyKey()`: the lowercase hex
-  SHA-256 of six fields in order, each written as its length (8 bytes,
+  SHA-256 of five fields in order, each written as its length (8 bytes,
   big-endian) followed by its bytes: the domain tag
   `maestro-agents/action/v1`, the scope kind, the scope ID (the run
-  ID), the step and the call (each as 8 bytes, big-endian). The tool's
+  ID), the step and the call. The step's and the call's bytes are their
+  values as 8 bytes, big-endian, so each is written as the length 8 and
+  then those 8 bytes, like every other field. The tool's
   name and arguments are not in it: the action identity names exactly
   one recorded call, whose tool and arguments are fixed before it is
   first sent. The fence is not in it either: a later claim's reissue
