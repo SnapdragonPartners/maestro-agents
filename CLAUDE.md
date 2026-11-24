@@ -237,7 +237,9 @@ Load-bearing decisions so far:
   server's; no wrap-up exit, no `atomic_local`; its identity covers its
   source); the host passes `ActivationInput.ToolSources`
   (`agent.ToolSource`: `Tools`, `Call(*ServedCall)` with run context,
-  action and a write's idempotency key), built for the run's principal
+  the activation's fence, action and a write's idempotency key; the
+  fence check is on the epoch alone and the fence is never in the key,
+  so a newer claim's reissue keeps the key), built for the run's principal
   and owned by the host; the start lists each source and requires every
   granted tool (`config_error`, check `tool_sources`;
   `Registry.CheckToolSources` without a run) and records the

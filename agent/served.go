@@ -41,6 +41,13 @@ type ServedCall struct {
 	// Run is the call's run context (TOOL-8): the server re-checks the
 	// principal.
 	Run RunContext
+	// Fence is the claim the activation making the call holds (ADR 0003,
+	// item 8): a host that keeps the store can refuse a call whose epoch is
+	// not the instance's current one, as a fenced commit is refused. A
+	// later claim that issues the same call again has a new owner and
+	// epoch but the same Action and IdempotencyKey: staleness is the
+	// epoch's to tell, deduplication the key's (ADR 0025, item 5).
+	Fence store.Fence
 	// IdempotencyKey is a write's idempotency key (TOOL-5), stable across
 	// every issue of the call; a read's is empty.
 	IdempotencyKey string
@@ -348,7 +355,7 @@ func (r *modelRun) runServed(ctx context.Context, i int, tool *erasedTool, at *A
 			return fmt.Errorf("%w: the host provides no tool source %q", ErrSourceUnreachable, tool.source)
 		}
 		out, err = src.Call(ctx, &ServedCall{
-			ToolCall: cloneCalls([]llms.ToolCall{call})[0], Run: a.runContext(), Action: at.Action, IdempotencyKey: at.Key, WrapUp: t.wrapUp,
+			ToolCall: cloneCalls([]llms.ToolCall{call})[0], Run: a.runContext(), Fence: a.fence, Action: at.Action, IdempotencyKey: at.Key, WrapUp: t.wrapUp,
 		})
 		return err //nolint:wrapcheck // classified by what it wraps, then recorded with the source's name
 	})

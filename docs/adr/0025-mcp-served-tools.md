@@ -108,7 +108,8 @@ It amends, item by item:
 
    type ServedCall struct {
        Run            RunContext
-       IdempotencyKey string // a write's; empty for a read
+       Fence          store.Fence // the activation's claim
+       IdempotencyKey string      // a write's; empty for a read
        ToolCall       llms.ToolCall
        Action         ActionID
        WrapUp         bool
@@ -161,6 +162,32 @@ It amends, item by item:
    principal, and an idempotent destination can deduplicate. A served
    call is never given the credential provider: its authority is the
    source's, which the host built for the run's principal.
+
+   The call also carries the activation's fence (instance, owner and
+   owner epoch, ADR 0003 item 8), on every call, reads included. A host
+   that keeps the store can then refuse a call from a superseded claim,
+   one whose epoch is not the instance's current one, as the store
+   refuses that claim's commit; a superseded claim reads nothing either.
+   The fence check is on the epoch alone, and the fence is never part
+   of the idempotency key: a later claim that issues the same call again
+   (a read after recovery, and an idempotent write if reissue is ever
+   built, item 6) carries a new owner and epoch but the same action
+   identity, so the same key. The destination accepts it because its
+   epoch is current and deduplicates it by the key. Staleness is the
+   epoch's to tell, deduplication the key's; putting the fence, or any
+   attempt marker, into the key would defeat deduplication across
+   claims. A destination's refusal of a stale epoch reaches the
+   runtime as whatever class the source gives it (for an MCP server's
+   JSON-RPC error, `source_error`), and that class never reaches the
+   record: the store refuses the superseded claim's commit of the call's
+   result by the same epoch check (ADR 0005), so the activation ends
+   with an error and no outcome (ADR 0003 item 14). The run's current
+   claim then finds at most the call's attempt, if the superseded claim
+   committed it before losing the instance, and resolves it as recovery
+   does (ADR 0004 item 10, as ADR 0008 item 17 amends it): a read is
+   issued again; a write, never `atomic_local` when served, has an
+   unknown outcome and fails the run with `tool_error`. No result is
+   recorded for the refused call.
 
 6. **Failure is classified, never a crash.** A result with `IsError`
    (MCP's `isError`) is model-visible, as for any tool: the server's
@@ -233,8 +260,9 @@ It amends, item by item:
    `mcptools.New(dial func(ctx) (*mcpclient.Session, error)) *Source`
    adapts a session to `ToolSource`: it dials on first use, redials
    after a failure that dropped the session, and closes with
-   `Source.Close`. It sends the `ServedCall`'s run context, action and
-   idempotency key in the call's MCP `_meta`, and maps the client's
+   `Source.Close`. It sends the `ServedCall`'s run context, fence
+   (instance, owner and epoch, item 5), action and idempotency key in
+   the call's MCP `_meta`, and maps the client's
    errors to item 6's classes. `mcpclient` cannot yet do either (it sets
    no `_meta` and does not tell an unsent call from an unanswered one),
    which is asked of `maestro-llms` in maestro-llms#194, since every

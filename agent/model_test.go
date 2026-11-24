@@ -931,6 +931,12 @@ func TestIdempotencyKey(t *testing.T) {
 	if len(a.IdempotencyKey()) != 64 {
 		t.Fatalf("key %q is not hex SHA-256", a.IdempotencyKey())
 	}
+	// The recipe docs/contract.md publishes, so a host can recompute a key:
+	// the vector was computed from that text by an independent
+	// implementation.
+	if want := "955881d020c87fc4b96c37265369d478a86818e976d532afcab3b0ee3b1c6f64"; ka != want {
+		t.Fatalf("key = %s, want %s (the published recipe)", ka, want)
+	}
 }
 
 func TestRegisterModelState(t *testing.T) {
