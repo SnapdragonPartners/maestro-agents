@@ -72,3 +72,23 @@ jobs:
 
       - name: Test
         run: make test
+
+      # The mcptools module (ADR 0025, item 8) requires a released root
+      # with no replace directive, so this tests exactly what its consumers
+      # get. (make lint, build, vuln and test above already ran it; this
+      # checks its go.mod.)
+      - name: mcptools module is tidy
+        working-directory: mcptools
+        run: |
+          set -euo pipefail
+          go mod tidy -diff || { echo "::error::mcptools/go.mod is out of sync; run 'make tidy' and commit"; exit 1; }
+
+      # The same module against the root at this commit, through a temporary
+      # (never committed) go.work, so a root change that breaks mcptools
+      # fails this PR rather than the next mcptools release.
+      - name: mcptools module against root HEAD
+        run: |
+          set -euo pipefail
+          go work init . ./mcptools
+          (cd mcptools && go vet ./... && go build ./... && go test -race ./...)
+          rm -f go.work go.work.sum

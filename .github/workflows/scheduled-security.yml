@@ -45,3 +45,7 @@ jobs:
 
       - name: Run govulncheck
         run: govulncheck ./...
+
+      - name: Run govulncheck (mcptools module)
+        working-directory: mcptools
+        run: govulncheck ./...

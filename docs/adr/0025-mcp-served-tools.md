@@ -269,6 +269,38 @@ It amends, item by item:
    consumer passing per-call context or retrying safely needs it; the
    adapter's PR follows it.
 
+   - **As built:** maestro-llms#194 shipped as `mcp/v0.2.0`
+     (maestro-llms ADR-0053). It gives `_meta` through a session-level
+     callback, `mcpclient.Options.Meta(ctx, call)`, not a per-call
+     argument, so the adapter must set the session's options itself.
+     `mcptools.New(dial Dial, opts Options) *Source` therefore takes
+     `type Dial func(ctx) (mcpclient.Transport, error)` rather than a
+     function returning a session: the adapter connects with its own
+     `Meta`, which reads the `ServedCall` that `Call` put in the
+     context, and fails a call that carries none before it is sent.
+     `Options.Filter` passes through to `mcpclient` (a listing fails if
+     any tool it keeps cannot be offered, so a host may keep only the
+     granted ones); `mcpclient`'s name mapping is not offered, since a
+     served tool's name is its name on the server. The `_meta` keys,
+     agreed with Morris for its server and exported as `mcptools.Meta*`
+     constants, are `maestro-agents/v` (the key set's version, 1),
+     `/agent_instance`, `/agent_type`, `/principal` (always sent; empty
+     is a deliberate run under the host's own authority), `/owner` and
+     `/epoch` (the fence, item 5), `/action` (the action identity; the
+     run is its scope) and `/idempotency_key` (only for a write); every
+     other key goes on every call, reads included, and a call missing
+     its run context or fence is never sent. They are the host's
+     claims: the server re-checks the principal against the request's
+     token, and a server that keeps the store refuses a stale epoch. The client's classes map one to one:
+     `ErrNotSent` to `ErrSourceUnreachable`, `ErrServerError` to
+     `ErrSourceError`, `ErrOutcomeUnknown` to neither; a call to a tool
+     the session's listing lacks, after listing again, wraps
+     `ErrSourceError`, as `agenttest.Source` does. Any failure other
+     than the server's answer, while the caller's context is live,
+     retires the session (a listing that names a tool `mcpclient`
+     cannot offer does not): no new use takes it, it closes after its
+     last call in flight, and the next use dials again.
+
 9. **Not in this ADR.** The standalone host gains no tool-source
    configuration (no consumer asks; a later ADR adds it with the
    multi-agent host, #32). Exposing a registry over MCP (TOOL-6's

@@ -22,6 +22,23 @@ updates:
       - dependency-name: "github.com/openai/openai-go*"
       - dependency-name: "google.golang.org/genai"
 
+  # The mcptools nested module (ADR 0025, item 8). Its maestro-agents and
+  # maestro-llms requirements are first-party and bumped by hand; the MCP
+  # SDK's version is owned by maestro-llms/mcp.
+  - package-ecosystem: gomod
+    directory: "/mcptools"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      go-deps:
+        patterns: ["*"]
+        exclude-patterns:
+          - "github.com/SnapdragonPartners/*"
+    ignore:
+      - dependency-name: "github.com/modelcontextprotocol/go-sdk"
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
