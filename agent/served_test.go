@@ -251,6 +251,9 @@ func TestServedToolCalls(t *testing.T) {
 		if c.Run != wantRC || c.Action.Scope != wantRC.Scope || c.Action.Call != i {
 			t.Fatalf("call %d = %+v", i, c)
 		}
+		if c.Fence.Instance != inst || c.Fence.Owner == "" || c.Fence.Epoch == 0 {
+			t.Fatalf("call %d fence = %+v, want the activation's claim", i, c.Fence)
+		}
 	}
 	if calls[0].IdempotencyKey != "" || string(calls[0].ToolCall.Parameters) != `{"q":"x"}` {
 		t.Fatalf("read call = %+v", calls[0])
@@ -444,6 +447,14 @@ func TestServedToolRecovery(t *testing.T) {
 			if tool == "search" {
 				if len(calls) != 2 || calls[0].Action != calls[1].Action || out.Reason.Code == agent.ReasonToolError {
 					t.Fatalf("outcome = %+v, calls = %+v", out, calls)
+				}
+				// The reissue carries the new claim's fence and the same
+				// action, so the same key: the fence is never in the key.
+				if calls[1].Fence.Epoch <= calls[0].Fence.Epoch || calls[1].Fence.Instance != calls[0].Fence.Instance {
+					t.Fatalf("reissue fence = %+v after %+v, want a later epoch", calls[1].Fence, calls[0].Fence)
+				}
+				if calls[0].Action.IdempotencyKey() != calls[1].Action.IdempotencyKey() {
+					t.Fatal("the reissue's key changed")
 				}
 				return
 			}

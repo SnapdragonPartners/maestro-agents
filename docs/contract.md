@@ -522,8 +522,32 @@ planned, after maestro-llms#194.
 - **Calls.** A served call takes the in-process path: policy,
   permission, attempt and result records, wrap-up, telemetry. The
   source receives an `agent.ServedCall`: the call, its run context (the
-  server re-checks the principal), its action identity and, for a
+  server re-checks the principal), the activation's fence (instance,
+  owner, epoch: a host that keeps the store refuses a call whose epoch
+  is not the instance's current one), its action identity and, for a
   write, its idempotency key.
+- **Action identity and idempotency key.** A call's action identity is
+  (scope, step, call): the run's scope (`{"kind":"run","id":<run ID>}`);
+  the step, 1-based and per run, increasing across activations and
+  claims (it is checkpointed); and the call, the 0-based index of the
+  call in the recorded model turn. It is unique within the run and the
+  same on every issue of the call, whichever claim issues it. A write's
+  idempotency key is `ActionID.IdempotencyKey()`: the lowercase hex
+  SHA-256 of six fields in order, each written as its length (8 bytes,
+  big-endian) followed by its bytes: the domain tag
+  `maestro-agents/action/v1`, the scope kind, the scope ID (the run
+  ID), the step and the call (each as 8 bytes, big-endian). The tool's
+  name and arguments are not in it: the action identity names exactly
+  one recorded call, whose tool and arguments are fixed before it is
+  first sent. The fence is not in it either: a later claim's reissue
+  has the same key and a newer epoch; the fence check is on the epoch
+  alone, deduplication on the key (ADR 0025, item 5).
+- **No wire result for approval.** A write that waits on a person's
+  approval is decided before the call is sent (the policy's `pending`
+  decision, TOOL-4 and STM-8, not yet built): an approval is a host or
+  UI action, never a tool the model calls, so no call goes out until it
+  is decided and the wire has no "awaiting approval" result. This is
+  deliberate.
 - **Failures.** A result with `IsError` is model-visible. A source's
   error is classified by what it wraps and recorded as
   `ResultEntry.Failure` (and the result event's `error_kind`):

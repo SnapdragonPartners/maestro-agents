@@ -108,7 +108,8 @@ It amends, item by item:
 
    type ServedCall struct {
        Run            RunContext
-       IdempotencyKey string // a write's; empty for a read
+       Fence          store.Fence // the activation's claim
+       IdempotencyKey string      // a write's; empty for a read
        ToolCall       llms.ToolCall
        Action         ActionID
        WrapUp         bool
@@ -161,6 +162,21 @@ It amends, item by item:
    principal, and an idempotent destination can deduplicate. A served
    call is never given the credential provider: its authority is the
    source's, which the host built for the run's principal.
+
+   The call also carries the activation's fence (instance, owner and
+   owner epoch, ADR 0003 item 8), on every call, reads included. A host
+   that keeps the store can then refuse a call from a superseded claim,
+   one whose epoch is not the instance's current one, as the store
+   refuses that claim's commit; a superseded claim reads nothing either.
+   The fence check is on the epoch alone, and the fence is never part
+   of the idempotency key: a later claim that issues the same call again
+   (a read after recovery, and an idempotent write if reissue is ever
+   built, item 6) carries a new owner and epoch but the same action
+   identity, so the same key. The destination accepts it because its
+   epoch is current and deduplicates it by the key. Staleness is the
+   epoch's to tell, deduplication the key's; putting the fence, or any
+   attempt marker, into the key would defeat deduplication across
+   claims.
 
 6. **Failure is classified, never a crash.** A result with `IsError`
    (MCP's `isError`) is model-visible, as for any tool: the server's
