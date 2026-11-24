@@ -872,3 +872,38 @@ func TestCloseClosesRetiredSessions(t *testing.T) {
 		}
 	}
 }
+
+func TestErrClosedAfterClose(t *testing.T) {
+	// Every use after Close reports ErrClosed, never the context error
+	// Close's shutdown of in-flight work would otherwise surface.
+	srv := startServer(t, &serverState{})
+	src := mcptools.New(srv.dial(new(atomic.Int32)), mcptools.Options{})
+	if _, err := src.Tools(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Go(func() {
+			for i := range 2000 {
+				if _, err := src.Tools(context.Background()); !errors.Is(err, mcptools.ErrClosed) {
+					errs <- fmt.Errorf("Tools %d after Close = %w, want ErrClosed", i, err)
+					return
+				}
+				_, err := src.Call(context.Background(), served("echo", `{"msg":"x"}`))
+				if !errors.Is(err, mcptools.ErrClosed) || class(err) != "unreachable" {
+					errs <- fmt.Errorf("Call %d after Close = %w, want ErrClosed and unreachable", i, err)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}

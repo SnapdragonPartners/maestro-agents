@@ -263,12 +263,20 @@ func (s *Source) listed(name string) (*conn, toolloop.Tool, bool) {
 	return c, t, true
 }
 
-// enter takes the gate, giving up when ctx ends.
+// enter takes the gate, giving up when ctx ends. A closed Source admits
+// nothing, and an admission that fails because the Source closed reports
+// ErrClosed, not the context's error that Close caused.
 func (s *Source) enter(ctx context.Context) error {
+	if s.life.Err() != nil {
+		return ErrClosed
+	}
 	select {
 	case s.gate <- struct{}{}:
 		return nil
 	case <-ctx.Done():
+		if s.life.Err() != nil {
+			return ErrClosed
+		}
 		return fmt.Errorf("mcptools: %w", ctx.Err())
 	}
 }
