@@ -109,8 +109,13 @@ type Source struct {
 	// gate (one slot) serializes dialing and listing, so concurrent first
 	// uses dial once; a waiter gives up when its context ends. Calls on an
 	// open session don't take it.
-	gate   chan struct{}
-	cur    *conn // the session in use; nil until dialed, or after a drop
+	gate chan struct{}
+	// life ends when the Source closes; every dial, listing and call runs
+	// under a context it also ends, so Close never waits on a server.
+	life   context.Context //nolint:containedctx // the Source's own lifetime, not a request's: Close ends it
+	end    context.CancelFunc
+	cur    *conn              // the session in use; nil until dialed, or after a drop
+	conns  map[*conn]struct{} // every session not yet closed, retired ones included
 	mu     sync.Mutex
 	closed bool
 }
@@ -131,7 +136,15 @@ var _ agent.ToolSource = (*Source)(nil)
 // New returns a Source that reaches its server through dial. It dials
 // nothing until first used.
 func New(dial Dial, opts Options) *Source {
-	return &Source{dial: dial, opts: opts, gate: make(chan struct{}, 1)}
+	life, end := context.WithCancel(context.Background())
+	return &Source{dial: dial, opts: opts, gate: make(chan struct{}, 1), life: life, end: end, conns: map[*conn]struct{}{}}
+}
+
+// bind returns ctx, also ended when the Source closes.
+func (s *Source) bind(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.life, cancel)
+	return ctx, func() { stop(); cancel() }
 }
 
 // Tools lists the server's tools and returns their definitions, in the
@@ -139,6 +152,8 @@ func New(dial Dial, opts Options) *Source {
 // server listed a tool that can't be offered, an *mcpclient.InvalidToolError
 // in the chain), so the next use dials again.
 func (s *Source) Tools(ctx context.Context) ([]llms.ToolDefinition, error) {
+	ctx, done := s.bind(ctx)
+	defer done()
 	if err := s.enter(ctx); err != nil {
 		return nil, err
 	}
@@ -170,6 +185,8 @@ func (s *Source) Call(ctx context.Context, call *agent.ServedCall) (toolloop.Too
 	if call == nil {
 		return toolloop.ToolResult{}, fmt.Errorf("mcptools: %w: nil call", agent.ErrSourceUnreachable)
 	}
+	ctx, done := s.bind(ctx)
+	defer done()
 	name := call.ToolCall.Name
 	if args := call.ToolCall.Parameters; len(args) > 0 && !json.Valid(args) {
 		return toolloop.ToolResult{}, fmt.Errorf("mcptools: call %q: %w: the arguments are not valid JSON", name, agent.ErrSourceUnreachable)
@@ -284,6 +301,7 @@ func (s *Source) open(ctx context.Context) (*conn, error) {
 	}
 	c := &conn{session: session, uses: 1}
 	s.cur = c
+	s.conns[c] = struct{}{}
 	s.mu.Unlock()
 	return c, nil
 }
@@ -345,16 +363,21 @@ func (s *Source) release(c *conn) {
 	s.mu.Lock()
 	c.uses--
 	done := c.retired && c.uses == 0
+	if done {
+		delete(s.conns, c)
+	}
 	s.mu.Unlock()
 	if done {
 		_ = c.session.Close()
 	}
 }
 
-// Close closes the Source and its session. A call in flight on the session
-// ends with an error whose outcome is unknown; every later use fails with an
-// error wrapping ErrClosed (for Call, also agent.ErrSourceUnreachable).
-// Close is idempotent.
+// Close closes the Source and every session it has open, retired ones
+// included. It first ends the context of every dial, listing and call in
+// flight, so it never waits on a server: a call in flight ends with an
+// error whose outcome is unknown. Every later use fails with an error
+// wrapping ErrClosed (for Call, also agent.ErrSourceUnreachable). Close is
+// idempotent.
 func (s *Source) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -362,16 +385,22 @@ func (s *Source) Close() error {
 		return nil
 	}
 	s.closed = true
-	c := s.cur
 	s.cur = nil
-	if c != nil {
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
 		c.retired = true
+		conns = append(conns, c)
 	}
+	clear(s.conns)
 	s.mu.Unlock()
-	if c == nil {
-		return nil
+	s.end()
+	var errs []error
+	for _, c := range conns {
+		if err := c.session.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if err := c.session.Close(); err != nil {
+	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("mcptools: %w", err)
 	}
 	return nil

@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -92,7 +94,9 @@ func newServer(st *serverState) *mcp.Server {
 		})
 	s.AddTool(&mcp.Tool{Name: "block", InputSchema: obj},
 		func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			st.started <- struct{}{}
+			if st.started != nil {
+				st.started <- struct{}{}
+			}
 			select {
 			case <-st.release:
 				return text("released"), nil
@@ -750,5 +754,121 @@ func TestStdio(t *testing.T) {
 	}
 	if res.Content != "echo: again" || dials.Load() != 2 {
 		t.Fatalf("Call = %+v after %d dials, want a second process", res, dials.Load())
+	}
+}
+
+// closeWithin runs src.Close and fails the test if it takes longer than d.
+func closeWithin(t *testing.T, src *mcptools.Source, d time.Duration) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- src.Close() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Close = %v", err)
+		}
+	case <-time.After(d):
+		t.Fatal("Close hung on a call in flight")
+	}
+}
+
+// stdioSource returns a source over the test binary as a stdio server whose
+// "block" tool never answers, and the commands it started.
+func stdioSource(t *testing.T) (*mcptools.Source, func() []*exec.Cmd) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var cmds []*exec.Cmd
+	src := mcptools.New(func(context.Context) (mcpclient.Transport, error) {
+		cmd := exec.Command(exe, "-test.run=^$") //nolint:gosec // the test binary itself
+		cmd.Env = append(os.Environ(), stdioServerEnv+"=1")
+		mu.Lock()
+		cmds = append(cmds, cmd)
+		mu.Unlock()
+		return mcpclient.Command(cmd), nil
+	}, mcptools.Options{})
+	return src, func() []*exec.Cmd {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(cmds)
+	}
+}
+
+// exited reports whether cmd's process has exited within d.
+func exited(cmd *exec.Cmd, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cmd.ProcessState != nil || cmd.Process.Signal(syscall.Signal(0)) != nil {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
+func TestCloseEndsCallsInFlight(t *testing.T) {
+	// A server that never answers cannot hold Close: the call in flight
+	// ends with an unknown outcome and Close returns.
+	src, cmds := stdioSource(t)
+	if _, err := src.Tools(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := src.Call(context.Background(), served("block", `{}`))
+		done <- err
+	}()
+	time.Sleep(200 * time.Millisecond) // let the call reach the server
+	closeWithin(t, src, 10*time.Second)
+	select {
+	case err := <-done:
+		wantClass(t, err, "unknown")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call in flight did not end")
+	}
+	if c := cmds(); len(c) != 1 || !exited(c[0], 10*time.Second) {
+		t.Error("the server process outlived Close")
+	}
+}
+
+func TestCloseClosesRetiredSessions(t *testing.T) {
+	// A session retired while a call is in flight on it is still the
+	// source's: Close ends the call and the session's process.
+	src, cmds := stdioSource(t)
+	if _, err := src.Tools(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := src.Call(context.Background(), served("block", `{}`))
+		done <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+	// Retire the session: kill its process, so the next call fails as not
+	// sent or unknown and retires it, while "block" is still in flight.
+	_ = cmds()[0].Process.Kill()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(cmds()) < 2 {
+		if _, err := src.Call(context.Background(), served("echo", `{"msg":"x"}`)); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the session was never retired")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	closeWithin(t, src, 10*time.Second)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call in flight on the retired session did not end")
+	}
+	for i, c := range cmds() {
+		if !exited(c, 10*time.Second) {
+			t.Errorf("server process %d outlived Close", i)
+		}
 	}
 }
