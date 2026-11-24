@@ -184,8 +184,10 @@ It amends, item by item:
    with an error and no outcome (ADR 0003 item 14). The run's current
    claim then finds at most the call's attempt, if the superseded claim
    committed it before losing the instance, and resolves it as recovery
-   does (ADR 0008 item 18: a read is issued again, a write follows its
-   contract). No result is recorded for the refused call.
+   does (ADR 0004 item 10, as ADR 0008 item 17 amends it): a read is
+   issued again; a write, never `atomic_local` when served, has an
+   unknown outcome and fails the run with `tool_error`. No result is
+   recorded for the refused call.
 
 6. **Failure is classified, never a crash.** A result with `IsError`
    (MCP's `isError`) is model-visible, as for any tool: the server's
