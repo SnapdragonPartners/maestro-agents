@@ -971,3 +971,64 @@ func TestCloseWaitsForADialInProgress(t *testing.T) {
 		t.Errorf("Tools after Close = %v, want ErrClosed", err)
 	}
 }
+
+func TestSessionOutlivesTheDialContext(t *testing.T) {
+	// A session dialed under a context that then ends (a host's
+	// request-scoped check of its sources, say) serves later calls.
+	t.Run("streamable HTTP", func(t *testing.T) {
+		srv := startServer(t, &serverState{})
+		var dials atomic.Int32
+		src := newSource(t, srv.dial(&dials), mcptools.Options{})
+		ctx, cancel := context.WithCancel(context.Background())
+		if _, err := src.Tools(ctx); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		res, err := src.Call(context.Background(), served("echo", `{"msg":"later"}`))
+		if err != nil || res.Content != "echo: later" {
+			t.Fatalf("Call after the dial's context ended = %+v, %v", res, err)
+		}
+		if n := dials.Load(); n != 1 {
+			t.Errorf("dials = %d, want 1", n)
+		}
+	})
+	t.Run("stdio", func(t *testing.T) {
+		src, cmds := stdioSource(t)
+		t.Cleanup(func() { _ = src.Close() })
+		ctx, cancel := context.WithCancel(context.Background())
+		if _, err := src.Tools(ctx); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		res, err := src.Call(context.Background(), served("echo", `{"msg":"later"}`))
+		if err != nil || res.Content != "echo: later" {
+			t.Fatalf("Call after the dial's context ended = %+v, %v", res, err)
+		}
+		if n := len(cmds()); n != 1 {
+			t.Errorf("dials = %d, want 1", n)
+		}
+	})
+}
+
+func TestFailedListingRedials(t *testing.T) {
+	// A listing that fails on an established session retires it, and the
+	// next use dials again.
+	srv := startServer(t, &serverState{})
+	var dials atomic.Int32
+	src := newSource(t, srv.dial(&dials), mcptools.Options{})
+	ctx := context.Background()
+	if _, err := src.Tools(ctx); err != nil {
+		t.Fatal(err)
+	}
+	srv.restart() // the server forgets the session
+	if _, err := src.Tools(ctx); err == nil {
+		t.Fatal("Tools on a forgotten session succeeded")
+	}
+	res, err := src.Call(ctx, served("echo", `{"msg":"x"}`))
+	if err != nil || res.Content != "echo: x" {
+		t.Fatalf("Call after the failed listing = %+v, %v", res, err)
+	}
+	if n := dials.Load(); n != 2 {
+		t.Errorf("dials = %d, want 2", n)
+	}
+}
