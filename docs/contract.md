@@ -54,7 +54,7 @@ Contents:
 | `agent.NewController(store, registry, opts...)` | exists | One controller serves every instance, concurrently. |
 | `Controller.Activate(ctx, ActivationInput)` | exists ([ADR 0007](adr/0007-agent-types-and-the-run-controller.md)) | Run a claimed run up to `MaxSteps` steps, or to its end. |
 | `ControlPlane.RequestCancel(ctx, run, cause)`, `Reader.CancelRequest(run)` | exists ([ADR 0024](adr/0024-the-external-contract.md), item 6) | Stop a run, whoever is executing it (below). |
-| `agent.Status`, `agent.InstanceStatus` | planned (#27) | Section 2. |
+| `agent.Status(ctx, reader, run)`, `agent.InstanceStatus(ctx, reader, instance)`, `Reader.Runs(ctx, instance, RunQuery)` | exists ([ADR 0024](adr/0024-the-external-contract.md), item 7) | A run's or an instance's derived status, and an instance's runs paged: section 2. |
 
 `ActivationInput` (exists) carries:
 
@@ -178,36 +178,66 @@ instance's content. Today's `Reader.Artifact(digest)` takes no instance. The hos
 where downloads appear: Morris on its runs page and in chat, the app
 host as links, and an optional copy in a local folder.
 
-## 2. Run status (planned, #27)
+## 2. Run status
 
-`agent.Status(ctx, reader, runID)` returns a `RunStatus`. It is derived
-from the run record, the ownership record and the execution record, and
-never stored.
+`agent.Status(ctx, reader, runID)` returns an `agent.RunStatus`. It is
+derived from the run record, the cancel request, the ownership record,
+the checkpoint and the execution record, and never stored. It is a
+snapshot from several reads, not one transaction: a run that ends while
+it is read may show its new phase with its progress from just before.
+An unknown run is `store.ErrNotFound`.
 
 ```json
 {
+  "created_at": "2026-11-19T18:01:59Z",
+  "updated_at": "2026-11-19T18:04:11Z",
+  "last_activity": "2026-11-19T18:04:11Z",
+  "cancel_requested": null,
+  "state": {"name": "extract", "kind": "model"},
+  "budgets": {
+    "deadline": null,
+    "tokens": {"used": 41200, "limit": 200000},
+    "turns": {"used": 6, "limit": 40},
+    "active_time": {"used": "2m10s", "limit": "15m0s"}
+  },
   "run": "r-01",
   "instance": "i-01",
   "agent_type": "addepar-intake",
   "agent_version": "3",
   "phase": "running",
   "reason": {},
-  "cancel_requested": null,
-  "state": {"name": "extract", "kind": "model"},
-  "step": 7,
-  "budgets": {
-    "tokens": {"used": 41200, "limit": 200000},
-    "turns": {"used": 6, "limit": 40},
-    "active_time": {"used": "2m10s", "limit": "15m"},
-    "deadline": null
-  },
-  "last_activity": "2026-11-19T18:04:11Z",
-  "requests": [{"id": "r-01.7.0", "kind": "review", "title": "Review 12 records"}],
+  "requests": [],
   "artifacts": [],
-  "created_at": "2026-11-19T18:01:59Z",
-  "updated_at": "2026-11-19T18:04:11Z"
+  "step": 7
 }
 ```
+
+Key order carries no meaning. The fields:
+
+- `phase`, from the closed set below, and `reason`, RUN-3's reason
+  (`code`, and `budget` for a budget failure) for a terminal phase, `{}`
+  otherwise.
+- `cancel_requested`: the run's cancel request (`run`, `cause`,
+  `requested_at`), or null.
+- `state`: the current state's name and kind (`code` or `model`) while
+  the run is not terminal; null before its start is committed and once
+  it is terminal. A run checkpointed by an older version may have no
+  `kind`.
+- `step`: the step of the run's latest execution-record entry.
+- `budgets`: null before the run's start is committed. Each budget has
+  `used` and, when one is set, `limit`; `active_time`'s are Go duration
+  strings; `deadline` is a time or null. For a run that is not
+  terminal, `used` includes the model attempts since its last
+  checkpoint, charged as recovery charges them. Cost budgets are not
+  built and not shown.
+- `last_activity`: when the run's latest execution-record entry was
+  committed, by the store's clock (`store.Entry.At`), or the run
+  record's latest change if that is later.
+- `requests`: the run's open requests (section 4: `id`, `kind`,
+  `title`). Always `[]` until #31; a run that succeeded may then still
+  have open requests: that is the between-runs wait.
+- `artifacts`: the run's published artifacts (`name`, `media_type`,
+  `digest`, `size`). Always `[]` until #30.
 
 **Phase** is a closed set:
 
@@ -216,24 +246,45 @@ never stored.
 | `queued` | `runnable`, and no live lease on the instance |
 | `running` | `runnable`, and a live lease |
 | `waiting` | `waiting` for input (STM-8, planned, #34; not produced before then) |
-| `stopping` | a cancel request, not yet terminal |
+| `stopping` | a cancel request, not yet terminal (whatever else holds) |
 | `succeeded`, `failed`, `cancelled` | terminal, with RUN-3's reason |
 
-`requests` lists the run's open requests (section 4). A run that
-succeeded may still have open requests: that is the between-runs wait.
-
 `agent.InstanceStatus(ctx, reader, instance)` is for agents that run
-continuously, such as data pipelines. It returns:
+continuously, such as data pipelines. It returns an
+`agent.InstanceReport`:
 
-- the active run's status;
-- the last succeeded and last failed runs (ID, time, reason);
-- the instance's open requests;
-- the queued triggers (count, oldest).
+```json
+{
+  "active": {"run": "r-07", "phase": "running", "...": "a RunStatus"},
+  "last_succeeded": {"at": "2026-11-19T17:00:02Z", "run": "r-06", "reason": {"code": "changed"}},
+  "last_failed": null,
+  "queued": {"oldest": "2026-11-19T18:03:00Z", "count": 2},
+  "instance": "i-01",
+  "requests": []
+}
+```
 
-It finds past runs with a new reader call, `Runs(instance, after,
-limit)`: an instance's runs ordered by creation time and then run ID,
-paged. `after` is the last run ID of the previous page, empty for the
-first.
+`active` is the status of the instance's run that is not terminal, or
+null. `last_succeeded` and `last_failed` are its newest succeeded and
+failed runs (a cancelled run is neither), with `at` the run record's last
+change, or null. `queued` counts the queued triggers and gives the
+oldest's enqueue time. `requests` is the instance's open requests,
+always `[]` until #31.
+
+Both are bounded by a run, never by the instance's history. The last
+succeeded and failed runs come from the reader's
+`Runs(ctx, instance, store.RunQuery)`, which pages an instance's runs by
+creation time and then run ID:
+
+| `RunQuery` field | Meaning |
+|---|---|
+| `After` | The last run ID of the previous page, empty for the first. It must be a run of the instance (`ErrNotFound` if unknown, `ErrInvalid` if another instance's); the page continues past it whether or not it matches `Status`. |
+| `Status` | Keep only runs with one of these statuses; empty keeps all. An invalid one is `ErrInvalid`. |
+| `Limit` | The page size: zero asks for the store's default, negative is `ErrInvalid`. A store may cap it (the reference stores: default 100, cap 1000). |
+| `Newest` | Newest first; oldest first otherwise. |
+
+It returns the page and whether more runs follow it. A host store
+answers it from an index on (instance, status, creation time, run ID).
 
 A new phase or reason is a contract change and comes with an ADR.
 

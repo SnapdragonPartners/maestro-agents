@@ -139,6 +139,9 @@ var errClosed = errors.New("store closed")
 // tx overlays a commit's pending writes on the backend, so each operation's
 // precondition sees the commit's earlier operations (ADR 0005, item 13).
 type tx struct {
+	// now is the commit's time by the store's clock, stamped on its
+	// entries and its run-record change alike.
+	now   time.Time
 	b     Backend
 	over  map[string]int
 	order []Write
@@ -202,6 +205,7 @@ func (e *Engine) Commit(ctx context.Context, f store.Fence, ops []store.Op) erro
 			store.ErrOwnership, f.Instance, own.Owner, own.Epoch, f.Owner, f.Epoch)
 	}
 	t := newTx(e.b)
+	t.now = e.now().UTC()
 	release := false
 	for i, op := range ops {
 		if err = e.applyOp(t, f, inst, own, i, op); err != nil {
@@ -394,7 +398,21 @@ func appendEntry(t *tx, f store.Fence, i int, en *store.Entry) error {
 	if err := checkNext(t, i, store.OpAppendEntry, recordDir(run), en.Seq); err != nil {
 		return err
 	}
-	return t.putJSON(recordDir(run)+"/"+seqName(en.Seq), en)
+	// The store stamps the commit time, never earlier than the previous
+	// entry's, so a clock stepped back cannot reorder a run's record
+	// (ADR 0024, item 7).
+	stamped := *en
+	stamped.At = t.now
+	if en.Seq > 1 {
+		var prev store.Entry
+		if _, err := readJSON(t, recordDir(run)+"/"+seqName(en.Seq-1), &prev); err != nil {
+			return err
+		}
+		if prev.At.After(stamped.At) {
+			stamped.At = prev.At
+		}
+	}
+	return t.putJSON(recordDir(run)+"/"+seqName(en.Seq), &stamped)
 }
 
 func putCheckpoint(t *tx, f store.Fence, i int, c *store.Checkpoint) error {
@@ -444,7 +462,7 @@ func (e *Engine) updateRun(t *tx, f store.Fence, i int, u *store.RunUpdate) erro
 		run.Consumed = u.Consumed
 	}
 	run.Version++
-	run.UpdatedAt = e.now().UTC()
+	run.UpdatedAt = t.now
 	return t.putJSON(runPath(enc), run)
 }
 

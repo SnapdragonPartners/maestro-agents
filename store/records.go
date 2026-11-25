@@ -106,6 +106,27 @@ type Run struct {
 	Version uint64 `json:"version"`
 }
 
+// RunQuery selects a page of an instance's runs (ADR 0024, item 7). Runs
+// are ordered by creation time and then run ID, oldest first unless Newest
+// is set.
+type RunQuery struct {
+	// After is the last run ID of the previous page, empty for the first
+	// page. It must name a run of the instance: an unknown run is
+	// [ErrNotFound], another instance's run [ErrInvalid]. The page
+	// continues past it in the query's order whether or not it matches
+	// Status.
+	After string
+	// Status keeps only runs with one of these statuses; empty keeps all.
+	// A status that is not valid is [ErrInvalid].
+	Status []Status
+	// Limit bounds the page: zero asks for the store's default page size,
+	// and a negative limit is [ErrInvalid]. A store may cap it, returning
+	// fewer runs than asked with more still true.
+	Limit int
+	// Newest orders the runs newest first.
+	Newest bool
+}
+
 // ScopeKind is the kind of a scope (ADR 0003, item 1).
 type ScopeKind string
 
@@ -142,6 +163,11 @@ type Checkpoint struct {
 // numbered per run from 1 with no gaps. Kind and Payload are the
 // runtime's; the store keeps them as given.
 type Entry struct {
+	// At is when the entry was committed, by the store's clock (ADR 0024,
+	// item 7). The store sets it at the commit and ignores any value
+	// given; it is never earlier than the run's previous entry's. Entries
+	// stored before it existed read as zero.
+	At      time.Time       `json:"at,omitzero"`
 	Run     string          `json:"run"`
 	Kind    string          `json:"kind"`
 	Payload json.RawMessage `json:"payload,omitempty"`

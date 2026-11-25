@@ -269,7 +269,10 @@ type checkpointState struct {
 	AgentType    string         `json:"agent_type"`
 	AgentVersion string         `json:"agent_version"`
 	State        string         `json:"state"`
-	Config       string         `json:"config,omitempty"`
+	// StateKind is State's kind (StateModel or StateCode), which a run's
+	// status reports (ADR 0024, item 7); older checkpoints lack it.
+	StateKind StateKind `json:"state_kind,omitempty"`
+	Config    string    `json:"config,omitempty"`
 	// Namespace is the run's object-store namespace (ADR 0012).
 	Namespace string `json:"namespace"`
 	// Principal is the run's principal (ADR 0016, item 12).

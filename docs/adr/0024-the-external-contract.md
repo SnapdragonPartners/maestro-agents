@@ -192,15 +192,48 @@ consumer-facing reference is [docs/contract.md](../contract.md).
    - `agent.InstanceStatus` adds what a continuously running agent
      needs: the active run, the last succeeded and last failed runs,
      the open requests and the queued triggers. To find past runs, the
-     reader gains `Runs(ctx, instance, after, limit)`, an instance's
-     runs ordered by creation time and then run ID, paged: `after` is
-     the last run ID of the previous page, empty for the first. Checkpoints cannot stand in for it:
-     a run refused at its start ends without one.
+     reader gains `Runs(ctx, instance, RunQuery)`, a page of an
+     instance's runs ordered by creation time and then run ID, oldest
+     first or, with `Newest`, newest first, optionally kept to a set of
+     statuses, returning whether more follow. `After` is the last run ID
+     of the previous page, empty for the first; it must be a run of the
+     instance (`ErrNotFound` for an unknown run, `ErrInvalid` for
+     another instance's), and the page continues past it whether or not
+     it matches the status filter. `Limit` zero asks for the store's
+     default page, a negative one is `ErrInvalid`, and a store may cap
+     it, returning fewer runs with more still set. Checkpoints cannot
+     stand in for it: a run refused at its start ends without one.
+   - Both are bounded by a run, never by an instance's history. The
+     last succeeded and last failed runs are each one newest-first,
+     filtered page of one, which a host store answers from an index on
+     (instance, status, creation time, run ID); nothing records them
+     twice. A run's status reads, for a run that is not terminal, the
+     instance's latest checkpoint if it is the run's and the entries
+     from the one it covers (at most one step), and otherwise that
+     run's own execution record. The open requests (item 11) are found
+     the same way, by a lookup #31 defines, never by scanning past
+     runs' execution records.
+   - The last activity is the commit time of the run's latest
+     execution-record entry, or the run record's latest change if later.
+     The store stamps each entry with its commit time (`store.Entry.At`),
+     by its own clock, the one every other time in a status comes from
+     (the run's creation and change, the cancel request, the triggers'
+     enqueue times, leases), so a worker's clock never shows a run
+     active before it was created. One commit stamps its entries and
+     its run-record change with one time, and an entry is never stamped
+     earlier than the run's previous one.
    - Both are JSON values a host serves as it likes: Morris in its chat
      entries and runs page, the app host and the wire handler at
      `GET /v1/runs/{id}/status` and `GET /v1/instances/{id}/status`.
    - Phases and reasons are part of the contract: a new one is a
      contract change and gets an ADR.
+   - **As built (#27):** `agent.Status` returns `agent.RunStatus`, and
+     `agent.InstanceStatus` returns `agent.InstanceReport`; requests and
+     artifacts are empty lists until #31 and #30. A run's current state
+     is shown only while it is not terminal, with its kind from the
+     checkpoint, which now records it (`state_kind`). The reference
+     stores page in memory over their per-instance run index (default
+     page 100, cap 1000).
 
 8. **This library builds the Postgres store** (STORE-4, STORE-5), in an
    adapter package, following `maestro-llms`' `bucket/postgres` (its
@@ -509,7 +542,7 @@ consumer-facing reference is [docs/contract.md](../contract.md).
       `_meta` (`docs/contract.md` section 7).
 
 18. **Gaps, each its own issue:** check before start (item 5, #35, built);
-    cancel requests (item 6, #26, built); status (item 7, #27); the Postgres
+    cancel requests (item 6, #26, built); status (item 7, #27, built); the Postgres
     store (item 8, #28); the store's wire form and instance-linked
     artifact reads (item 9, #29); published artifacts (item 10, #30);
     requests, blocks and bundles (items 11 to 14, #31); the app host and
@@ -549,12 +582,13 @@ Each takes effect with the issue that builds it.
   the cancel request (one per run, first cause stands) and the
   artifact-to-instance link. The control plane gains `RequestCancel`,
   and `Heartbeat` returns the active run's cancel request. The reader
-  gains `CancelRequest(run)`, `Runs(instance, after, limit)` (`after` a
-  run ID, item 7) and a
+  gains `CancelRequest(run)`, `Runs(instance, RunQuery)` (paged by
+  run ID, newest first or oldest, filtered by status, item 7) and a
   lookup of a run by (instance, trigger ID), which item 11's open
   requests need. `Reader.Artifact` takes the instance and answers only
-  for a digest linked to it (item 9). ADR 0006 item 5's single writer
-  of the run record is unchanged.
+  for a digest linked to it (item 9). An execution-record entry
+  gains its commit time, which the store stamps (item 7). ADR 0006
+  item 5's single writer of the run record is unchanged.
 - **ADR 0017, item 18:** a heartbeat that returns a cancel request
   cancels the activation with the request's cause.
 - **ADR 0021, item 1:** a submission may carry a principal the host

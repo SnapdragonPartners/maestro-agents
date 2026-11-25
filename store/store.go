@@ -118,6 +118,11 @@ type Reader interface {
 	// ActiveRun returns the instance's non-terminal run, if it has one.
 	ActiveRun(ctx context.Context, instance string) (run Run, ok bool, err error)
 
+	// Runs returns a page of the instance's runs as q selects them, and
+	// whether more follow it (ADR 0024, item 7). An instance with no runs
+	// has none.
+	Runs(ctx context.Context, instance string, q RunQuery) (runs []Run, more bool, err error)
+
 	// Triggers returns the instance's queued triggers in arrival order.
 	Triggers(ctx context.Context, instance string) ([]Trigger, error)
 
@@ -129,7 +134,8 @@ type Reader interface {
 	Checkpoint(ctx context.Context, instance string, seq uint64) (Checkpoint, error)
 
 	// Entries returns the run's execution-record entries with sequence
-	// numbers greater than after, in order.
+	// numbers greater than after, in order, each with its commit time
+	// ([Entry.At]).
 	Entries(ctx context.Context, run string, after uint64) ([]Entry, error)
 
 	// Artifact returns an artifact's metadata and content, or
