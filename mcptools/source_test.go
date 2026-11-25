@@ -797,16 +797,11 @@ func stdioSource(t *testing.T) (*mcptools.Source, func() []*exec.Cmd) {
 	}
 }
 
-// exited reports whether cmd's process has exited within d.
-func exited(cmd *exec.Cmd, d time.Duration) bool {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if cmd.ProcessState != nil || cmd.Process.Signal(syscall.Signal(0)) != nil {
-			return true
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	return false
+// reaped reports whether cmd's process has been waited for: Signal fails
+// once Wait has returned, so this is true right after a Close that closed
+// the process's session, and false while the session is still closing.
+func reaped(cmd *exec.Cmd) bool {
+	return cmd.Process.Signal(syscall.Signal(0)) != nil
 }
 
 func TestCloseEndsCallsInFlight(t *testing.T) {
@@ -829,8 +824,8 @@ func TestCloseEndsCallsInFlight(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the call in flight did not end")
 	}
-	if c := cmds(); len(c) != 1 || !exited(c[0], 10*time.Second) {
-		t.Error("the server process outlived Close")
+	if c := cmds(); len(c) != 1 || !reaped(c[0]) {
+		t.Error("Close returned before the server process was reaped")
 	}
 }
 
@@ -867,8 +862,8 @@ func TestCloseClosesRetiredSessions(t *testing.T) {
 		t.Fatal("the call in flight on the retired session did not end")
 	}
 	for i, c := range cmds() {
-		if !exited(c, 10*time.Second) {
-			t.Errorf("server process %d outlived Close", i)
+		if !reaped(c) {
+			t.Errorf("Close returned before server process %d was reaped", i)
 		}
 	}
 }
@@ -905,5 +900,67 @@ func TestErrClosedAfterClose(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+func TestConcurrentCloseWaitsForTeardown(t *testing.T) {
+	// Every Close, not only the first, returns only once the teardown has
+	// finished.
+	src, cmds := stdioSource(t)
+	if _, err := src.Tools(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _, _ = src.Call(context.Background(), served("block", `{}`)) }()
+	time.Sleep(200 * time.Millisecond)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			if err := src.Close(); err != nil {
+				t.Errorf("Close = %v", err)
+			}
+			if !reaped(cmds()[0]) {
+				t.Error("a Close returned before the server process was reaped")
+			}
+		})
+	}
+	wg.Wait()
+}
+
+func TestCloseWaitsForADialInProgress(t *testing.T) {
+	// A dial that completes as Close runs closes its own session, and
+	// Close waits for it, so no session is left behind.
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, proceed := make(chan struct{}), make(chan struct{})
+	var cmd *exec.Cmd
+	src := mcptools.New(func(context.Context) (mcpclient.Transport, error) {
+		close(entered)
+		<-proceed                               // a dial that ignores its context, to hold the race open
+		cmd = exec.Command(exe, "-test.run=^$") //nolint:gosec // the test binary itself
+		cmd.Env = append(os.Environ(), stdioServerEnv+"=1")
+		return mcpclient.Command(cmd), nil
+	}, mcptools.Options{})
+	go func() { _, _ = src.Tools(context.Background()) }()
+	<-entered
+	closed := make(chan error, 1)
+	go func() { closed <- src.Close() }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a dial was in progress")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(proceed)
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not return after the dial ended")
+	}
+	if cmd != nil && cmd.Process != nil && !reaped(cmd) {
+		t.Error("the dialed server process outlived Close")
+	}
+	if _, err := src.Tools(context.Background()); !errors.Is(err, mcptools.ErrClosed) {
+		t.Errorf("Tools after Close = %v, want ErrClosed", err)
 	}
 }

@@ -104,20 +104,25 @@ var ErrClosed = errors.New("mcptools: source closed")
 // Source is an agent.ToolSource over one MCP server. Build one with New. It
 // is safe for concurrent use.
 type Source struct {
+	closeErr error
+	// life ends when the Source closes; every dial, listing and call runs
+	// under a context it also ends, so Close never waits on a server.
+	life context.Context //nolint:containedctx // the Source's own lifetime, not a request's: Close ends it
 	dial Dial
 	opts Options
 	// gate (one slot) serializes dialing and listing, so concurrent first
 	// uses dial once; a waiter gives up when its context ends. Calls on an
 	// open session don't take it.
-	gate chan struct{}
-	// life ends when the Source closes; every dial, listing and call runs
-	// under a context it also ends, so Close never waits on a server.
-	life   context.Context //nolint:containedctx // the Source's own lifetime, not a request's: Close ends it
-	end    context.CancelFunc
-	cur    *conn              // the session in use; nil until dialed, or after a drop
-	conns  map[*conn]struct{} // every session not yet closed, retired ones included
-	mu     sync.Mutex
-	closed bool
+	gate  chan struct{}
+	end   context.CancelFunc
+	cur   *conn              // the session in use; nil until dialed, or after a drop
+	conns map[*conn]struct{} // every session whose close has not finished, retired ones included
+	// dialing counts dials in progress, which Close waits for: a dial that
+	// succeeds as Close runs closes its session before it is counted done.
+	dialing   sync.WaitGroup
+	closeOnce sync.Once // runs Close's teardown; concurrent callers wait on it
+	mu        sync.Mutex
+	closed    bool
 }
 
 // conn is one session and the tools its last listing returned. A session
@@ -125,9 +130,11 @@ type Source struct {
 // last use in flight ends, so retiring it cannot cut off a call that is
 // still running on it.
 type conn struct {
+	err     error // the session's close error, once closed
 	session *mcpclient.Session
 	tools   map[string]toolloop.Tool // by name; nil until listed
 	uses    int
+	once    sync.Once // closes the session; every closer waits on it
 	retired bool
 }
 
@@ -296,13 +303,15 @@ func (s *Source) open(ctx context.Context) (*conn, error) {
 		s.mu.Unlock()
 		return c, nil
 	}
+	s.dialing.Add(1) // under mu while not closed, so Close's Wait sees it
 	s.mu.Unlock()
+	defer s.dialing.Done()
 	session, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
-	if s.closed { // Close ran while dialing
+	if s.closed { // Close ran while dialing; it waits for this close
 		s.mu.Unlock()
 		_ = session.Close()
 		return nil, ErrClosed
@@ -371,47 +380,59 @@ func (s *Source) release(c *conn) {
 	s.mu.Lock()
 	c.uses--
 	done := c.retired && c.uses == 0
-	if done {
-		delete(s.conns, c)
-	}
 	s.mu.Unlock()
 	if done {
-		_ = c.session.Close()
+		_ = s.shutdown(c)
 	}
 }
 
-// Close closes the Source and every session it has open, retired ones
-// included. It first ends the context of every dial, listing and call in
-// flight, so it never waits on a server: a call in flight ends with an
-// error whose outcome is unknown. Every later use fails with an error
-// wrapping ErrClosed (for Call, also agent.ErrSourceUnreachable). Close is
-// idempotent.
-func (s *Source) Close() error {
-	s.mu.Lock()
-	if s.closed {
+// shutdown closes c's session once, waiting for a close already under way,
+// and only then stops tracking c, so Close never returns while a session it
+// has not seen closed is still closing.
+func (s *Source) shutdown(c *conn) error {
+	c.once.Do(func() {
+		c.err = c.session.Close()
+		s.mu.Lock()
+		delete(s.conns, c)
 		s.mu.Unlock()
-		return nil
-	}
-	s.closed = true
-	s.cur = nil
-	conns := make([]*conn, 0, len(s.conns))
-	for c := range s.conns {
-		c.retired = true
-		conns = append(conns, c)
-	}
-	clear(s.conns)
-	s.mu.Unlock()
-	s.end()
-	var errs []error
-	for _, c := range conns {
-		if err := c.session.Close(); err != nil {
-			errs = append(errs, err)
+	})
+	return c.err
+}
+
+// Close closes the Source and every session it has open, retired ones
+// included, and returns only when every session has closed (a local
+// server's process with it). It first ends the context of every dial,
+// listing and call in flight, so it never waits on a server: a call in
+// flight ends with an error whose outcome is unknown. Every later use fails
+// with an error wrapping ErrClosed (for Call, also
+// agent.ErrSourceUnreachable). Close is idempotent: concurrent and later
+// calls wait for the same teardown and return its result.
+func (s *Source) Close() error {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		s.cur = nil
+		s.mu.Unlock()
+		s.end()
+		s.dialing.Wait() // after this, no session can be added
+		s.mu.Lock()
+		conns := make([]*conn, 0, len(s.conns))
+		for c := range s.conns {
+			c.retired = true
+			conns = append(conns, c)
 		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("mcptools: %w", err)
-	}
-	return nil
+		s.mu.Unlock()
+		var errs []error
+		for _, c := range conns {
+			if err := s.shutdown(c); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := errors.Join(errs...); err != nil {
+			s.closeErr = fmt.Errorf("mcptools: %w", err)
+		}
+	})
+	return s.closeErr
 }
 
 type callKey struct{}
