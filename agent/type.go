@@ -221,17 +221,18 @@ type erasedState struct {
 	name  string
 }
 
-// kind returns the state's kind, empty for a terminal state or none.
-func (s *erasedState) kind() StateKind {
+// kind returns the state's kind as its manifest lists it (StateKindCode,
+// StateKindModel or StateKindTerminal), empty for no state.
+func (s *erasedState) kind() string {
 	switch {
 	case s == nil:
 		return ""
 	case s.model != nil:
-		return StateModel
+		return StateKindModel
 	case s.code != nil:
-		return StateCode
+		return StateKindCode
 	}
-	return ""
+	return StateKindTerminal
 }
 
 type erasedTransition struct {

@@ -237,7 +237,8 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      `agent.InstanceStatus` returns `agent.InstanceReport`; requests and
      artifacts are empty lists until #31 and #30. A run's current state
      is shown only while it is not terminal, with its kind from the
-     checkpoint, which now records it (`state_kind`). The reference
+     checkpoint, which now records it (`state_kind`, the manifest's
+     `code`, `model` or `terminal`). The reference
      stores page in memory over their per-instance run index (default
      page 100, cap 1000).
 

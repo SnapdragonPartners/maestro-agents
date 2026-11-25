@@ -219,10 +219,12 @@ Key order carries no meaning. The fields:
   otherwise.
 - `cancel_requested`: the run's cancel request (`run`, `cause`,
   `requested_at`), or null.
-- `state`: the current state's name and kind (`code` or `model`) while
-  the run is not terminal; null before its start is committed and once
-  it is terminal. A run checkpointed by an older version may have no
-  `kind`.
+- `state`: the current state's name and kind while the run is not
+  terminal; null before its start is committed and once it is terminal.
+  The kind is the manifest's (`code`, `model` or `terminal`: an
+  activation interrupted as it entered a terminal state leaves the run
+  runnable there, for the next activation to end). Only a run
+  checkpointed before kinds were recorded may have no `kind`.
 - `step`: the step of the run's latest execution-record entry.
 - `budgets`: null before the run's start is committed. Each budget has
   `used` and, when one is set, `limit`; `active_time`'s are Go duration

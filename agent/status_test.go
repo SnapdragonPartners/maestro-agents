@@ -74,7 +74,7 @@ func TestStatusLifecycle(t *testing.T) {
 			t.Fatalf("first activation = %+v, %v", out, err)
 		}
 		st = status(t, s, "r1")
-		if st.Phase != agent.PhaseQueued || st.State == nil || *st.State != (agent.StateStatus{Name: "count", Kind: agent.StateCode}) ||
+		if st.Phase != agent.PhaseQueued || st.State == nil || *st.State != (agent.StateStatus{Name: "count", Kind: agent.StateKindCode}) ||
 			st.Step != 2 || !st.LastActivity.Equal(lastAt(t, s, "r1")) {
 			t.Fatalf("status between activations = %+v, state %+v", st, st.State)
 		}
@@ -184,7 +184,7 @@ func TestStatusModelTail(t *testing.T) {
 			st := status(t, s, "r1")
 			es := entries(t, s, "r1")
 			attempts := countKind(es, agent.EntryModelAttempt)
-			kind := map[string]agent.StateKind{"work": agent.StateModel, "review": agent.StateCode}
+			kind := map[string]string{"work": agent.StateKindModel, "review": agent.StateKindCode}
 			if st.Phase != agent.PhaseRunning || st.State == nil || st.State.Kind == "" || kind[st.State.Name] != st.State.Kind ||
 				st.Budgets == nil || st.Budgets.Turns.Used != int64(attempts) || !st.LastActivity.Equal(es[len(es)-1].At) ||
 				st.Step != es[len(es)-1].Step {
@@ -218,6 +218,33 @@ func TestStatusStoreClock(t *testing.T) {
 	clk.Advance(2 * time.Minute)
 	if st := status(t, s, "r1"); st.Phase != agent.PhaseQueued {
 		t.Fatalf("phase after the lease expired by the store's clock = %s, want queued", st.Phase)
+	}
+}
+
+// A checkpoint records each state's kind in the manifest's vocabulary,
+// terminal states included: a run can be checkpointed in a terminal state
+// that an interrupted activation left for the next one to end.
+func TestStateKindsMatchManifest(t *testing.T) {
+	for _, def := range []agent.Definition{counterType(), ledgerType(&execLog{})} {
+		reg := registry(t, def)
+		m, ok := reg.Manifest(def.TypeName())
+		if !ok {
+			t.Fatalf("no manifest for %s", def.TypeName())
+		}
+		kinds := agent.StateKinds(reg, def.TypeName())
+		if len(kinds) != len(m.States) {
+			t.Fatalf("%s: %d kinds for %d states", def.TypeName(), len(kinds), len(m.States))
+		}
+		terminal := false
+		for _, sm := range m.States {
+			if kinds[sm.Name] != sm.Kind {
+				t.Errorf("%s state %s: checkpoint kind %q, manifest kind %q", def.TypeName(), sm.Name, kinds[sm.Name], sm.Kind)
+			}
+			terminal = terminal || sm.Kind == agent.StateKindTerminal
+		}
+		if !terminal {
+			t.Errorf("%s has no terminal state to check", def.TypeName())
+		}
 	}
 }
 

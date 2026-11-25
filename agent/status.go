@@ -32,15 +32,6 @@ const (
 	PhaseCancelled Phase = "cancelled"
 )
 
-// StateKind is the kind of an agent type's state.
-type StateKind string
-
-// The kinds of state (ADR 0007, ADR 0008).
-const (
-	StateCode  StateKind = "code"
-	StateModel StateKind = "model"
-)
-
 // RunStatus is a run's status, derived from its run record, its cancel
 // request, its instance's ownership record, its checkpoint and its
 // execution record, and never stored (ADR 0024, item 7; docs/contract.md
@@ -79,11 +70,14 @@ type RunStatus struct {
 	Step uint64 `json:"step"`
 }
 
-// StateStatus names a run's current state and its kind. Kind is empty for
-// a run checkpointed before kinds were recorded.
+// StateStatus names a run's current state and its kind, as the manifest
+// lists it: StateKindCode, StateKindModel or StateKindTerminal (a run
+// checkpointed in a terminal state that an interrupted activation did not
+// end). Kind is empty only for a run checkpointed before kinds were
+// recorded.
 type StateStatus struct {
-	Name string    `json:"name"`
-	Kind StateKind `json:"kind,omitempty"`
+	Name string `json:"name"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // BudgetUse is a run's budgets (ADR 0009) and what it has consumed of
