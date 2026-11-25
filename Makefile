@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-coverage lint vuln tidy deps check-deps install-lint install-govulncheck install-hooks clean
+.PHONY: build test test-mcptools test-integration test-coverage lint vuln tidy deps check-deps install-lint install-govulncheck install-hooks clean
 
 # Tool versions. Keep in sync by hand with .github/workflows/ci.yml (and
 # scheduled-security.yml for govulncheck); GitHub Actions cannot read them
@@ -6,10 +6,18 @@
 GOLANGCI_VERSION ?= v1.64.8
 GOVULNCHECK_VERSION ?= v1.1.4
 
+# Nested modules built, linted and tested beside the root. mcptools/ (ADR
+# 0025, item 8) is its own module, tagged mcptools/vX.Y.Z, so the MCP SDK
+# stays out of the root module's graph. Each requires a released root with
+# no replace directive; CI also tests it against the root at HEAD through a
+# temporary go.work.
+NESTED_MODULES := mcptools
+
 # Compile every package, then build each agent under cmd/<agent>/ into
 # bin/<agent>. With no cmd/ directory, only the compile step runs.
 build:
 	go build ./...
+	@for dir in $(NESTED_MODULES); do echo "==> $$dir"; (cd "$$dir" && go build ./...) || exit 1; done
 	@for dir in cmd/*/; do \
 		[ -d "$$dir" ] || continue; \
 		name=$$(basename "$$dir"); \
@@ -19,14 +27,26 @@ build:
 
 # Unit tests with the race detector and coverage. No network, no keys.
 # Single test: make test TESTARGS='-run TestName ./...'
+# TESTARGS applies to the root module only, and when it is set the nested
+# modules are skipped; use `make test-mcptools TESTARGS=...` for mcptools.
 test:
 	go test -race -cover $(TESTARGS) ./...
+ifeq ($(strip $(TESTARGS)),)
+	@for dir in $(NESTED_MODULES); do echo "==> $$dir"; (cd "$$dir" && go test -race -cover ./...) || exit 1; done
+endif
+
+# The mcptools module's unit tests (ADR 0025, item 8).
+test-mcptools:
+	cd mcptools && go test -race -cover $(TESTARGS) ./...
 
 # Integration tests live behind the `integration` build tag and may need
 # network access or provider keys; each test skips when its prerequisites
 # are absent. Run them locally before review; do not punt them to CI.
 test-integration:
 	go test -race -tags=integration -count=1 $(TESTARGS) ./...
+ifeq ($(strip $(TESTARGS)),)
+	@for dir in $(NESTED_MODULES); do echo "==> $$dir"; (cd "$$dir" && go test -race -tags=integration -count=1 ./...) || exit 1; done
+endif
 
 # HTML coverage report in coverage/.
 test-coverage:
@@ -40,13 +60,16 @@ test-coverage:
 lint: install-lint
 	go vet ./...
 	golangci-lint run
+	@for dir in $(NESTED_MODULES); do echo "==> $$dir"; (cd "$$dir" && go vet ./... && golangci-lint run) || exit 1; done
 
 # Known-vulnerability scan of the module's dependencies.
 vuln: install-govulncheck
 	govulncheck ./...
+	@for dir in $(NESTED_MODULES); do echo "==> $$dir"; (cd "$$dir" && govulncheck ./...) || exit 1; done
 
 tidy:
 	go mod tidy
+	@for dir in $(NESTED_MODULES); do echo "==> $$dir"; (cd "$$dir" && go mod tidy) || exit 1; done
 
 # Check for, and install where possible, the tools the targets above need.
 deps: check-deps install-lint install-govulncheck install-hooks

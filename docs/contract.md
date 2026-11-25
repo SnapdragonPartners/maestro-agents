@@ -39,7 +39,7 @@ Contents:
 | Credentials | `agent.CredentialProvider` | exists ([ADR 0016](adr/0016-telemetry-logging-and-credentials.md)) | Serves a tool a credential at call time, keyed by the run context (run, principal). Never reaches agent code. |
 | Telemetry | `agent.Sink`, `agent.Redactor` | exists (ADR 0016) | One event per committed record entry: IDs, names, counts and codes, never content. Free text leaves only through the redactor. |
 | Logging | `*slog.Logger` | exists (ADR 0016) | One logger for the runtime, agent types and tools. |
-| Tool sources | `agent.ToolSource`, in `ActivationInput.ToolSources` | exists ([ADR 0025](adr/0025-mcp-served-tools.md)); the MCP adapter `mcptools` planned | Serves an agent type's served tools (an MCP server, say). Built for the run's principal; the host owns its transport, token and renewal. See section 7. |
+| Tool sources | `agent.ToolSource`, in `ActivationInput.ToolSources` | exists ([ADR 0025](adr/0025-mcp-served-tools.md)), with the MCP adapter `mcptools` | Serves an agent type's served tools (an MCP server, say). Built for the run's principal; the host owns its transport, token and renewal. See section 7. |
 
 ### What the host calls
 
@@ -498,8 +498,7 @@ Its configuration format and workspace layout come with its ADR.
 
 Issue [#23](https://github.com/SnapdragonPartners/maestro-agents/issues/23)
 (TOOL-6), [ADR 0025](adr/0025-mcp-served-tools.md). The runtime's seam
-exists; the MCP adapter (`mcptools`, a nested module of its own) is
-planned, after maestro-llms#194.
+and the MCP adapter (`mcptools`, a nested module of its own) exist.
 
 - **Granting.** An agent type grants a served tool in a model state's
   `Tools` with `agent.ServedTool[D](source, name, effect, contract)`,
@@ -561,3 +560,45 @@ planned, after maestro-llms#194.
   not answered is an unknown outcome (TOOL-12) and fails it too.
 - **Tests.** `agent/agenttest.Source` stands in for a server: scripted
   tools, failure injection and a log of the calls it received.
+- **The MCP adapter.** `github.com/SnapdragonPartners/maestro-agents/mcptools`
+  is a nested module (tags `mcptools/vX.Y.Z`), so only a host that
+  imports it takes on the MCP SDK. `mcptools.New(dial, opts)` is an
+  `agent.ToolSource` over one MCP server reached through
+  `maestro-llms/mcp`'s `mcpclient`: `dial` returns a fresh
+  `mcpclient.Transport` (Streamable HTTP with the host's `http.Client`,
+  which carries and renews the token, or a local command), called on
+  first use and after a failure. `opts.Filter` keeps only the named
+  tools (a listing fails if any kept tool cannot be offered to a
+  model). The host closes the source (`Source.Close`).
+- **What a server receives.** Each `tools/call` carries in its `_meta`
+  the host's claims about the call, JSON values under these keys
+  (`mcptools.Meta*`), every one on every call, reads included, except
+  the idempotency key:
+
+  | Key | Value |
+  |---|---|
+  | `maestro-agents/v` | the key set's version, the integer `1` |
+  | `maestro-agents/agent_instance` | the agent instance, a string; unchanged when the run resumes on another worker |
+  | `maestro-agents/agent_type` | the agent type, a string |
+  | `maestro-agents/principal` | the run's principal, a string; empty is a run under the host's own authority, by the host's choice, never a dropped field |
+  | `maestro-agents/owner` | the owner of the activation's claim, a string |
+  | `maestro-agents/epoch` | the claim's owner epoch, a JSON integer: unsigned 64-bit, 1 or more, one per claim of the instance, never decreasing (a decoder into `float64`, as the go-sdk's `map[string]any` is, is exact below 2^53, which an epoch never reaches in practice) |
+  | `maestro-agents/action` | the action identity, `{"scope":{"kind":"run","id":<run ID>},"step":N,"call":N}` (above); the run is its scope |
+  | `maestro-agents/idempotency_key` | a write's idempotency key (above); only for a write |
+
+  A call missing its run context or fence is never sent. The server
+  re-checks the principal against the request's token, and a server
+  that keeps the store refuses a call whose epoch is not the
+  instance's current one; the check is on the epoch alone, so a newer
+  claim's reissue (a new owner and epoch, the same key) is accepted and
+  deduplicated by its key. A change a server must know of increments
+  `maestro-agents/v`. A server built on `maestro-llms`' `mcpserver`
+  reads the keys with `mcpserver.MetaFromContext` (`mcp/v0.3.0`), which
+  gives numbers as `float64`. The keys are unverified input: the
+  token authorizes, and the claims only narrow what it may do. The adapter
+  maps `mcpclient`'s classes one to one: not sent is `unreachable`, the
+  server's error (a JSON-RPC error or a malformed result) is
+  `source_error`, an unknown outcome is `unknown`; a call to a tool the
+  server no longer lists is `source_error`. After a failure other than
+  the server's answer, the next use opens a new session; calls still in
+  flight on the old one finish first.

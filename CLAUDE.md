@@ -29,8 +29,8 @@ with attempt-level budget admission, and the host seams for telemetry,
 logging and credentials (`agent/`), the standalone host (`standalone/`,
 ADR 0017) with its in-process API, submitted runs and folder watch
 (ADRs 0020 to 0022), the scoring harness (`scoring/`, ADR 0020), and
-MCP-served tools' runtime seam (`agent.ToolSource`, ADR 0025; the MCP
-adapter `mcptools`, a nested module, follows maestro-llms#194).
+MCP-served tools (`agent.ToolSource`, ADR 0025, with the MCP adapter
+`mcptools`, a nested module over `maestro-llms/mcp`).
 Next are the external contract's gaps (ADR 0024) and a small example
 agent to exercise the standalone host end to end (#39). The
 requirements are in [docs/requirements.md](docs/requirements.md), and
@@ -251,7 +251,16 @@ Load-bearing decisions so far:
   unreachable write are model-visible, a write the server failed or
   never answered fails the run with `tool_error`; `agent/agenttest.Source`
   stands in for a server; the MCP adapter `mcptools` is a nested module
-  (own tags, requires a released root) after maestro-llms#194
+  (own `go.mod` and `mcptools/vX.Y.Z` tags, requiring a released root
+  and `maestro-llms/mcp`, never a `replace`; CI also tests it against
+  root HEAD through a temporary `go.work`): `mcptools.New(dial, opts)`
+  dials a `mcpclient.Transport` on first use, sends the call's run
+  context, fence (owner, epoch), action and write key as `_meta`
+  (`maestro-agents/...` keys, `mcptools.Meta*`, version `v` 1, agreed
+  with Morris; a call without them is never sent), maps
+  `mcpclient`'s `ErrNotSent`/`ErrServerError`/`ErrOutcomeUnknown` to
+  the three classes, and retires a session after any other failure,
+  closing it after its last call in flight and dialing again
 
 ### Related repositories
 
@@ -323,6 +332,7 @@ agent/               # Agent types, registry, manifests, run controller, model s
 standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017); in process (ADR 0020); submitted runs (ADR 0021); in-process watch (ADR 0022)
 scoring/             # The scoring harness (TEST-4): run inputs, compare with an answer key, report (ADR 0020)
 agent/agenttest/     # Stand-ins for the runtime's host seams in tests: a scripted tool source (ADR 0025)
+mcptools/            # Nested module (own go.mod, tags mcptools/vX.Y.Z): the MCP adapter, an agent.ToolSource over maestro-llms/mcp (ADR 0025, item 8)
 store/               # Store records, operations, errors and interface (ADR 0005, 0006)
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
@@ -345,13 +355,14 @@ API takes shape; update this section in the PR that adds them.
 
 ## Makefile Targets
 
-- `make build` — Compile all packages, and build each `cmd/<agent>`, if any, to `bin/<agent>`
-- `make test` — Unit tests with the race detector and coverage (no network, no keys)
-- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites)
-- `make lint` — `go vet` + `golangci-lint run` (read-only; also checks formatting and imports)
-- `make vuln` — `govulncheck ./...`
+- `make build` — Compile all packages, root and nested modules (`mcptools`), and build each `cmd/<agent>`, if any, to `bin/<agent>`
+- `make test` — Unit tests with the race detector and coverage (no network, no keys), root and nested modules (`mcptools`); setting `TESTARGS` runs the root module only (use `make test-mcptools` for the nested one)
+- `make test-mcptools` — The `mcptools` module's unit tests alone (takes `TESTARGS`)
+- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites), root and nested modules; `TESTARGS` runs the root module only
+- `make lint` — `go vet` + `golangci-lint run`, root and nested modules (read-only; also checks formatting and imports)
+- `make vuln` — `govulncheck ./...`, root and nested modules
 - `make test-coverage` — HTML coverage report in `coverage/`
-- `make tidy` — `go mod tidy`
+- `make tidy` — `go mod tidy`, root and nested modules
 - `make deps` — Check Go, install golangci-lint, govulncheck and the git hooks
 - `make install-hooks` — Install the pre-push hook (`make lint` + `make test`)
 - `make clean` — Remove build artifacts

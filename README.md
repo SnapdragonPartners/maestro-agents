@@ -30,7 +30,10 @@ are in the [ADRs](docs/adr/README.md).
 
 ## Layout
 
-The library lives at the module root and in its subpackages. Agents
+The library lives at the module root and in its subpackages. The MCP
+adapter, `mcptools/`, is a nested module of its own (tagged
+`mcptools/vX.Y.Z`), so only programs that import it take on the MCP SDK.
+Agents
 built on it live in their own modules, such as those in
 [morris-agents](https://github.com/SnapdragonPartners/morris-agents);
 an executable kept here would live under `cmd/<agent>/`.
@@ -45,7 +48,11 @@ make build    # compile everything; agents build to bin/<agent>
 make test     # unit tests with the race detector
 make lint     # go vet + golangci-lint
 make vuln     # govulncheck
+make tidy     # go mod tidy
 ```
+
+`build`, `test`, `lint`, `vuln` and `tidy` cover the nested `mcptools`
+module too; `make test-mcptools` runs its tests alone.
 
 Contributor and agent workflow (branching, pre-push review, PR conventions)
 is in [CLAUDE.md](CLAUDE.md), also available as `AGENTS.md`.
