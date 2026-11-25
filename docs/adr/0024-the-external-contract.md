@@ -503,6 +503,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
       error is classified `unreachable`, `source_error` or `unknown`;
       the stand-in is `agent/agenttest.Source`. The MCP adapter
       (`mcptools`) is a nested module, built after maestro-llms#194.
+    - **As built (#45):** the MCP adapter exists: `mcptools`, a nested
+      module over `maestro-llms/mcp` v0.3.0 (ADR 0025 item 8 and its
+      As-built note), sending each call's run context and fence in
+      `_meta` (`docs/contract.md` section 7).
 
 18. **Gaps, each its own issue:** check before start (item 5, #35, built);
     cancel requests (item 6, #26, built); status (item 7, #27); the Postgres

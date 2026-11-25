@@ -355,14 +355,14 @@ API takes shape; update this section in the PR that adds them.
 
 ## Makefile Targets
 
-- `make build` — Compile all packages, and build each `cmd/<agent>`, if any, to `bin/<agent>`
-- `make test` — Unit tests with the race detector and coverage (no network, no keys), root and nested modules (`mcptools`)
+- `make build` — Compile all packages, root and nested modules (`mcptools`), and build each `cmd/<agent>`, if any, to `bin/<agent>`
+- `make test` — Unit tests with the race detector and coverage (no network, no keys), root and nested modules (`mcptools`); setting `TESTARGS` runs the root module only (use `make test-mcptools` for the nested one)
 - `make test-mcptools` — The `mcptools` module's unit tests alone (takes `TESTARGS`)
-- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites)
+- `make test-integration` — Tests behind the `integration` build tag (may need network or keys; each skips without its prerequisites), root and nested modules; `TESTARGS` runs the root module only
 - `make lint` — `go vet` + `golangci-lint run`, root and nested modules (read-only; also checks formatting and imports)
-- `make vuln` — `govulncheck ./...`
+- `make vuln` — `govulncheck ./...`, root and nested modules
 - `make test-coverage` — HTML coverage report in `coverage/`
-- `make tidy` — `go mod tidy`
+- `make tidy` — `go mod tidy`, root and nested modules
 - `make deps` — Check Go, install golangci-lint, govulncheck and the git hooks
 - `make install-hooks` — Install the pre-push hook (`make lint` + `make test`)
 - `make clean` — Remove build artifacts

@@ -189,6 +189,9 @@ func (s *Source) Tools(ctx context.Context) ([]llms.ToolDefinition, error) {
 // call's outcome unknown. A failure other than the server's answer retires
 // the session, so the next use dials again.
 func (s *Source) Call(ctx context.Context, call *agent.ServedCall) (toolloop.ToolResult, error) {
+	if s.life.Err() != nil { // closed: say so before judging the call
+		return toolloop.ToolResult{}, fmt.Errorf("mcptools: %w: %w", agent.ErrSourceUnreachable, ErrClosed)
+	}
 	if call == nil {
 		return toolloop.ToolResult{}, fmt.Errorf("mcptools: %w: nil call", agent.ErrSourceUnreachable)
 	}

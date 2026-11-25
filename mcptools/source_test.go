@@ -879,6 +879,13 @@ func TestErrClosedAfterClose(t *testing.T) {
 	if err := src.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// Even a call the source would refuse on its own reports ErrClosed.
+	for name, call := range map[string]*agent.ServedCall{"nil call": nil, "invalid arguments": served("echo", `{"msg":`)} {
+		_, err := src.Call(context.Background(), call)
+		if !errors.Is(err, mcptools.ErrClosed) || class(err) != "unreachable" {
+			t.Errorf("Call(%s) after Close = %v, want ErrClosed and unreachable", name, err)
+		}
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for range 8 {
