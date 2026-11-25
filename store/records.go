@@ -24,9 +24,14 @@ type Ownership struct {
 	// reopened, which treats every recorded owner as having no lease
 	// (ADR 0005, item 16).
 	LeaseExpiry time.Time `json:"lease_expiry"`
-	Instance    string    `json:"instance"`
-	Owner       string    `json:"owner,omitempty"`
-	Epoch       uint64    `json:"epoch"`
+	// AsOf is the store's clock when it read the record (or returned it
+	// from a claim or heartbeat), so Live(AsOf) judges the lease by the
+	// clock that set it, whatever the reader's own clock says (ADR 0024,
+	// item 7).
+	AsOf     time.Time `json:"as_of"`
+	Instance string    `json:"instance"`
+	Owner    string    `json:"owner,omitempty"`
+	Epoch    uint64    `json:"epoch"`
 }
 
 // Live reports whether the instance has an owner whose lease has not

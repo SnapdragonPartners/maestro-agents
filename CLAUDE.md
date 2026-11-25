@@ -219,7 +219,8 @@ Load-bearing decisions so far:
   `RunStatus`, never stored, phase `queued`, `running`, `waiting`,
   `stopping` or terminal with RUN-3's reason, and progress (state and
   kind while not terminal, step, budgets used against limits, last
-  activity from the store-stamped `store.Entry.At`, requests and
+  activity from the store-stamped `store.Entry.At`, the lease judged
+  live by the store's clock, `store.Ownership.AsOf`, requests and
   artifacts empty until #31/#30), and `agent.InstanceStatus` an
   `InstanceReport`, both bounded by a run, not the instance's history,
   over `Reader.Runs(instance, RunQuery)`: paged by `After` run ID,

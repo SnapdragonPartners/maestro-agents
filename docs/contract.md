@@ -244,7 +244,7 @@ Key order carries no meaning. The fields:
 | Phase | Meaning |
 |---|---|
 | `queued` | `runnable`, and no live lease on the instance |
-| `running` | `runnable`, and a live lease |
+| `running` | `runnable`, and a live lease, judged by the store's clock (`store.Ownership.AsOf`, the store's reading when it returned the record), never the reader's |
 | `waiting` | `waiting` for input (STM-8, planned, #34; not produced before then) |
 | `stopping` | a cancel request, not yet terminal (whatever else holds) |
 | `succeeded`, `failed`, `cancelled` | terminal, with RUN-3's reason |

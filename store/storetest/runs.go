@@ -163,3 +163,26 @@ func testEntryTimes(t testing.TB, h Harness) {
 		}
 	}
 }
+
+// Every ownership a store returns carries its clock's reading, by which a
+// reader judges the lease (ADR 0024, item 7).
+func testOwnershipAsOf(t testing.TB, h Harness) {
+	s, clk := open(t, h, nil)
+	ctx := context.Background()
+	createRun(t, s, instance, runID, "trigger-1")
+	clk.Advance(time.Second)
+	own, err := s.Claim(ctx, instance, "owner-a", lease)
+	if err != nil || !own.AsOf.Equal(clk.Now()) || !own.Live(own.AsOf) {
+		t.Fatalf("Claim = %+v, %v; want as of %v and live", own, err, clk.Now())
+	}
+	clk.Advance(time.Second)
+	hb, _, err := s.Heartbeat(ctx, own.Fence(), lease)
+	if err != nil || !hb.AsOf.Equal(clk.Now()) {
+		t.Fatalf("Heartbeat = %+v, %v; want as of %v", hb, err, clk.Now())
+	}
+	clk.Advance(2 * lease)
+	read, err := s.Ownership(ctx, instance)
+	if err != nil || !read.AsOf.Equal(clk.Now()) || read.Live(read.AsOf) {
+		t.Fatalf("Ownership after the lease = %+v, %v; want as of %v and not live", read, err, clk.Now())
+	}
+}

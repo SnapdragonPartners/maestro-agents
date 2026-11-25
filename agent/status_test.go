@@ -13,6 +13,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-agents/agent"
 	"github.com/SnapdragonPartners/maestro-agents/store"
 	"github.com/SnapdragonPartners/maestro-agents/store/memstore"
+	"github.com/SnapdragonPartners/maestro-agents/store/storetest"
 )
 
 func status(t testing.TB, s store.Reader, run string) agent.RunStatus {
@@ -199,6 +200,23 @@ func TestStatusModelTail(t *testing.T) {
 	}
 	if !sawTail {
 		t.Fatal("no crash point left a model attempt past the checkpoint")
+	}
+}
+
+// The lease is judged by the store's clock, not the reader's: a store
+// clock far behind the wall clock still shows a fresh claim running, and
+// one whose lease has expired by the store's clock shows queued.
+func TestStatusStoreClock(t *testing.T) {
+	clk := storetest.NewClock() // 2026-01-01, far from the wall clock
+	s := memstore.New(memstore.WithClock(clk.Now))
+	createRun(t, s, "r1", `{"target":3}`)
+	claim(t, s)
+	if st := status(t, s, "r1"); st.Phase != agent.PhaseRunning {
+		t.Fatalf("phase under a fresh lease = %s, want running", st.Phase)
+	}
+	clk.Advance(2 * time.Minute)
+	if st := status(t, s, "r1"); st.Phase != agent.PhaseQueued {
+		t.Fatalf("phase after the lease expired by the store's clock = %s, want queued", st.Phase)
 	}
 }
 

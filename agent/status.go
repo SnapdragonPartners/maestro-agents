@@ -200,7 +200,7 @@ func runStatus(ctx context.Context, r store.Reader, run *store.Run) (RunStatus, 
 			return RunStatus{}, fmt.Errorf("agent: status of run %q: %w", run.ID, err)
 		}
 		st.Phase = PhaseQueued
-		if own.Live(time.Now()) {
+		if own.Live(own.AsOf) {
 			st.Phase = PhaseRunning
 		}
 	}

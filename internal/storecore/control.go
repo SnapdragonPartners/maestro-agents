@@ -12,7 +12,7 @@ import (
 // ownership combines the ownership file with the in-memory lease. The
 // caller holds mu.
 func (e *Engine) ownership(instance string, f ownershipFile) store.Ownership {
-	o := store.Ownership{Instance: instance, Owner: f.Owner, Epoch: f.Epoch}
+	o := store.Ownership{Instance: instance, Owner: f.Owner, Epoch: f.Epoch, AsOf: e.now().UTC()}
 	if f.Owner != "" {
 		o.LeaseExpiry = e.leases[instance]
 	}

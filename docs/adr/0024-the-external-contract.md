@@ -222,6 +222,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      active before it was created. One commit stamps its entries and
      its run-record change with one time, and an entry is never stamped
      earlier than the run's previous one.
+   - A lease is live by the store's clock, the one that set its expiry:
+     every ownership record a store returns carries that clock's reading
+     (`store.Ownership.AsOf`), and the phase is `running` when
+     `Live(AsOf)`, whatever the reader's own clock says.
    - Both are JSON values a host serves as it likes: Morris in its chat
      entries and runs page, the app host and the wire handler at
      `GET /v1/runs/{id}/status` and `GET /v1/instances/{id}/status`.
@@ -587,7 +591,8 @@ Each takes effect with the issue that builds it.
   lookup of a run by (instance, trigger ID), which item 11's open
   requests need. `Reader.Artifact` takes the instance and answers only
   for a digest linked to it (item 9). An execution-record entry
-  gains its commit time, which the store stamps (item 7). ADR 0006
+  gains its commit time, which the store stamps, and an ownership
+  record the store's clock when it is returned (item 7). ADR 0006
   item 5's single writer of the run record is unchanged.
 - **ADR 0017, item 18:** a heartbeat that returns a cancel request
   cancels the activation with the request's cause.

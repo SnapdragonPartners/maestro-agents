@@ -20,6 +20,7 @@ func cases() []testCase {
 		{name: "ClaimAndLease", fn: testClaimAndLease},
 		{name: "ExpiredOwnerStillCommits", fn: testExpiredOwnerStillCommits},
 		{name: "Heartbeat", fn: testHeartbeat},
+		{name: "OwnershipAsOf", fn: testOwnershipAsOf},
 		{name: "ReleaseControlPlane", fn: testReleaseControlPlane},
 		{name: "ReleaseInCommit", fn: testReleaseInCommit},
 		{name: "Claimable", fn: testClaimable},
