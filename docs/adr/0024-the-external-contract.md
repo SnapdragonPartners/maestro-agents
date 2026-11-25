@@ -579,6 +579,12 @@ Each takes effect with the issue that builds it.
   `Committer`'s "a commit whose operations change nothing … cannot
   fail after those checks" no longer covers it. The doc comments in
   `store/store.go` and `store/ops.go` change with #29.
+- **ADR 0004, item 1:** an execution-record entry also carries its
+  commit time, which the store stamps by its own clock and the caller
+  never sets (item 7). Built with #27.
+- **ADR 0003, item 7:** whether a lease is live is judged by the
+  store's clock, which every ownership record the store returns
+  carries (`store.Ownership.AsOf`, item 7). Built with #27.
 - **ADR 0006, item 7:** `ErrNotFound` joins the definite errors
   `store.IsDefinite` reports: a write that returns it, `RequestCancel`
   for an unknown run (item 6), wrote nothing. Built with #26.

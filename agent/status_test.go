@@ -186,7 +186,8 @@ func TestStatusModelTail(t *testing.T) {
 			attempts := countKind(es, agent.EntryModelAttempt)
 			kind := map[string]agent.StateKind{"work": agent.StateModel, "review": agent.StateCode}
 			if st.Phase != agent.PhaseRunning || st.State == nil || st.State.Kind == "" || kind[st.State.Name] != st.State.Kind ||
-				st.Budgets == nil || st.Budgets.Turns.Used != int64(attempts) || !st.LastActivity.Equal(es[len(es)-1].At) {
+				st.Budgets == nil || st.Budgets.Turns.Used != int64(attempts) || !st.LastActivity.Equal(es[len(es)-1].At) ||
+				st.Step != es[len(es)-1].Step {
 				t.Fatalf("status = %+v, state %+v, budgets %+v; %d attempts recorded", st, st.State, st.Budgets, attempts)
 			}
 			cp, _, err := s.LatestCheckpoint(context.Background(), inst)

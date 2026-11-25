@@ -238,7 +238,6 @@ func progress(ctx context.Context, r store.Reader, run *store.Run, st *RunStatus
 	switch {
 	case cs != nil:
 		st.State = &StateStatus{Name: cs.State, Kind: cs.StateKind}
-		st.Step = max(st.Step, cs.Step)
 		limits = &budgetsAt{budgets: cs.Budgets}
 		used = tailConsumption(cs, es, covered)
 	case run.Status.Terminal() && len(run.Consumed) > 0:
