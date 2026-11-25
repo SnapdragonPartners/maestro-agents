@@ -140,7 +140,8 @@ var errClosed = errors.New("store closed")
 // precondition sees the commit's earlier operations (ADR 0005, item 13).
 type tx struct {
 	// now is the commit's time by the store's clock, stamped on its
-	// entries and its run-record change alike.
+	// entries and its run-record change alike unless the clock stepped
+	// back, when each keeps its record's latest time.
 	now   time.Time
 	b     Backend
 	over  map[string]int
@@ -462,7 +463,11 @@ func (e *Engine) updateRun(t *tx, f store.Fence, i int, u *store.RunUpdate) erro
 		run.Consumed = u.Consumed
 	}
 	run.Version++
-	run.UpdatedAt = t.now
+	// Like an entry's time, never earlier than the record's last change
+	// (ADR 0024, item 7).
+	if t.now.After(run.UpdatedAt) {
+		run.UpdatedAt = t.now
+	}
 	return t.putJSON(runPath(enc), run)
 }
 

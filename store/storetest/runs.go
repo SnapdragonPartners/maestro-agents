@@ -152,6 +152,15 @@ func testEntryTimes(t testing.TB, h Harness) {
 	// A clock stepped back stamps the previous entry's time.
 	clk.Advance(-time.Minute)
 	commit(t, e.s, e.own.Fence(), store.AppendEntryOp(entry(4, "turn")))
+	// The run record's change keeps its latest time too.
+	clk.Advance(2 * time.Minute)
+	t3 := clk.Now()
+	commit(t, e.s, e.own.Fence(), store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 1, Status: store.StatusRunnable}))
+	clk.Advance(-time.Hour)
+	commit(t, e.s, e.own.Fence(), store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 2, Status: store.StatusRunnable}))
+	if got := getRun(t, e.s, runID).UpdatedAt; !got.Equal(t3) {
+		t.Fatalf("run updated at %v after the clock stepped back, want %v", got, t3)
+	}
 	got := entries(t, e.s, runID, 0)
 	want := []time.Time{t1, t1, t2, t2}
 	if len(got) != len(want) {

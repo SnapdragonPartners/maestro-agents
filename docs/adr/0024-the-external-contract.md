@@ -220,8 +220,10 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      (the run's creation and change, the cancel request, the triggers'
      enqueue times, leases), so a worker's clock never shows a run
      active before it was created. One commit stamps its entries and
-     its run-record change with one time, and an entry is never stamped
-     earlier than the run's previous one.
+     its run-record change with one time, except that neither is ever
+     stamped earlier than its record's latest time (the run's previous
+     entry, the run record's previous change), so a clock stepped back
+     reorders neither.
    - A lease is live by the store's clock, the one that set its expiry:
      every ownership record a store returns carries that clock's reading
      (`store.Ownership.AsOf`), and the phase is `running` when

@@ -85,6 +85,8 @@ type Reason struct {
 // Run is a run record (STORE-1).
 type Run struct {
 	CreatedAt time.Time `json:"created_at"`
+	// UpdatedAt is the run record's latest change, by the store's clock,
+	// never earlier than the change before it (ADR 0024, item 7).
 	UpdatedAt time.Time `json:"updated_at"`
 	// ID is the host-assigned run ID, unique within the store.
 	ID string `json:"id"`
