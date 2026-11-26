@@ -1,8 +1,9 @@
 // Package storetest is the conformance suite for [store.Store]
 // implementations (ADR 0005, item 6): the operations' semantics, claims and
-// leases, run creation, an instance's runs paged, entries' commit times
-// and queued triggers, cancel requests (ADR 0024,
-// item 6) including one racing the final commit, durability across a reopen,
+// leases, run creation and queued triggers, cancel requests (ADR 0024,
+// item 6) including one racing the final commit, an instance's runs paged,
+// entries' commit times and the clock a returned ownership carries (ADR
+// 0024, item 7), durability across a reopen,
 // TEST-6's two stale-owner interleavings through the store's pause hook,
 // and TEST-5: an agent's activation stopped at every durable boundary and
 // continued by a new one, with no effect duplicated and no work lost

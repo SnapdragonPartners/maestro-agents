@@ -100,8 +100,10 @@ type ControlPlane interface {
 // reflect every commit made before the claim and the owner's own commits
 // since. Reads of objects may be stale, except as [ConflictError] states.
 type Reader interface {
-	// Ownership returns the instance's ownership record. An instance never
-	// claimed has no owner and epoch 0.
+	// Ownership returns the instance's ownership record, its AsOf the
+	// store's clock when it was read, by which a reader judges the lease
+	// live (ADR 0024, item 7). An instance never claimed has no owner and
+	// epoch 0.
 	Ownership(ctx context.Context, instance string) (Ownership, error)
 
 	// Claimable returns the ready runs: runnable runs on instances with no
