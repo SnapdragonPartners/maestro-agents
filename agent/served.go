@@ -266,7 +266,7 @@ func (a *activation) restoreServed(ctx context.Context) error {
 	if a.cs.Served == "" {
 		return nil
 	}
-	_, raw, err := a.c.store.Artifact(durable(ctx), a.cs.Served)
+	_, raw, err := a.c.store.Artifact(durable(ctx), a.run.Instance, a.cs.Served)
 	if err != nil {
 		return storeFailure(fmt.Errorf("agent: read served tool definitions %s: %w", a.cs.Served, err))
 	}

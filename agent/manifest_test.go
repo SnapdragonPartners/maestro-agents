@@ -281,7 +281,7 @@ func wantManifestRecorded(t *testing.T, s store.Store, r *agent.Registry, e stor
 	if rs.Manifest != digest || rs.TriggerKind != kind {
 		t.Fatalf("run_started = %+v, want manifest %s and trigger kind %q", rs, digest, kind)
 	}
-	_, raw, err := s.Artifact(context.Background(), rs.Manifest)
+	_, raw, err := s.Artifact(context.Background(), inst, rs.Manifest)
 	if err != nil {
 		t.Fatalf("manifest artifact: %v", err)
 	}

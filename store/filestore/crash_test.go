@@ -337,7 +337,7 @@ func TestNoOpCommitDoesNotTouchBackend(t *testing.T) {
 	if err := s.Commit(ctx, f, []store.Op{store.PutArtifactOp(a)}); err != nil {
 		t.Fatalf("re-store = %v, want nil", err)
 	}
-	if _, _, err := s.Artifact(ctx, a.Digest); err != nil {
+	if _, _, err := s.Artifact(ctx, f.Instance, a.Digest); err != nil {
 		t.Fatalf("store unusable after no-op commit: %v", err)
 	}
 	stale := f

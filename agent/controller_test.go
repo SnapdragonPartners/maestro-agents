@@ -562,7 +562,7 @@ func TestConfigurationRecorded(t *testing.T) {
 		if err := json.Unmarshal(entries(t, s, "r1")[1].Payload, &rs); err != nil {
 			t.Fatal(err)
 		}
-		if _, cfg, err := s.Artifact(ctx, rs.Config); err != nil || string(cfg) != `{"model":"a"}` {
+		if _, cfg, err := s.Artifact(ctx, inst, rs.Config); err != nil || string(cfg) != `{"model":"a"}` {
 			t.Fatalf("configuration artifact = %q, %v", cfg, err)
 		}
 	})
@@ -762,7 +762,7 @@ func TestStartRecordedOnTerminalStartFailure(t *testing.T) {
 					t.Fatalf("run_started = %+v, %v", rs, err)
 				}
 				if json.Valid([]byte(tc.config)) {
-					if _, cfg, err := s.Artifact(context.Background(), rs.Config); err != nil || string(cfg) != tc.config {
+					if _, cfg, err := s.Artifact(context.Background(), inst, rs.Config); err != nil || string(cfg) != tc.config {
 						t.Fatalf("configuration artifact = %q, %v", cfg, err)
 					}
 				} else if rs.Config != "" {

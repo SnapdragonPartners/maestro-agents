@@ -30,7 +30,9 @@ type Committer interface {
 	// error is indeterminate ([IsDefinite]).
 	//
 	// A commit whose operations change nothing (re-storing an artifact
-	// already stored) is fenced and checked all the same. The reference
+	// already stored and already linked to the fenced instance) is fenced
+	// and checked all the same. Re-storing one for an instance not yet
+	// linked to it is a write: it links it (ADR 0024, item 9). The reference
 	// stores then return without writing, so such a commit cannot fail
 	// after those checks; that is their optimization, not part of this
 	// contract: like any commit, a host store's may return an
@@ -96,7 +98,7 @@ type ControlPlane interface {
 
 // Reader holds the unfenced reads (ADR 0005, item 5). An owner's reads,
 // after its claim succeeded, of its own instance's records (ownership,
-// runs, checkpoints, execution records) and of artifacts are fresh: they
+// runs, checkpoints, execution records) and of its artifacts are fresh: they
 // reflect every commit made before the claim and the owner's own commits
 // since. Reads of objects may be stale, except as [ConflictError] states.
 type Reader interface {
@@ -140,9 +142,12 @@ type Reader interface {
 	// ([Entry.At]).
 	Entries(ctx context.Context, run string, after uint64) ([]Entry, error)
 
-	// Artifact returns an artifact's metadata and content, or
-	// [ErrNotFound].
-	Artifact(ctx context.Context, digest string) (ArtifactMeta, []byte, error)
+	// Artifact returns an artifact's metadata and content, if its digest
+	// is linked to the instance (ADR 0024, item 9): a [PutArtifact] in a
+	// commit fenced on that instance links it. A digest not linked to the
+	// instance returns [ErrNotFound], exactly as one never stored, so
+	// knowing a digest never reaches another instance's content.
+	Artifact(ctx context.Context, instance, digest string) (ArtifactMeta, []byte, error)
 
 	// Object returns an object. For an absent key ok is false and the
 	// returned Version is the one a creation must expect.

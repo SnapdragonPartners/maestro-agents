@@ -258,7 +258,7 @@ func durability(t testing.TB, h Harness) {
 	if obj, ok := object(t, s, "k"); ok || obj.Version != 2 {
 		t.Fatalf("deleted object after reopen = %+v, %v; want absent at version 2", obj, ok)
 	}
-	if _, got, rerr := s.Artifact(ctx, digest(content)); rerr != nil || string(got) != "statement" {
+	if _, got, rerr := s.Artifact(ctx, instance, digest(content)); rerr != nil || string(got) != "statement" {
 		t.Fatalf("Artifact after reopen = %q, %v", got, rerr)
 	}
 	if es := entries(t, s, runID, 0); len(es) != 1 {

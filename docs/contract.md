@@ -171,12 +171,29 @@ entry to the execution record, in the same commit:
 
 A run's artifacts are those entries, and `RunStatus.artifacts` lists
 them. Fetch the content with `Reader.Artifact(instance, digest)`
-(planned, #29): every store answers only for a digest linked to that
+(exists): every store answers only for a digest linked to that
 instance, because each put links the digest to the instance that
-committed it. Knowing a digest is therefore never enough to read another
-instance's content. Today's `Reader.Artifact(digest)` takes no instance. The host decides
+committed it, even when the content was already stored. A digest not
+linked to the instance answers `ErrNotFound`, exactly as one never
+stored, so knowing a digest is never enough to read another instance's
+content. The host decides
 where downloads appear: Morris on its runs page and in chat, the app
 host as links, and an optional copy in a local folder.
+
+### Artifact links and existing file stores (exists, ADR 0024 item 9)
+
+A file store written before artifact links existed holds artifacts no
+instance is linked to. `filestore.Open` refuses it with
+`filestore.ErrMigrationRequired` unless it is opened with
+`filestore.WithLegacyArtifactLinks(agent.ArtifactReferences)`, which
+links each stored artifact, once and atomically, to every instance
+whose own records name it: the runtime's typed digest fields in its
+entries and checkpoints, never an agent's own data. An artifact no
+instance names fails the open with a `*filestore.UnclaimedArtifactsError`
+listing the digests, with nothing written, until
+`filestore.WithArtifactOwners` states its owners. The standalone host
+passes `agent.ArtifactReferences`, so a store the runtime wrote
+migrates on first open. The memory store has nothing to migrate.
 
 ## 2. Run status
 

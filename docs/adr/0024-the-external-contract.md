@@ -338,7 +338,24 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      enforces this, not only the wire handler, so knowing a digest
      never reaches another instance's content. The runtime's own reads
      (the recorded configuration, a model state's stored content) name
-     their run's instance.
+     their run's instance. (Built with #29.)
+   - **A file store written before links existed is migrated, never
+     widened.** Its artifacts have no links, so the file store refuses
+     to open it until told how to link them: each stored artifact is
+     linked, once and in one atomic write, to every instance whose own
+     records name it in the runtime's typed digest fields (entries and
+     the checkpoint envelope, never an agent type's data, which is
+     arbitrary JSON and proves nothing; `agent.ArtifactReferences`),
+     and to owners the operator states explicitly. An artifact nobody
+     claims fails the open with nothing written; it is neither linked
+     to every instance (which would grant one instance another's
+     history) nor left readable by any instance (an isolation
+     exception this contract does not have). The standalone host
+     passes the runtime's references, so a store the runtime wrote
+     migrates on first open. Only the runtime writes artifacts, and the
+     commit that first names one stores it (ADR 0004, item 1), so the
+     runtime's tests check after every commit that its references
+     cover every artifact the instance stored.
    - **Artifact content travels on its own routes**, as raw bytes,
      never inside a JSON body; their exact shape, and how an upload
      names its instance and fence to the `Authorizer` and the store,

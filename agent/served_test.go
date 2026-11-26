@@ -54,7 +54,7 @@ type servedRun struct {
 
 func newServedRun(t *testing.T, src agent.ToolSource, script ...llms.ChatResponse) *servedRun {
 	t.Helper()
-	s := memstore.New()
+	var s store.Store = &refChecked{Store: memstore.New(), t: t, put: &putArtifacts{by: map[string]map[string]bool{}}}
 	createLedgerRun(t, s)
 	reg := registry(t, servedType())
 	r := &servedRun{t: t, s: s, reg: reg, c: agent.NewController(s, reg), client: scripted(script)}
@@ -100,7 +100,7 @@ func (r *servedRun) results() []agent.ResultEntry {
 
 func (r *servedRun) resultContent(e *agent.ResultEntry) string {
 	r.t.Helper()
-	_, raw, err := r.s.Artifact(context.Background(), e.Result)
+	_, raw, err := r.s.Artifact(context.Background(), inst, e.Result)
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestServedToolCalls(t *testing.T) {
 	if started.Served == "" {
 		t.Fatal("run_started records no served definitions")
 	}
-	_, raw, err := r.s.Artifact(context.Background(), started.Served)
+	_, raw, err := r.s.Artifact(context.Background(), inst, started.Served)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,8 +33,9 @@ type backend struct {
 
 func newBackend(t *testing.T, name string) backend {
 	t.Helper()
+	put := &putArtifacts{by: map[string]map[string]bool{}}
 	if name == "memstore" {
-		mem := memstore.New()
+		mem := &refChecked{Store: memstore.New(), t: t, put: put}
 		return backend{open: func() store.Store { return mem }}
 	}
 	dir := t.TempDir()
@@ -43,8 +44,76 @@ func newBackend(t *testing.T, name string) backend {
 		if err != nil {
 			t.Fatalf("filestore.Open: %v", err)
 		}
-		return s
+		return &refChecked{Store: s, t: t, put: put}
 	}}
+}
+
+// putArtifacts records, per instance, the digest of every artifact a
+// commit fenced on it stored.
+type putArtifacts struct {
+	by map[string]map[string]bool
+	mu sync.Mutex
+}
+
+// refChecked checks, after every commit it passes on that lands, that
+// agent.ArtifactReferences names every artifact the commit's instance has
+// stored so far (ADR 0024, item 9): the commit that first references an
+// artifact stores it (ADR 0004, item 1), so the references must cover
+// them at every commit. Every runtime test that opens its store through
+// newBackend checks the migration's completeness this way, so an
+// artifact-writing path the migration does not read fails a test.
+type refChecked struct {
+	store.Store
+	t   *testing.T
+	put *putArtifacts
+}
+
+func (s *refChecked) Commit(ctx context.Context, f store.Fence, ops []store.Op) error {
+	if err := s.Store.Commit(ctx, f, ops); err != nil {
+		return err //nolint:wrapcheck // passed through unchanged
+	}
+	s.put.mu.Lock()
+	defer s.put.mu.Unlock()
+	for _, op := range ops {
+		if op.Kind == store.OpPutArtifact {
+			if s.put.by[f.Instance] == nil {
+				s.put.by[f.Instance] = map[string]bool{}
+			}
+			s.put.by[f.Instance][op.PutArtifact.Digest] = true
+		}
+	}
+	refs, err := agent.ArtifactReferences(context.WithoutCancel(ctx), s.Store, f.Instance)
+	if err != nil {
+		s.t.Errorf("ArtifactReferences(%s) after a commit: %v", f.Instance, err)
+		return nil
+	}
+	named := map[string]bool{}
+	for _, d := range refs {
+		named[d] = true
+	}
+	for d := range s.put.by[f.Instance] {
+		if !named[d] {
+			s.t.Errorf("instance %s stored artifact %s, which ArtifactReferences does not name", f.Instance, d)
+		}
+	}
+	return nil
+}
+
+// unchecked returns the store under a refChecked one, for a test that
+// commits a record ArtifactReferences refuses on purpose.
+func unchecked(s store.Store) store.Store {
+	if r, ok := s.(*refChecked); ok {
+		return r.Store
+	}
+	return s
+}
+
+func (s *refChecked) AppendEvents(ctx context.Context, events []store.Event) error {
+	return s.Store.(store.Telemetry).AppendEvents(ctx, events) //nolint:forcetypeassert,wrapcheck // both reference stores implement it
+}
+
+func (s *refChecked) Events(ctx context.Context, run string, after uint64) ([]store.Event, error) {
+	return s.Store.(store.Telemetry).Events(ctx, run, after) //nolint:forcetypeassert,wrapcheck // both reference stores implement it
 }
 
 func forEachBackend(t *testing.T, fn func(t *testing.T, b backend)) {

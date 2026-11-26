@@ -201,7 +201,9 @@ func TestUnrecoverableRecords(t *testing.T) {
 		{name: "checkpoint format", want: agent.ErrNotActivatable, detail: "has format 2",
 			damage: func(t *testing.T, s store.Store, f store.Fence, last store.Entry, ck store.Checkpoint) store.Store {
 				t.Helper()
-				commitOps(t, s, f, store.PutCheckpointOp(store.Checkpoint{
+				// Unchecked: a checkpoint format this release does not know
+				// is one agent.ArtifactReferences refuses as well.
+				commitOps(t, unchecked(s), f, store.PutCheckpointOp(store.Checkpoint{
 					Instance: inst, Scope: ck.Scope, Seq: ck.Seq + 1, RecordSeq: last.Seq, Format: 2, State: ckState("counter"),
 				}))
 				return s
