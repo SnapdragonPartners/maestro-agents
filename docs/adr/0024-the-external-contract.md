@@ -621,6 +621,14 @@ Each takes effect with the issue that builds it.
   gains its commit time, which the store stamps, and an ownership
   record the store's clock when it is returned (item 7). ADR 0006
   item 5's single writer of the run record is unchanged.
+- **ADR 0005, item 13:** the file store's layout gains
+  `instances/<instance>/artifacts/<sha256>.json`, one per artifact
+  linked to the instance, whose existence is the link (item 9), and
+  `format/artifact-links.json`, the store-wide marker that its
+  artifacts are linked, written when a store is first opened by a
+  release that keeps links, in the same atomic write as any legacy
+  artifacts' migrated links; a store that has it is never migrated
+  again. Built with #29.
 - **ADR 0017, item 18:** a heartbeat that returns a cancel request
   cancels the activation with the request's cause.
 - **ADR 0021, item 1:** a submission may carry a principal the host

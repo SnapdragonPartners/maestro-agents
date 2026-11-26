@@ -146,7 +146,9 @@ type Reader interface {
 	// is linked to the instance (ADR 0024, item 9): a [PutArtifact] in a
 	// commit fenced on that instance links it. A digest not linked to the
 	// instance returns [ErrNotFound], exactly as one never stored, so
-	// knowing a digest never reaches another instance's content.
+	// knowing a digest never reaches another instance's content. An
+	// instance or digest the store cannot hold (an empty instance, a
+	// digest not 64 lowercase hex characters) returns [ErrInvalid].
 	Artifact(ctx context.Context, instance, digest string) (ArtifactMeta, []byte, error)
 
 	// Object returns an object. For an absent key ok is false and the
