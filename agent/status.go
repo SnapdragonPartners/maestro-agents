@@ -94,6 +94,10 @@ type BudgetUse struct {
 type CountUse struct {
 	Used  int64 `json:"used"`
 	Limit int64 `json:"limit,omitempty"`
+	// Estimated marks an estimated token budget (TokenBudget.Estimated):
+	// admitted on an estimate, its used may pass its limit by one
+	// attempt's error.
+	Estimated bool `json:"estimated,omitempty"`
 }
 
 // TimeUse is a time budget's consumption and limit. In JSON each is a Go
@@ -318,7 +322,7 @@ func budgetStatus(b *Budgets, used *Consumption) *BudgetUse {
 		limits = *b
 	}
 	out := &BudgetUse{
-		Tokens:     CountUse{Used: used.Tokens, Limit: limits.Tokens.Limit},
+		Tokens:     CountUse{Used: used.Tokens, Limit: limits.Tokens.Limit, Estimated: limits.Tokens.Estimated},
 		Turns:      CountUse{Used: int64(used.Turns), Limit: int64(limits.Turns)},
 		ActiveTime: TimeUse{Used: used.ActiveTime, Limit: limits.ActiveTime},
 	}

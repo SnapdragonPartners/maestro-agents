@@ -82,7 +82,10 @@ func testRuns(t testing.TB, h Harness) {
 	oldest := []string{"r-c", "r-a", "r-b", "r-e", "r-d"}
 	newest := slices.Clone(oldest)
 	slices.Reverse(newest)
-	for _, limit := range []int{0, 1, 2, 5, 6} {
+	// Any limit pages correctly, a store's cap included: a page it caps
+	// says more follow (the reference stores' default and cap are tested
+	// with them; a host store's are its own).
+	for _, limit := range []int{0, 1, 2, 5, 6, 1 << 30} {
 		if got := runIDs(t, s, instance, store.RunQuery{Limit: limit}); !slices.Equal(got, oldest) {
 			t.Fatalf("Runs oldest first, limit %d = %v, want %v", limit, got, oldest)
 		}
@@ -161,8 +164,17 @@ func testEntryTimes(t testing.TB, h Harness) {
 	if got := getRun(t, e.s, runID).UpdatedAt; !got.Equal(t3) {
 		t.Fatalf("run updated at %v after the clock stepped back, want %v", got, t3)
 	}
+	// One commit stamps its entries and its run-record change with one
+	// time, which a run's last activity and updated_at rely on.
+	clk.Advance(2 * time.Hour)
+	t4 := clk.Now()
+	commit(t, e.s, e.own.Fence(), store.AppendEntryOp(entry(5, "run_finished")),
+		store.UpdateRunOp(store.RunUpdate{Run: runID, ExpectVersion: 3, Status: store.StatusRunnable}))
+	if got := getRun(t, e.s, runID).UpdatedAt; !got.Equal(t4) {
+		t.Fatalf("run updated at %v with an entry in the same commit, want %v", got, t4)
+	}
 	got := entries(t, e.s, runID, 0)
-	want := []time.Time{t1, t1, t2, t2}
+	want := []time.Time{t1, t1, t2, t2, t4}
 	if len(got) != len(want) {
 		t.Fatalf("Entries = %+v", got)
 	}

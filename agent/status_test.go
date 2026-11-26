@@ -119,8 +119,10 @@ func TestStatusLifecycle(t *testing.T) {
 	})
 }
 
-// A run whose instance's latest checkpoint is a later run's reads its own
-// record, and a run refused at its start has budgets but no state.
+// A run whose instance's latest checkpoint is another run's reads its own
+// record, whether it is a new run after a finished one or a finished run
+// after a later one started; a run refused at its start has budgets but no
+// state.
 func TestStatusOfAnEarlierRun(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
@@ -131,13 +133,20 @@ func TestStatusOfAnEarlierRun(t *testing.T) {
 	}
 	before := status(t, s, "r1")
 	createRun(t, s, "r2", `{"target":5}`)
+	// Not yet started, r2 is the instance's only non-terminal run (a store
+	// allows one), and the latest checkpoint is r1's: r2 never reads it.
+	if cp, ok, err := s.LatestCheckpoint(ctx, inst); err != nil || !ok || cp.Scope.ID != "r1" {
+		t.Fatalf("latest checkpoint = %+v, %v, %v; want r1's", cp, ok, err)
+	}
+	if st := status(t, s, "r2"); st.Phase != agent.PhaseQueued || st.State != nil || st.Budgets != nil || st.Step != 0 {
+		t.Fatalf("status of r2 before its start = %+v", st)
+	}
 	if _, err := activate(ctx, ctrl, claim(t, s), "r2", 1); err != nil {
 		t.Fatal(err)
 	}
 	if after := status(t, s, "r1"); after.Step != before.Step || after.Phase != agent.PhaseSucceeded || after.State != nil {
 		t.Fatalf("status of r1 after r2 started = %+v, before %+v", after, before)
 	}
-
 	// Refused at its start: a bad trigger kind.
 	if _, _, err := s.CreateRun(ctx, store.Run{ID: "r0", Instance: "inst-2", AgentType: "counter", TriggerID: "t", TriggerKind: "nope", Trigger: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
@@ -368,6 +377,9 @@ func TestStatusJSON(t *testing.T) {
 	if err = json.Unmarshal(budgets["active_time"], &at); err != nil || at.Limit != 15*time.Minute {
 		t.Errorf("active_time = %s: %+v, %v", budgets["active_time"], at, err)
 	}
+	if cu, merr := json.Marshal(agent.CountUse{Used: 120, Limit: 100, Estimated: true}); merr != nil || string(cu) != `{"used":120,"limit":100,"estimated":true}` {
+		t.Errorf("estimated token budget = %s, %v", cu, merr)
+	}
 	if err = json.Unmarshal([]byte(`{"used":"soon"}`), &at); err == nil {
 		t.Error("a bad duration decoded")
 	}
@@ -379,5 +391,22 @@ func TestStatusJSON(t *testing.T) {
 	want2 := `"last_succeeded":null,"last_failed":null,"queued":{"oldest":null,"count":0},"instance":"inst-1","requests":[]}`
 	if !strings.HasSuffix(string(inst), want2) || !strings.HasPrefix(string(inst), `{"active":{`) {
 		t.Errorf("instance status = %s", inst)
+	}
+}
+
+// An estimated token budget says so, since its used may pass its limit.
+func TestStatusEstimatedTokens(t *testing.T) {
+	s := memstore.New()
+	ctrl := agent.NewController(s, registry(t, counterType()))
+	createRun(t, s, "r1", `{"target":3}`)
+	out, err := ctrl.Activate(context.Background(), agent.ActivationInput{
+		Fence: claim(t, s), Scope: store.Scope{Kind: store.ScopeRun, ID: "r1"}, Namespace: ns, MaxSteps: 1,
+		Budgets: agent.Budgets{Tokens: agent.TokenBudget{Limit: 1000, Estimated: true}},
+	})
+	if err != nil || out.Status != store.StatusRunnable {
+		t.Fatalf("activation = %+v, %v", out, err)
+	}
+	if st := status(t, s, "r1"); st.Budgets == nil || st.Budgets.Tokens != (agent.CountUse{Limit: 1000, Estimated: true}) {
+		t.Fatalf("budgets = %+v", st.Budgets)
 	}
 }

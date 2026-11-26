@@ -230,8 +230,9 @@ Key order carries no meaning. The fields:
   `used` and, when one is set, `limit`; `active_time`'s are Go duration
   strings; `deadline` is a time or null. For a run that is not
   terminal, `used` includes the model attempts since its last
-  checkpoint, charged as recovery charges them. Cost budgets are not
-  built and not shown.
+  checkpoint, charged as recovery charges them. A token budget admitted
+  on an estimate (`agent.TokenBudget.Estimated`) has `"estimated": true`,
+  and its `used` may pass its `limit` by one attempt's error. Cost budgets are not built and not shown.
 - `last_activity`: when the run's latest execution-record entry was
   committed, by the store's clock (`store.Entry.At`), or the run
   record's latest change if that is later.
