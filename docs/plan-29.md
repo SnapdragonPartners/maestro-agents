@@ -40,29 +40,62 @@ A store-contract change that stands without the wire.
    today, the intake agent's operators' included): such an artifact
    has metadata and content but no link, so under item 1 every
    recovery that rereads a run's recorded configuration would fail.
-   **Ownership-preserving backfill, by evidence** (round 1 P1: no
-   manufactured links). Every artifact the runtime stores is one its
-   instance then names in its own records: the configuration's and
-   served definitions' digests in the run's checkpoint state and
-   `run_started` entry, a model state's content digests in its
-   entries. So the file store, at open, links an unlinked digest to an
-   instance only if the digest's 64-hex text appears in that
-   instance's own records (its runs' entries and its checkpoints). The
-   store reads no payload's meaning, only whether the instance
-   recorded the digest, which only an instance that stored or was
-   given the content can have done. A digest no instance's records
-   name stays unlinked and is unreadable by every instance, which
-   reads nothing today either. Links are written in one atomic batch
-   with a marker record, so it runs once and a crash mid-way repeats
-   it whole. Rejected: linking every unlinked artifact to every
-   instance (grants B A's history, and the file store may be served
-   by the handler); legacy artifacts readable by any instance (an
-   isolation exception the contract does not have); refusing to open
-   and migrating in the runtime (the runtime would need a write path
-   for links outside a fenced commit, and every operator would have a
-   manual step). The memory store has no legacy. A test builds a
-   store in today's layout (two instances, artifacts referenced by
-   each, one referenced by neither) and checks the links after open.
+   **A runtime-aware migration from authoritative references; nothing
+   ambiguous is guessed** (rounds 1 and 2, P1: no manufactured links,
+   no digest-in-arbitrary-JSON evidence, no silent loss).
+   - Only the runtime writes artifacts (`agent/controller.go:675-680`:
+     the manifest, configuration and served definitions;
+     `agent/modelstate.go:202`: model-state content), and it names each
+     one in a typed field of its own entries (`RunStarted.Manifest`,
+     `.Config`, `.Served` in `agent/record.go`, and the model-state
+     entries' content digests). So `agent` exports
+     `ArtifactReferences(ctx, store.Reader, instance) ([]string, error)`:
+     it pages `Runs(instance)`, reads each run's entries, decodes only
+     the recognized kinds into their own types and collects those
+     fields. Version-aware: an entry kind it does not recognize names
+     nothing; a recognized kind whose payload does not decode is an
+     error, never skipped.
+   - The file store detects a legacy layout (artifacts present, no
+     link-format marker) and **refuses to open** it with
+     `filestore.ErrMigrationRequired`, unless opened with
+     `filestore.WithLegacyArtifactLinks(fn)`, where `fn` is
+     `agent.ArtifactReferences`'s shape. Then, before serving anything,
+     it enumerates its instances (it knows its own layout; `Reader` has
+     no instance list), links each digest `fn` returns for an instance
+     to that instance where the artifact exists, and requires every
+     stored artifact to be claimed by at least one instance.
+   - **An artifact no instance references** (valid today: storetest's
+     `durability` case commits one, and a host store or an older
+     agent might) makes the migration fail with nothing written, the
+     error listing the digests. The operator then states their owners
+     explicitly with `filestore.WithArtifactOwners(map[digest][]instance)`,
+     each instance named must exist; an unresolved digest still fails.
+     Nothing is hidden silently and nothing is granted by inference.
+   - Links and the marker are written in one atomic batch (the store's
+     journal), so a crash repeats the migration whole.
+   - The standalone host opens its file store with
+     `WithLegacyArtifactLinks(agent.ArtifactReferences)`, so an
+     operator's store written by the runtime migrates on first open
+     with no step; a store with unreferenced artifacts fails to open
+     with a message naming the digests and the owners option. (A CLI
+     flag for the owners map is left until someone needs it; a
+     runtime-written store has none.)
+   - The memory store has no legacy; the Postgres store (#28) starts
+     with links.
+   - Tests: a store in today's layout with instances A and B, each
+     with runs naming their artifacts, plus a digest appearing only
+     inside B's unrelated checkpoint data and A's entries (linked to A
+     only), plus storetest's `durability` shape (an artifact no entry
+     names): open without the option refuses; with it, the migration
+     refuses listing that digest and writes nothing; with an owners
+     map it links as stated; a reopen does not migrate again; a crash
+     mid-batch repeats it.
+   Rejected: linking unlinked artifacts to every instance (grants B
+   A's history); legacy artifacts readable by any instance (an
+   isolation exception the contract does not have); evidence by digest
+   text in an instance's records (round 2: checkpoint state and entry
+   payloads are arbitrary JSON, so recording a digest proves nothing).
+
 5. **Runtime callers** pass their run's instance:
    `agent/controller.go` (recorded configuration),
    `agent/modelstate.go` (stored model-state content),
@@ -216,11 +249,14 @@ that names a record outside the route's own instance or namespace
   `AppendEvents` authorizes every event's run before any write and is
   refused as a whole; a refused `Events` answers `ErrNotFound`.
 - **`Claimable`:** store-wide, no instance (ADR 0024 item 9).
-- **`Runs` with `After`:** the handler reads the cursor's run first; a
-  cursor that is missing or belongs to another instance answers
-  `ErrNotFound` alike, never the store's `ErrInvalid` for a foreign
-  cursor (which `internal/storecore/reads.go` returns with the other
-  instance's ID).
+- **`Runs` with `After`:** the handler reads the cursor's run first
+  and authorizes it on that run's instance, as a run-only route. A
+  refused cursor answers `ErrNotFound`, exactly as a missing one; an
+  authorized cursor goes to the store unchanged, so a foreign cursor
+  the caller may see still answers the store's `ErrInvalid`
+  (`store.RunQuery.After`, `storetest/runs.go`), and the contract is
+  unchanged (round 2 P1). The store's message naming the other
+  instance never crosses the wire (below).
 - **`Commit`:** authorized on the fence's instance, with every
   namespace its operations touch, deduplicated. Its operations name
   runs (`append_entry`, `update_run`, a checkpoint's scope) and an
