@@ -40,23 +40,29 @@ A store-contract change that stands without the wire.
    today, the intake agent's operators' included): such an artifact
    has metadata and content but no link, so under item 1 every
    recovery that rereads a run's recorded configuration would fail.
-   Proposal: the file store, at open, backfills links from what it
-   already holds, for each run's `run_started` entry linking the
-   digests that entry names (configuration, served definitions) to
-   the run's instance, and for model-state content the digests the
-   run's entries name. **Open question for review:** the runtime
-   knows which entries name digests, the store does not (entry kinds
-   and payloads are the runtime's, opaque to the store). Alternatives:
-   (a) the store links every unlinked artifact to every instance that
-   existed when it was opened, a one-time, local-only widening that
-   is no worse than today's digest-only reads; (b) refuse to open a
-   store with unlinked artifacts and ship a one-shot migration in the
-   runtime (`agent` walks each run's entries); (c) leave legacy
-   artifacts readable by any instance, documented, in the reference
-   stores only. I lean to (a): it keeps the store ignorant of entry
-   payloads, it runs once (a marker file records it), and the stores
-   it touches are single-operator local stores. The memory store has
-   no legacy.
+   **Ownership-preserving backfill, by evidence** (round 1 P1: no
+   manufactured links). Every artifact the runtime stores is one its
+   instance then names in its own records: the configuration's and
+   served definitions' digests in the run's checkpoint state and
+   `run_started` entry, a model state's content digests in its
+   entries. So the file store, at open, links an unlinked digest to an
+   instance only if the digest's 64-hex text appears in that
+   instance's own records (its runs' entries and its checkpoints). The
+   store reads no payload's meaning, only whether the instance
+   recorded the digest, which only an instance that stored or was
+   given the content can have done. A digest no instance's records
+   name stays unlinked and is unreadable by every instance, which
+   reads nothing today either. Links are written in one atomic batch
+   with a marker record, so it runs once and a crash mid-way repeats
+   it whole. Rejected: linking every unlinked artifact to every
+   instance (grants B A's history, and the file store may be served
+   by the handler); legacy artifacts readable by any instance (an
+   isolation exception the contract does not have); refusing to open
+   and migrating in the runtime (the runtime would need a write path
+   for links outside a fenced commit, and every operator would have a
+   manual step). The memory store has no legacy. A test builds a
+   store in today's layout (two instances, artifacts referenced by
+   each, one referenced by neither) and checks the links after open.
 5. **Runtime callers** pass their run's instance:
    `agent/controller.go` (recorded configuration),
    `agent/modelstate.go` (stored model-state content),
@@ -146,14 +152,29 @@ today:
 So the handler's memory is the cost: up to `MaxArtifactBytes` per
 artifact, bounded per request by `MaxBodyBytes`, times concurrent
 commits. Proposal: multipart commit now; **reserve** the extension, so
-#28 can add it without a wire version change: an optional store
-interface (`store.ArtifactUploader`: a fenced
-`UploadArtifact(ctx, fence, digest, mediaType, io.Reader)`), served at
-`PUT /v1/instances/{i}/artifacts/{digest}` only when the inner store
-implements it, after which a commit's `put_artifact` may name an
-uploaded digest without a part. The client uses it for content above a
-threshold when the server advertises it (healthz or an `OPTIONS`).
-Whether #28 needs it is #28's decision; this PR builds neither.
+#28 can add it without a wire version change: a commit's
+`put_artifact` may name a digest with no part, meaning "content already
+uploaded for this fence", which today's handler refuses with
+`ErrInvalid` and a later one accepts when the inner store implements an
+optional upload interface. Two shapes fit, and #28 picks:
+
+- **Through the handler:** `store.ArtifactUploader`, a fenced
+  `UploadArtifact(ctx, fence, digest, mediaType, io.Reader)`, served at
+  `PUT /v1/instances/{i}/artifacts/{digest}` with the fence in the
+  request, passed to the `Authorizer` (as `Call.Fence`) and the store,
+  which pins and streams it to the blob backend (#28's sketch).
+- **Direct to the blob backend:** the handler, on a fenced and
+  authorized request, returns a short-lived signed upload URL for that
+  instance and digest (Cloud Storage for Morris), recording the pin;
+  the worker uploads there itself, then commits the reference, so the
+  bytes never pass through the handler. The commit's pin check and the
+  sweep keep ADR 0024 item 8's guarantees (content is reachable only
+  through a committed link; orphans are swept). This needs the store
+  to mint URLs and the worker to reach the backend: #28's and Morris's
+  call.
+
+The client uses whichever the server advertises (healthz) for content
+above a threshold. This PR builds neither.
 **Question for review:** is reserving this enough, or should the
 streaming route be designed now, given artifacts are expected to stay
 well under 64 MiB (manifests, configurations, transcripts, exports)?
@@ -166,38 +187,83 @@ otherwise.
 
 **Authorization.** `Authorizer` is
 `Authorize(ctx context.Context, c Call) error` with
-`Call{Op string; Instance string; Run string; Namespaces []string}`;
-the request's context carries whatever the host's authentication put
-there.
+`Call{Op string; Instance string; Run string; Namespaces []string;
+Fence *store.Fence; Owner string; StoreWide bool}`; the request's
+context carries whatever the host's authentication put there. `Fence`
+is set, exactly as the request carries it, for every fenced call
+(`Commit`, `Heartbeat`, `Release`, and the reserved upload), and
+`Owner` for `Claim`, so a host can bind an owner identity to a token
+(round 1 P1: ADR 0024 item 9 and f-046011 ask that the upload name its
+fence to the `Authorizer`). A test checks each call's `Call` field by
+field.
 
-- A call that names only a run (`Run`, `Entries`, `CancelRequest`,
-  `RequestCancel`, `Events`, run status): the handler reads the run
-  first, passes its instance, and a refusal answers `ErrNotFound`,
-  exactly as a missing run (ADR 0024 item 9).
-- `Claimable`: `Call` with no instance (ADR 0024 item 9).
-- `Commit`: the fence's instance, and every namespace the operations
-  touch, deduplicated, so a run's token is confined to its instance
-  and namespace.
-- `AppendEvents`: events may span runs; each run's instance is read and
-  authorized, all before any write.
+The rule, one choke point (`resolve` in the handler) for every input
+that names a record outside the route's own instance or namespace
+(round 1 P1: indirect references):
+
+- **Run-only routes** (`Run`, `Entries`, `CancelRequest`,
+  `RequestCancel`, run status): the handler reads the run and
+  authorizes on its instance; a refusal answers `ErrNotFound`, exactly
+  as a missing run (ADR 0024 item 9).
+- **Telemetry** (`Events`, `AppendEvents`), whose runs need no run
+  record (`store.Telemetry` accepts events for any valid run ID, and
+  `storetest` checks it on an empty store): authorized on the run's
+  instance when the run exists, and as a store-wide call
+  (`StoreWide`, no instance) when it does not, so the telemetry
+  contract is unchanged, an executing service's identity (which writes
+  telemetry) passes, and a token scoped to an instance is refused both
+  for a foreign run and for an absent one, which therefore look alike.
+  `AppendEvents` authorizes every event's run before any write and is
+  refused as a whole; a refused `Events` answers `ErrNotFound`.
+- **`Claimable`:** store-wide, no instance (ADR 0024 item 9).
+- **`Runs` with `After`:** the handler reads the cursor's run first; a
+  cursor that is missing or belongs to another instance answers
+  `ErrNotFound` alike, never the store's `ErrInvalid` for a foreign
+  cursor (which `internal/storecore/reads.go` returns with the other
+  instance's ID).
+- **`Commit`:** authorized on the fence's instance, with every
+  namespace its operations touch, deduplicated. Its operations name
+  runs (`append_entry`, `update_run`, a checkpoint's scope) and an
+  instance (a checkpoint); the store refuses a missing or foreign one
+  alike with `ErrInvalid`, and the message is withheld (below), so the
+  answer is the same for both.
+- **`CreateRun`:** a run ID already in use answers `ErrInvalid`
+  whichever instance holds it; run IDs are unique per store (ADR
+  0003), so this one bit about a guessed ID cannot be hidden without
+  changing that. ADR 0026 says so and advises a host that scopes
+  tokens to derive run IDs under the instance (the standalone host's
+  `<instance>.<hex>` already does); `Call.Run` carries the requested ID
+  so the `Authorizer` can enforce that.
+- **Instance- and namespace-keyed routes** (claim, triggers, runs,
+  checkpoints, ownership, active run, artifacts, objects, instance
+  status): authorized on the path's instance or namespace; nothing in
+  them names another.
 - Healthz is not authorized.
 - Any other refusal is HTTP 403, which the client returns as
   `storehttp.ErrForbidden`, wrapping `store.ErrInvalid`: definite,
   nothing applied, so a host does not reread and retry a bad token for
   ever.
 
-**Errors.** The error body is `{"class", "message"}` plus, for a
-conflict, `{"kind", "op", "current", "detail"}`. Classes: `ownership`,
-`invalid`, `not_found`, `not_claimable`, `instance_busy`, `conflict`,
-`forbidden`, and `unavailable` (the inner store's `ErrUnusable` or any
-other error; indeterminate, never `store.ErrUnusable` on the client,
-which would tell the host to reopen the client). Status codes follow
-(409 conflict / ownership / not claimable / busy, 400 invalid, 404, 403,
-503), but the client decides by `class`, and anything it cannot parse,
-a dropped connection or a 5xx without a class included, is
-indeterminate (ADR 0003 item 14). The message carries the inner
-error's text; whether to redact it is a host option (`Redactor`-like
-hook) **or not needed (question for review)**.
+Review: enumerate every input at this boundary against the list above.
+
+**Errors.** The error body is `{"class", "message", "request_id"}`
+plus, for a conflict, `{"kind", "op", "current"}`. Classes:
+`ownership`, `invalid`, `not_found`, `not_claimable`, `instance_busy`,
+`conflict`, `forbidden`, and `unavailable` (the inner store's
+`ErrUnusable` or any other error; indeterminate, never
+`store.ErrUnusable` on the client, which would tell the host to reopen
+the client). Status codes follow (409 conflict / ownership / not
+claimable / busy, 400 invalid, 404, 403, 503), but the client decides
+by `class`, and anything it cannot parse, a dropped connection or a 5xx
+without a class included, is indeterminate (ADR 0003 item 14).
+**The inner error's text never crosses the wire**: `message` is fixed
+per class, the conflict's `Detail` is dropped, and the handler logs
+the inner error with the request ID through the host's `*slog.Logger`
+(an option). Store messages name other instances and runs (the cursor
+and commit cases above), so sending them would undo the masking; a
+caller debugging its own `ErrInvalid` finds the text in the server's
+log by request ID. This answers the round's question 3 without a
+redaction hook.
 
 **Retries and timeouts.** The client never retries; an indeterminate
 error goes back to the host, whose reread-before-retry (ADR 0003 item
@@ -223,7 +289,12 @@ read (`Ownership` of a fixed probe instance ID).
   garbage body, connection drop mid-response all indeterminate;
   authorization (run-only calls answer `ErrNotFound` when refused,
   `Claimable` sees no instance, a commit sees every namespace,
-  `AppendEvents` across runs refused as a whole); multipart commit
+  `AppendEvents` across runs refused as a whole, `Call` field by field
+  including `Fence` and `Owner`, a `Runs` cursor on a foreign run and
+  on a missing one answering alike, a commit naming a foreign run and a
+  missing one answering alike, telemetry for a run with no record
+  passing a store-wide grant and refused to an instance-scoped one, no
+  inner error text in any body); multipart commit
   (digest mismatch, part missing, extra part, over the limit, all
   `ErrInvalid` with nothing applied); healthz without auth; status
   routes match `agent.Status` over the same store.
