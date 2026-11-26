@@ -108,12 +108,28 @@ func unchecked(s store.Store) store.Store {
 	return s
 }
 
+func (s *refChecked) telemetry() (store.Telemetry, error) {
+	tel, ok := s.Store.(store.Telemetry)
+	if !ok {
+		return nil, fmt.Errorf("refChecked: %T does not implement store.Telemetry", s.Store)
+	}
+	return tel, nil
+}
+
 func (s *refChecked) AppendEvents(ctx context.Context, events []store.Event) error {
-	return s.Store.(store.Telemetry).AppendEvents(ctx, events) //nolint:forcetypeassert,wrapcheck // both reference stores implement it
+	tel, err := s.telemetry()
+	if err != nil {
+		return err
+	}
+	return tel.AppendEvents(ctx, events) //nolint:wrapcheck // a pass-through
 }
 
 func (s *refChecked) Events(ctx context.Context, run string, after uint64) ([]store.Event, error) {
-	return s.Store.(store.Telemetry).Events(ctx, run, after) //nolint:forcetypeassert,wrapcheck // both reference stores implement it
+	tel, err := s.telemetry()
+	if err != nil {
+		return nil, err
+	}
+	return tel.Events(ctx, run, after) //nolint:wrapcheck // a pass-through
 }
 
 func forEachBackend(t *testing.T, fn func(t *testing.T, b backend)) {

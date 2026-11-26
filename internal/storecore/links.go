@@ -34,10 +34,11 @@ func (e *UnclaimedArtifactsError) Unwrap() error { return ErrMigrationRequired }
 type LinkMigration struct {
 	// References returns the artifact digests an instance's own records
 	// name, read through the store. Nil refuses a store with legacy
-	// artifacts with ErrMigrationRequired.
+	// artifacts with ErrMigrationRequired, whatever Owners states.
 	References func(ctx context.Context, r store.Reader, instance string) ([]string, error)
-	// Owners states owners explicitly: each digest, which must be stored,
-	// is linked to each instance listed, which must exist.
+	// Owners states owners explicitly, in addition to References: each
+	// digest, which must be stored, is linked to each instance listed,
+	// which must exist.
 	Owners map[string][]string
 }
 
@@ -63,7 +64,7 @@ func (e *Engine) MigrateArtifactLinks(ctx context.Context, m LinkMigration) erro
 	links := map[string]map[string]bool{} // digest -> encoded instances
 	if len(stored) > 0 {
 		if m.References == nil {
-			return fmt.Errorf("%w: the store holds %d artifacts stored before artifact links existed", ErrMigrationRequired, len(stored))
+			return fmt.Errorf("%w: the store holds %d artifacts stored before artifact links existed; open it with a references function (filestore.WithLegacyArtifactLinks(agent.ArtifactReferences)), which stated owners only add to", ErrMigrationRequired, len(stored))
 		}
 		if links, err = claim(ctx, e, m, stored, instances); err != nil {
 			return err

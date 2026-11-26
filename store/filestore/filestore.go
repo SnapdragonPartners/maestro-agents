@@ -93,7 +93,9 @@ func WithLegacyArtifactLinks(refs func(ctx context.Context, r store.Reader, inst
 // WithArtifactOwners states owners for a legacy migration
 // ([WithLegacyArtifactLinks]) explicitly: each digest, which must be
 // stored, is linked to each instance listed, which must exist. It resolves
-// artifacts the instances' records do not name.
+// artifacts the instances' records do not name, in addition to the
+// references: it is no substitute for WithLegacyArtifactLinks, without
+// which a legacy store still fails to open with [ErrMigrationRequired].
 func WithArtifactOwners(owners map[string][]string) Option {
 	return func(c *config) { c.links.Owners = owners }
 }

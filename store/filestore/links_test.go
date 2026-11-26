@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,17 @@ func TestLegacyStoreRefusedWithoutMigration(t *testing.T) {
 	if _, err := l.open(); !errors.Is(err, ErrMigrationRequired) {
 		t.Fatalf("second Open = %v, want ErrMigrationRequired again", err)
 	}
+}
+
+// Stated owners add to the references; they are no substitute for them,
+// even when they name every stored artifact.
+func TestLegacyMigrationOwnersAloneRefused(t *testing.T) {
+	l := newLegacyStore(t)
+	_, err := l.open(WithArtifactOwners(map[string][]string{l.dA: {instA}, l.dOrphan: {instA}, l.dB: {instB}}))
+	if !errors.Is(err, ErrMigrationRequired) || !strings.Contains(err.Error(), "WithLegacyArtifactLinks") {
+		t.Fatalf("Open = %v, want ErrMigrationRequired naming WithLegacyArtifactLinks", err)
+	}
+	l.wantNothingWritten(t)
 }
 
 func TestLegacyMigrationRefusesUnclaimedArtifacts(t *testing.T) {

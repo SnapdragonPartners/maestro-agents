@@ -191,7 +191,9 @@ whose own records name it: the runtime's typed digest fields in its
 entries and checkpoints, never an agent's own data. An artifact no
 instance names fails the open with a `*filestore.UnclaimedArtifactsError`
 listing the digests, with nothing written, until
-`filestore.WithArtifactOwners` states its owners. The standalone host
+`filestore.WithArtifactOwners` states its owners; stated owners only
+add to the references, so the open needs
+`filestore.WithLegacyArtifactLinks` with or without them. The standalone host
 passes `agent.ArtifactReferences`, so a store the runtime wrote
 migrates on first open. The memory store has nothing to migrate.
 

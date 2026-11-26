@@ -346,7 +346,8 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      records name it in the runtime's typed digest fields (entries and
      the checkpoint envelope, never an agent type's data, which is
      arbitrary JSON and proves nothing; `agent.ArtifactReferences`),
-     and to owners the operator states explicitly. An artifact nobody
+     and to owners the operator states explicitly, in addition to (never
+     instead of) those references. An artifact nobody
      claims fails the open with nothing written; it is neither linked
      to every instance (which would grant one instance another's
      history) nor left readable by any instance (an isolation
