@@ -52,9 +52,23 @@ A store-contract change that stands without the wire.
      `ArtifactReferences(ctx, store.Reader, instance) ([]string, error)`:
      it pages `Runs(instance)`, reads each run's entries, decodes only
      the recognized kinds into their own types and collects those
-     fields. Version-aware: an entry kind it does not recognize names
-     nothing; a recognized kind whose payload does not decode is an
+     fields; and it reads each of the instance's checkpoints (1 to the
+     latest) and decodes the runtime's envelope (`checkpointState`, by
+     `store.Checkpoint.Format`), collecting `Config`, `Served`,
+     `Model.Params` and `Model.Transcript`, never the agent type's
+     `Data` (round 3 P1: a completed tool-call turn's results message
+     and changed recovery parameters are named only in the checkpoint,
+     `agent/modelstate.go:826-841`). Version-aware: an entry kind it
+     does not recognize names nothing; a recognized kind whose payload
+     does not decode, or a checkpoint format it does not know, is an
      error, never skipped.
+   - Completeness is tested end to end, not by a hand-kept list: the
+     runtime's own harness runs (code states, model states with tool
+     calls, a recovery with changed parameters, a served tool) write a
+     file store; the test strips its links to today's layout, migrates,
+     and asserts every stored artifact was claimed and every recovery
+     still reads, so a new artifact-writing path without a reference
+     in the migration fails the test.
    - The file store detects a legacy layout (artifacts present, no
      link-format marker) and **refuses to open** it with
      `filestore.ErrMigrationRequired`, unless opened with
