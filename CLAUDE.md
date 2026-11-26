@@ -30,7 +30,8 @@ logging and credentials (`agent/`), the standalone host (`standalone/`,
 ADR 0017) with its in-process API, submitted runs and folder watch
 (ADRs 0020 to 0022), the scoring harness (`scoring/`, ADR 0020), and
 MCP-served tools (`agent.ToolSource`, ADR 0025, with the MCP adapter
-`mcptools`, a nested module over `maestro-llms/mcp`).
+`mcptools`, a nested module over `maestro-llms/mcp`), and the derived
+run and instance status (`agent.Status`, ADR 0024 item 7).
 Next are the external contract's gaps (ADR 0024) and a small example
 agent to exercise the standalone host end to end (#39). The
 requirements are in [docs/requirements.md](docs/requirements.md), and
@@ -214,10 +215,18 @@ Load-bearing decisions so far:
   RUN-3 reason), ignored by a terminal run; `Heartbeat` returns the active
   run's request, and the host cancels with `agent.CancelCause`; an
   activation that finds one at its start commits `cancelled` before any
-  step), plus planned gaps, each its own issue: a
-  derived status taxonomy (`agent.Status`: phase `queued`, `running`,
-  `waiting`, `stopping` or terminal with RUN-3's reason, and progress);
-  a Postgres store whose migrations follow `maestro-llms`'
+  step; and the derived status: `agent.Status(ctx, reader, run)` a
+  `RunStatus`, never stored, phase `queued`, `running`, `waiting`,
+  `stopping` or terminal with RUN-3's reason, and progress (state and
+  kind while not terminal, step, budgets used against limits, last
+  activity from the store-stamped `store.Entry.At`, the lease judged
+  live by the store's clock, `store.Ownership.AsOf`, requests and
+  artifacts empty until #31/#30), and `agent.InstanceStatus` an
+  `InstanceReport`, both bounded by a run, not the instance's history,
+  over `Reader.Runs(instance, RunQuery)`: paged by `After` run ID,
+  `Newest` first or oldest, filtered by `Status`, `Limit` zero the
+  store's default and capped, returning whether more follow), plus
+  planned gaps, each its own issue: a Postgres store whose migrations follow `maestro-llms`'
   `bucket/postgres` (files, no runner, expand-only, a static schema of
   the records `store.Store` and `store.Telemetry` fix, and an optional
   host blob backend for artifact content); the store's wire form (HTTP handler
@@ -328,7 +337,7 @@ them and does not pin or bump them independently.
 
 ```
 doc.go               # Root package `agents`: package documentation
-agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials, served tools (ADR 0007-0014, 0016, 0025)
+agent/               # Agent types, registry, manifests, run controller, model states, budgets, wrap-up, namespaces, skills, templates, the model client, record entries, telemetry, logging, credentials, served tools, run status (ADR 0007-0014, 0016, 0024, 0025)
 standalone/          # The standalone host: config, triggers, scheduler, credentials, telemetry sinks, signals (ADR 0017); in process (ADR 0020); submitted runs (ADR 0021); in-process watch (ADR 0022)
 scoring/             # The scoring harness (TEST-4): run inputs, compare with an answer key, report (ADR 0020)
 agent/agenttest/     # Stand-ins for the runtime's host seams in tests: a scripted tool source (ADR 0025)

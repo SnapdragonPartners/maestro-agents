@@ -120,6 +120,129 @@ func (e *Engine) ActiveRun(ctx context.Context, instance string) (store.Run, boo
 	return e.activeRun(inst)
 }
 
+// Runs page sizes of the reference stores: the page a zero limit asks for,
+// and the cap on any page (ADR 0024, item 7).
+const (
+	DefaultRunsLimit = 100
+	MaxRunsLimit     = 1000
+)
+
+// Runs implements store.Reader. The reference stores read every run of
+// the instance through its run index and page in memory; a host store
+// answers from an index on (instance, status, created_at, id).
+func (e *Engine) Runs(ctx context.Context, instance string, q store.RunQuery) ([]store.Run, bool, error) {
+	inst, err := component("instance", instance)
+	if err != nil {
+		return nil, false, err
+	}
+	limit, err := runsLimit(q)
+	if err != nil {
+		return nil, false, err
+	}
+	if err = e.rlock(ctx); err != nil {
+		return nil, false, err
+	}
+	defer e.mu.RUnlock()
+	runs, err := e.instanceRuns(inst)
+	if err != nil {
+		return nil, false, err
+	}
+	// order compares two runs in the query's order.
+	order := func(a, b store.Run) int {
+		c := a.CreatedAt.Compare(b.CreatedAt)
+		if c == 0 {
+			c = strings.Compare(a.ID, b.ID)
+		}
+		if q.Newest {
+			return -c
+		}
+		return c
+	}
+	slices.SortFunc(runs, order)
+	if runs, err = e.pastAfter(runs, instance, q.After, order); err != nil {
+		return nil, false, err
+	}
+	out := make([]store.Run, 0, min(limit, len(runs)))
+	for _, run := range runs {
+		if len(q.Status) > 0 && !slices.Contains(q.Status, run.Status) {
+			continue
+		}
+		if len(out) == limit {
+			return out, true, nil
+		}
+		out = append(out, run)
+	}
+	return out, false, nil
+}
+
+// pastAfter returns the runs, sorted by order, that follow the run after
+// names (all of them for none). The caller holds mu for reading.
+func (e *Engine) pastAfter(runs []store.Run, instance, after string, order func(a, b store.Run) int) ([]store.Run, error) {
+	if after == "" {
+		return runs, nil
+	}
+	run, ok, err := e.readRun(after)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: run %q", store.ErrNotFound, after)
+	}
+	if run.Instance != instance {
+		return nil, fmt.Errorf("%w: run %q belongs to instance %q, not %q", store.ErrInvalid, after, run.Instance, instance)
+	}
+	i, found := slices.BinarySearchFunc(runs, run, order)
+	if found {
+		i++
+	}
+	return runs[i:], nil
+}
+
+// runsLimit checks a runs query and returns its page size: the default
+// for zero, capped.
+func runsLimit(q store.RunQuery) (int, error) {
+	if q.Limit < 0 {
+		return 0, fmt.Errorf("%w: negative runs limit %d", store.ErrInvalid, q.Limit)
+	}
+	for _, st := range q.Status {
+		if !st.Valid() {
+			return 0, fmt.Errorf("%w: invalid status %q", store.ErrInvalid, st)
+		}
+	}
+	if q.Limit == 0 {
+		return DefaultRunsLimit, nil
+	}
+	return min(q.Limit, MaxRunsLimit), nil
+}
+
+// instanceRuns reads every run of the instance through its run index. The
+// caller holds mu for reading.
+func (e *Engine) instanceRuns(inst string) ([]store.Run, error) {
+	names, err := e.b.List(runIndexDir(inst))
+	if err != nil {
+		return nil, fmt.Errorf("store: list runs: %w", err)
+	}
+	out := make([]store.Run, 0, len(names))
+	for _, name := range names {
+		var idx runIndexFile
+		found, err := readJSON(e.b, runIndexDir(inst)+"/"+name, &idx)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		run, ok, err := e.readRun(idx.Run)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, run)
+		}
+	}
+	return out, nil
+}
+
 // Triggers implements store.Reader.
 func (e *Engine) Triggers(ctx context.Context, instance string) ([]store.Trigger, error) {
 	inst, err := component("instance", instance)

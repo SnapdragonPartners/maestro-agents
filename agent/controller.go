@@ -498,6 +498,7 @@ func (b *entries) checkpoint(cs *checkpointState) {
 	}
 	used := b.a.consumed()
 	cs.Consumed = &used
+	cs.StateKind = b.a.m.states[cs.State].kind()
 	raw, err := json.Marshal(cs)
 	if err != nil {
 		b.err = storeFailure(fmt.Errorf("agent: encode checkpoint: %w", err))

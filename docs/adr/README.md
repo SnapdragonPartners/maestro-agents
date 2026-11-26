@@ -42,7 +42,7 @@ template.
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-serial-execution-within-an-agent-instance.md) | Serial execution within an agent instance | Accepted |
 | [0003](0003-run-model-identities-and-activation-results.md) | Run model: identities, stored status and activation results | Amended by ADR-0007, ADR-0012, ADR-0016, ADR-0024, ADR-0025 |
-| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0025 |
+| [0004](0004-execution-record-and-recovery.md) | Execution record and recovery | Amended by ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0024, ADR-0025 |
 | [0005](0005-storage-one-fenced-commit.md) | Storage: one fenced commit, and the reference stores | Amended by ADR-0006, ADR-0012, ADR-0024 |
 | [0006](0006-store-interface.md) | The store interface | Amended by ADR-0008, ADR-0016, ADR-0024 |
 | [0007](0007-agent-types-and-the-run-controller.md) | Agent types and the run controller | Amended by ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0016, ADR-0025 |

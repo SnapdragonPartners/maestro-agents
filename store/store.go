@@ -100,8 +100,10 @@ type ControlPlane interface {
 // reflect every commit made before the claim and the owner's own commits
 // since. Reads of objects may be stale, except as [ConflictError] states.
 type Reader interface {
-	// Ownership returns the instance's ownership record. An instance never
-	// claimed has no owner and epoch 0.
+	// Ownership returns the instance's ownership record, its AsOf the
+	// store's clock when it was read, by which a reader judges the lease
+	// live (ADR 0024, item 7). An instance never claimed has no owner and
+	// epoch 0.
 	Ownership(ctx context.Context, instance string) (Ownership, error)
 
 	// Claimable returns the ready runs: runnable runs on instances with no
@@ -118,6 +120,11 @@ type Reader interface {
 	// ActiveRun returns the instance's non-terminal run, if it has one.
 	ActiveRun(ctx context.Context, instance string) (run Run, ok bool, err error)
 
+	// Runs returns a page of the instance's runs as q selects them, and
+	// whether more follow it (ADR 0024, item 7). An instance with no runs
+	// has none.
+	Runs(ctx context.Context, instance string, q RunQuery) (runs []Run, more bool, err error)
+
 	// Triggers returns the instance's queued triggers in arrival order.
 	Triggers(ctx context.Context, instance string) ([]Trigger, error)
 
@@ -129,7 +136,8 @@ type Reader interface {
 	Checkpoint(ctx context.Context, instance string, seq uint64) (Checkpoint, error)
 
 	// Entries returns the run's execution-record entries with sequence
-	// numbers greater than after, in order.
+	// numbers greater than after, in order, each with its commit time
+	// ([Entry.At]).
 	Entries(ctx context.Context, run string, after uint64) ([]Entry, error)
 
 	// Artifact returns an artifact's metadata and content, or
