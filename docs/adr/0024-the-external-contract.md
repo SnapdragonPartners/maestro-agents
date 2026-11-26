@@ -567,8 +567,8 @@ consumer-facing reference is [docs/contract.md](../contract.md).
 
 18. **Gaps, each its own issue:** check before start (item 5, #35, built);
     cancel requests (item 6, #26, built); status (item 7, #27, built); the Postgres
-    store (item 8, #28); the store's wire form and instance-linked
-    artifact reads (item 9, #29); published artifacts (item 10, #30);
+    store (item 8, #28); instance-linked artifact reads (item 9, #29,
+    built); the store's wire form (item 9, #29); published artifacts (item 10, #30);
     requests, blocks and bundles (items 11 to 14, #31); the app host and
     process contract (items 15 and 16, #32); schedule triggers (MODE-4,
     for continuously running agents, #33); and the in-run wait (STM-8,

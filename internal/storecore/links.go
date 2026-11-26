@@ -73,10 +73,14 @@ func (e *Engine) MigrateArtifactLinks(ctx context.Context, m LinkMigration) erro
 	if err != nil {
 		return err
 	}
+	link, err := marshal(linkFile{})
+	if err != nil {
+		return err
+	}
 	writes := []Write{}
 	for _, d := range sortedKeys(links) {
 		for _, inst := range sortedKeys(links[d]) {
-			writes = append(writes, Write{Path: linkPath(inst, d), Data: []byte("{}")})
+			writes = append(writes, Write{Path: linkPath(inst, d), Data: link})
 		}
 	}
 	writes = append(writes, Write{Path: linksMarkerPath, Data: marker})
