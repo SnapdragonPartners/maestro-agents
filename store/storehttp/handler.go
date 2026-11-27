@@ -827,6 +827,12 @@ func (h *handler) appendEvents(r *http.Request) (any, error) {
 	if err := decodeBody(r, &req); err != nil {
 		return nil, err
 	}
+	// An empty batch writes nothing, as the store's AppendEvents does with
+	// one: nothing to authorize, and the same answer whatever the store
+	// keeps.
+	if len(req.Events) == 0 {
+		return ack{Applied: true}, nil
+	}
 	// Every event's run is authorized before anything is written, so a
 	// refusal refuses the whole call, and before the store's capability
 	// is looked at, so a refused caller does not learn it.

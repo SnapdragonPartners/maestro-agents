@@ -155,4 +155,12 @@ func TestTelemetryRefusedFirst(t *testing.T) {
 	if _, err := c.Events(ctx, "r", 0); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Events = %v, want ErrNotFound", err)
 	}
+	// An empty batch writes nothing and answers alike whether or not the
+	// store keeps telemetry, so it tells a refused caller nothing.
+	for _, inner := range []store.Store{noTelemetry{memstore.New()}, memstore.New()} {
+		c = serve(t, inner, storehttp.HandlerOptions{Authorizer: refuseAll})
+		if err := c.AppendEvents(ctx, nil); err != nil {
+			t.Fatalf("AppendEvents(nil) over %T = %v, want nil", inner, err)
+		}
+	}
 }
