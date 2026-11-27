@@ -6,7 +6,7 @@ toolchain go1.26.11
 
 require (
 	github.com/SnapdragonPartners/maestro-agents v0.3.0
-	github.com/SnapdragonPartners/maestro-llms v1.7.0
+	github.com/SnapdragonPartners/maestro-llms v1.8.0
 	github.com/SnapdragonPartners/maestro-llms/mcp v0.3.0
 )
 

@@ -1,7 +1,7 @@
 github.com/SnapdragonPartners/maestro-agents v0.3.0 h1:0sfDMFJijZKVPYdtU/Esq0puWtwQsdL8SbzMTfXqR5E=
 github.com/SnapdragonPartners/maestro-agents v0.3.0/go.mod h1:4SCyf4Xxe9sFjGWIqNF5e7OGhtxL1VFgn+9or8lKp8c=
-github.com/SnapdragonPartners/maestro-llms v1.7.0 h1:6ux8A7S4KLeNwBkraYc+aueY4sH00KOBl4alIxYnVkY=
-github.com/SnapdragonPartners/maestro-llms v1.7.0/go.mod h1:zDbF5M0TkmHE7bpre8tz3Xii+byefiJRY3U6ypq3U2Y=
+github.com/SnapdragonPartners/maestro-llms v1.8.0 h1:0npqhGNgV4epNQsO661kD1qqmEqbBxdJbGQuOfokSCg=
+github.com/SnapdragonPartners/maestro-llms v1.8.0/go.mod h1:sQYaWXcw/QZl2na/UEiZ/VFViTdb7IrY02nTnLMxKKM=
 github.com/SnapdragonPartners/maestro-llms/mcp v0.3.0 h1:cqhjrfJVB7dqnWSy9LgaoM5rMrcgRGx5R667envKY3s=
 github.com/SnapdragonPartners/maestro-llms/mcp v0.3.0/go.mod h1:CyvkOPj8fXJwjp+khBWLpo7CgO0OlC9D6QQjy2wUx0U=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
