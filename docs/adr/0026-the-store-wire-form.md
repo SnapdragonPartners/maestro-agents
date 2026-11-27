@@ -193,12 +193,22 @@ decides the rest. It is built in the package `store/storehttp`.
      does not decode, an artifact that does not match its metadata, a
      response over `MaxResponseBytes`, and a dropped or refused
      connection.
+   - **Only the handler's 200 is success.** A proxy or authentication
+     layer between client and handler may answer 200 itself (a sign-in
+     page, an empty body). So the client believes a 200 only if it
+     carries the handler's `Maestro-Request-Id` header and the expected
+     media type (`application/json`, or `application/octet-stream` for
+     an artifact). A call that returns nothing (`Commit`, `Release`,
+     `RemoveTrigger`, `AppendEvents`) succeeds only on the explicit
+     acknowledgement `{"applied": true}`. Anything else is indeterminate,
+     so an activation never advances past an unconfirmed write (ADR 0003,
+     item 3).
 
 6. **No retries; deadlines are the caller's.** The client never retries:
    an indeterminate error goes back to the host, whose
    reread-before-retry (ADR 0003 item 14) stays the one retry logic.
    Each request runs under the caller's context, plus an optional
-   per-request `Timeout`. The handler sets no timeouts of its own; the
+   per-request `Timeout`, which bounds `Health` too. The handler sets no timeouts of its own; the
    host's `http.Server` does. `Client.Close` only stops the client
    (`ErrUnusable` from every method afterwards) and leaves the server's
    store open.

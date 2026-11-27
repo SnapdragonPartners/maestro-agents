@@ -202,6 +202,12 @@ type (
 		Object store.Object `json:"object"`
 		OK     bool         `json:"ok"`
 	}
+	// ack is the body of a call that returns nothing: an explicit
+	// acknowledgement, so a client never takes another server's 200 for
+	// an applied write (ADR 0026, item 5).
+	ack struct {
+		Applied bool `json:"applied"`
+	}
 	eventsRequest struct {
 		Events []store.Event `json:"events"`
 	}

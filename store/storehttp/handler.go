@@ -370,9 +370,6 @@ func answer[T any](v T, err error) (any, error) {
 	return v, nil
 }
 
-// empty is the body of a call that returns nothing.
-type empty struct{}
-
 // The routes.
 
 func (h *handler) commit(r *http.Request) (any, error) {
@@ -409,7 +406,7 @@ func (h *handler) commit(r *http.Request) (any, error) {
 	if err = h.artifactParts(parts, req.Ops); err != nil {
 		return nil, err
 	}
-	return empty{}, wrapStore(h.s.Commit(r.Context(), req.Fence, req.Ops))
+	return ack{Applied: true}, wrapStore(h.s.Commit(r.Context(), req.Fence, req.Ops))
 }
 
 // commitJSONPart reads a multipart commit's first part, the operations.
@@ -562,7 +559,7 @@ func (h *handler) release(r *http.Request) (any, error) {
 	if err := h.authorize(r.Context(), Call{Op: OpRelease, Instance: inst, Fence: &f}); err != nil {
 		return nil, err
 	}
-	return empty{}, wrapStore(h.s.Release(r.Context(), req.Fence))
+	return ack{Applied: true}, wrapStore(h.s.Release(r.Context(), req.Fence))
 }
 
 func (h *handler) enqueueTrigger(r *http.Request) (any, error) {
@@ -591,7 +588,7 @@ func (h *handler) removeTrigger(r *http.Request) (any, error) {
 	if err := h.authorize(r.Context(), Call{Op: OpRemoveTrigger, Instance: inst}); err != nil {
 		return nil, err
 	}
-	return empty{}, wrapStore(h.s.RemoveTrigger(r.Context(), inst, r.PathValue("id")))
+	return ack{Applied: true}, wrapStore(h.s.RemoveTrigger(r.Context(), inst, r.PathValue("id")))
 }
 
 func (h *handler) createRun(r *http.Request) (any, error) {
@@ -844,7 +841,7 @@ func (h *handler) appendEvents(r *http.Request) (any, error) {
 			return nil, err
 		}
 	}
-	return empty{}, wrapStore(tel.AppendEvents(r.Context(), req.Events))
+	return ack{Applied: true}, wrapStore(tel.AppendEvents(r.Context(), req.Events))
 }
 
 func (h *handler) events(r *http.Request) (any, error) {

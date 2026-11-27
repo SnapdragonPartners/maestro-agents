@@ -185,3 +185,79 @@ func TestEmptyIdentifier(t *testing.T) {
 		t.Fatalf("Run(\"\") = %v, want ErrInvalid", err)
 	}
 }
+
+// A 200 the handler did not send is never success (Codex round 1): a
+// proxy's page, an empty body, or JSON without the handler's request ID or
+// acknowledgement is indeterminate, for writes that return nothing and for
+// calls that return a value.
+func TestForeign200IsIndeterminate(t *testing.T) {
+	for name, h := range map[string]http.HandlerFunc{
+		"html page": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = io.WriteString(w, "<html>signed in</html>")
+		},
+		"empty body": func(http.ResponseWriter, *http.Request) {},
+		"empty JSON without request ID": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, "{}")
+		},
+		"empty JSON with request ID": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Maestro-Request-Id", "r")
+			_, _ = io.WriteString(w, "{}")
+		},
+		"HTML with request ID": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.Header().Set("Maestro-Request-Id", "r")
+			_, _ = io.WriteString(w, `{"applied":true}`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(h)
+			t.Cleanup(srv.Close)
+			c, err := storehttp.NewClient(srv.URL, storehttp.ClientOptions{HTTPClient: srv.Client()})
+			must(t, err)
+			ctx := context.Background()
+			f := store.Fence{Instance: "i", Owner: "o", Epoch: 1}
+			content := []byte("a")
+			for call, err := range map[string]error{
+				"Commit":               c.Commit(ctx, f, []store.Op{store.ReleaseOp()}),
+				"Commit with artifact": c.Commit(ctx, f, []store.Op{store.PutArtifactOp(store.Artifact{Digest: digest(content), MediaType: "text/plain", Content: content})}),
+				"Release":              c.Release(ctx, f),
+				"RemoveTrigger":        c.RemoveTrigger(ctx, "i", "t"),
+				"AppendEvents":         c.AppendEvents(ctx, []store.Event{{Run: "r", Seq: 1, Kind: "k"}}),
+			} {
+				if err == nil || store.IsDefinite(err) {
+					t.Fatalf("%s = %v, want indeterminate", call, err)
+				}
+			}
+			if name != "empty JSON with request ID" {
+				if _, err = c.Claim(ctx, "i", "o", time.Minute); err == nil || store.IsDefinite(err) {
+					t.Fatalf("Claim = %v, want indeterminate", err)
+				}
+			}
+		})
+	}
+}
+
+// Health honours the client's timeout when the caller sets no deadline
+// (Codex round 1).
+func TestHealthTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	c, err := storehttp.NewClient(srv.URL, storehttp.ClientOptions{HTTPClient: srv.Client(), Timeout: 50 * time.Millisecond})
+	must(t, err)
+	start := time.Now()
+	if _, err = c.Health(context.Background()); err == nil {
+		t.Fatal("Health of a stalled server succeeded")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("Health took %v despite a 50ms timeout", d)
+	}
+}

@@ -70,6 +70,8 @@
 // client every class arrives as the store returned it ([RemoteError]
 // unwraps to it), a refusal as [ErrForbidden] (definite, wrapping
 // store.ErrInvalid) and a server that could not answer as [ErrUnavailable]
-// (indeterminate). Anything else is indeterminate. The client never
+// (indeterminate). A 200 is believed only with the handler's request ID
+// and media type, and a call that returns nothing only on the handler's
+// {"applied": true}. Anything else is indeterminate. The client never
 // retries: the host rereads before retrying (ADR 0003, item 14).
 package storehttp

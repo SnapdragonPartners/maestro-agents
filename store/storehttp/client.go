@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -99,6 +100,8 @@ type request struct {
 	method      string
 	path        string
 	contentType string
+	// accept is the media type a 200 must have.
+	accept string
 }
 
 // pathOf builds a path from literal parts and identifiers, escaping each
@@ -152,6 +155,15 @@ func (c *Client) do(ctx context.Context, r request) ([]byte, http.Header, error)
 		return nil, nil, fmt.Errorf("storehttp: %s %s: response over %d bytes", r.method, r.path, c.maxResp)
 	}
 	if resp.StatusCode == http.StatusOK {
+		// Only the handler's answer is believed: a 200 from a proxy or an
+		// authentication layer in between carries no request ID, and is
+		// indeterminate, never success (ADR 0026, item 5).
+		if resp.Header.Get(headerRequestID) == "" {
+			return nil, nil, fmt.Errorf("storehttp: %s %s: a 200 response without the handler's request ID", r.method, r.path)
+		}
+		if mt, _, perr := mime.ParseMediaType(resp.Header.Get("Content-Type")); perr != nil || mt != r.accept {
+			return nil, nil, fmt.Errorf("storehttp: %s %s: a 200 response of type %q, want %s", r.method, r.path, resp.Header.Get("Content-Type"), r.accept)
+		}
 		return data, resp.Header, nil
 	}
 	var eb errorBody
@@ -166,7 +178,7 @@ func (c *Client) do(ctx context.Context, r request) ([]byte, http.Header, error)
 // call sends a JSON request (in, if not nil) and decodes a JSON response
 // into out (if not nil).
 func (c *Client) call(ctx context.Context, method, path string, in, out any) error {
-	r := request{method: method, path: path}
+	r := request{method: method, path: path, accept: contentJSON}
 	if in != nil {
 		if err := checkStrings(reflect.ValueOf(in)); err != nil {
 			return err
@@ -182,10 +194,20 @@ func (c *Client) call(ctx context.Context, method, path string, in, out any) err
 		return err
 	}
 	if out == nil {
-		return nil
+		return acknowledged(method, path, data)
 	}
 	if err = json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("storehttp: %s %s: decoding the response: %w", method, path, err)
+	}
+	return nil
+}
+
+// acknowledged accepts a call that returns nothing only on the handler's
+// explicit acknowledgement; anything else is indeterminate.
+func acknowledged(method, path string, data []byte) error {
+	var a ack
+	if err := json.Unmarshal(data, &a); err != nil || !a.Applied {
+		return fmt.Errorf("storehttp: %s %s: the response is not an acknowledgement", method, path)
 	}
 	return nil
 }
@@ -227,9 +249,13 @@ func (c *Client) Commit(ctx context.Context, f store.Fence, ops []store.Op) erro
 	if err != nil {
 		return fmt.Errorf("%w: encoding the commit: %w", store.ErrInvalid, err)
 	}
+	var data []byte
 	if len(contents) == 0 {
-		_, _, err = c.do(ctx, request{method: http.MethodPost, path: path, body: bytes.NewReader(body), contentType: contentJSON})
-		return err
+		data, _, err = c.do(ctx, request{method: http.MethodPost, path: path, body: bytes.NewReader(body), contentType: contentJSON, accept: contentJSON})
+		if err != nil {
+			return err
+		}
+		return acknowledged(http.MethodPost, path, data)
 	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -252,11 +278,14 @@ func (c *Client) Commit(ctx context.Context, f store.Fence, ops []store.Op) erro
 	if err != nil {
 		return fmt.Errorf("%w: encoding the commit: %w", store.ErrInvalid, err)
 	}
-	_, _, err = c.do(ctx, request{
+	data, _, err = c.do(ctx, request{
 		method: http.MethodPost, path: path, body: &buf,
-		contentType: "multipart/mixed; boundary=" + mw.Boundary(),
+		contentType: "multipart/mixed; boundary=" + mw.Boundary(), accept: contentJSON,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return acknowledged(http.MethodPost, path, data)
 }
 
 // Claim takes ownership of an instance.
@@ -482,7 +511,7 @@ func (c *Client) Artifact(ctx context.Context, instance, digest string) (store.A
 	if err != nil {
 		return store.ArtifactMeta{}, nil, err
 	}
-	content, h, err := c.do(ctx, request{method: http.MethodGet, path: path})
+	content, h, err := c.do(ctx, request{method: http.MethodGet, path: path, accept: "application/octet-stream"})
 	if err != nil {
 		return store.ArtifactMeta{}, nil, err
 	}
@@ -576,6 +605,11 @@ func (c *Client) InstanceStatus(ctx context.Context, instance string) (agent.Ins
 func (c *Client) Health(ctx context.Context) (Health, error) {
 	if c.closed.Load() {
 		return Health{}, fmt.Errorf("storehttp: client closed: %w", store.ErrUnusable)
+	}
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/healthz", http.NoBody)
 	if err != nil {
