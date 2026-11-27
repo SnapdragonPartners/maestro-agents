@@ -245,6 +245,14 @@ decides the rest. It is built in the package `store/storehttp`.
   `storetest` is store-generic and has no notion of an `Authorizer`, so
   those cases are `store/storehttp`'s own tests (item 8), and
   `storetest` covers the client's contract as a store.
+- **ADR 0024, item 9:** "their exact shape, and how an upload names its
+  instance and fence to the `Authorizer` and the store, are #29's to fix
+  with #28's design" is replaced by item 3: a commit that stores
+  artifacts is one `multipart/mixed` request on the commit route, so
+  the upload names its instance and fence as the commit does, and a
+  read is `GET /v1/instances/{instance}/artifacts/{digest}`, raw bytes
+  with the metadata in a header. #28 may add only the reserved upload
+  (item 3), not change these shapes within `/v1/`.
 
 ## Consequences
 

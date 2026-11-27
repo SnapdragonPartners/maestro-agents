@@ -5,8 +5,9 @@
 // (store/storetest) runs against the client over each reference store, so
 // the wire proves the same contract as the store behind it.
 //
-// A host serves the handler behind its own authentication and decides each
-// call with an [Authorizer], which sees the call's operation and the
+// A host serves the handler behind its own authentication, all but
+// healthz, which a load balancer probes without credentials, and decides
+// each call with an [Authorizer], which sees the call's operation and the
 // instance, run and namespaces it concerns ([Call]):
 //
 //	h, err := storehttp.NewHandler(pg, storehttp.HandlerOptions{
@@ -16,6 +17,7 @@
 //		Logger: logger,
 //	})
 //	mux.Handle("/v1/", authenticate(h))
+//	mux.Handle("GET /v1/healthz", h) // health answers without authentication
 //
 // and a worker reaches it with its credentials in the HTTP client:
 //

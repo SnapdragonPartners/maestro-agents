@@ -261,3 +261,35 @@ func TestHealthTimeout(t *testing.T) {
 		t.Fatalf("Health took %v despite a 50ms timeout", d)
 	}
 }
+
+// A response over ClientOptions.MaxResponseBytes is indeterminate, for a
+// call that returns a value and for one that returns only an
+// acknowledgement; a response exactly at the limit is accepted (ADR 0026,
+// item 5).
+func TestMaxResponseBytes(t *testing.T) {
+	const limit = 64
+	var size int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Maestro-Request-Id", "r")
+		body := `{"applied":true}`
+		_, _ = io.WriteString(w, body+strings.Repeat(" ", size-len(body)))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := storehttp.NewClient(srv.URL, storehttp.ClientOptions{HTTPClient: srv.Client(), MaxResponseBytes: limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	size = limit
+	if err = c.RemoveTrigger(ctx, "i", "t"); err != nil {
+		t.Fatalf("RemoveTrigger at the limit = %v, want nil", err)
+	}
+	size = limit + 1
+	if err = c.RemoveTrigger(ctx, "i", "t"); err == nil || store.IsDefinite(err) {
+		t.Fatalf("RemoveTrigger over the limit = %v, want an indeterminate error", err)
+	}
+	if _, err = c.Claim(ctx, "i", "o", time.Minute); err == nil || store.IsDefinite(err) {
+		t.Fatalf("Claim over the limit = %v, want an indeterminate error", err)
+	}
+}
