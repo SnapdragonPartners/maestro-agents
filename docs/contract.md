@@ -400,7 +400,8 @@ against the client over both reference stores.
   - `Claimable` names no instance (`Call.StoreWide`). It is the
     executor's store-wide scan: grant it only to an executing service
     (Morris's worker), never to a token scoped to a run or an instance.
-    Telemetry for a run with no run record is store-wide too.
+    Telemetry for a run with no run record is store-wide too, and so is
+    an empty `AppendEvents` batch.
   - A commit is authorized on its fence's instance with every namespace
     its operations touch.
   - Run IDs are unique per store, so `CreateRun` with an ID another

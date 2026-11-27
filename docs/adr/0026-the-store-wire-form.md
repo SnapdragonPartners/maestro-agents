@@ -138,7 +138,8 @@ decides the rest. It is built in the package `store/storehttp`.
      token scoped to an instance is refused both for a foreign run and
      for an absent one, which therefore look alike. `AppendEvents`
      authorizes every event's run before anything is written, and a
-     refusal refuses the whole call; a refused `Events` answers
+     refusal refuses the whole call; an empty batch, naming no run, is
+     authorized once as a store-wide call; a refused `Events` answers
      `ErrNotFound`.
    - **`Claimable`** is store-wide, with no instance (ADR 0024 item 9).
    - **`Commit`** is authorized on the fence's instance, with every

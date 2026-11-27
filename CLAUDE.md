@@ -301,8 +301,9 @@ Load-bearing decisions so far:
   required `Authorizer` sees a `Call` (op, instance, run, namespaces,
   fence, owner, store-wide): a run-only call is authorized on its run's
   instance and a refusal answers `ErrNotFound`, as does a `Runs` cursor,
-  telemetry for a run with no record and `Claimable` are store-wide, a
-  commit carries every namespace it touches, other refusals are
+  telemetry for a run with no record (or an empty batch) and
+  `Claimable` are store-wide, a commit carries every namespace it
+  touches, other refusals are
   `ErrForbidden` (wraps `ErrInvalid`), an `Authorizer` error wrapping
   `ErrUnavailable` is indeterminate; errors are
   `{"class","message","request_id"}`, the message fixed per class and the

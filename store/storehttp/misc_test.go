@@ -155,12 +155,30 @@ func TestTelemetryRefusedFirst(t *testing.T) {
 	if _, err := c.Events(ctx, "r", 0); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Events = %v, want ErrNotFound", err)
 	}
-	// An empty batch writes nothing and answers alike whether or not the
-	// store keeps telemetry, so it tells a refused caller nothing.
+	// An empty batch is authorized store-wide like any call, and refused
+	// alike whether or not the store keeps telemetry.
+	var calls []storehttp.Call
+	record := storehttp.AuthorizerFunc(func(_ context.Context, call storehttp.Call) error {
+		calls = append(calls, call)
+		return errors.New("no")
+	})
 	for _, inner := range []store.Store{noTelemetry{memstore.New()}, memstore.New()} {
-		c = serve(t, inner, storehttp.HandlerOptions{Authorizer: refuseAll})
-		if err := c.AppendEvents(ctx, nil); err != nil {
-			t.Fatalf("AppendEvents(nil) over %T = %v, want nil", inner, err)
+		calls = nil
+		c = serve(t, inner, storehttp.HandlerOptions{Authorizer: record})
+		if err := c.AppendEvents(ctx, nil); !errors.Is(err, storehttp.ErrForbidden) {
+			t.Fatalf("AppendEvents(nil) over %T = %v, want ErrForbidden", inner, err)
 		}
+		if len(calls) != 1 || calls[0].Op != storehttp.OpAppendEvents || !calls[0].StoreWide || calls[0].Instance != "" || calls[0].Run != "" {
+			t.Fatalf("AppendEvents(nil) over %T asked %+v, want one store-wide call", inner, calls)
+		}
+	}
+	// Allowed, it reaches the store, which answers it as it answers one
+	// directly: a no-op on a live store, ErrUnusable on a closed one.
+	live := memstore.New()
+	c = serve(t, live, storehttp.HandlerOptions{})
+	must(t, c.AppendEvents(ctx, nil))
+	must(t, live.Close())
+	if err := c.AppendEvents(ctx, nil); err == nil || store.IsDefinite(err) {
+		t.Fatalf("AppendEvents(nil) over a closed store = %v, want an indeterminate error", err)
 	}
 }

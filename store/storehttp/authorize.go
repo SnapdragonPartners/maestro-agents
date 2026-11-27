@@ -55,7 +55,8 @@ const (
 //   - Telemetry (AppendEvents, Events) is asked once per run: on the run's
 //     instance when its run record exists, and otherwise as StoreWide,
 //     with no instance, since a store accepts events for a run it has no
-//     record of.
+//     record of. An empty AppendEvents batch, naming no run, is asked
+//     once as StoreWide.
 //   - Claimable is StoreWide: the executor's store-wide scan, to grant only
 //     to an executing service's identity.
 type Call struct {
@@ -79,7 +80,8 @@ type Call struct {
 	// touch, each once, in first-use order.
 	Namespaces []string
 	// StoreWide marks a call that concerns no one instance: Claimable,
-	// and telemetry for a run with no run record.
+	// telemetry for a run with no run record, and an empty AppendEvents
+	// batch.
 	StoreWide bool
 }
 
