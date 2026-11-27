@@ -33,7 +33,9 @@ MCP-served tools (`agent.ToolSource`, ADR 0025, with the MCP adapter
 `mcptools`, a nested module over `maestro-llms/mcp`), and the derived
 run and instance status (`agent.Status`, ADR 0024 item 7), and
 instance-linked artifact reads (`Reader.Artifact(instance, digest)`,
-ADR 0024 item 9, with the file store's one-time link migration).
+ADR 0024 item 9, with the file store's one-time link migration), and
+the store's wire form (`store/storehttp`, ADR 0026: an HTTP handler
+serving any store and a client that is one).
 Next are the external contract's gaps (ADR 0024) and a small example
 agent to exercise the standalone host end to end (#39). The
 requirements are in [docs/requirements.md](docs/requirements.md), and
@@ -44,7 +46,8 @@ runtime's API ADRs 0007 to 0014 and 0016, the standalone host ADR 0017
 0020, the public helpers for agents in other modules ADR 0023, and the
 external contract every consumer (Morris's worker, the macOS app, an
 agent's CLI) wires against ADR 0024, with its reference in
-[docs/contract.md](docs/contract.md), and MCP-served tools ADR 0025;
+[docs/contract.md](docs/contract.md), MCP-served tools ADR 0025, and
+the store's wire form ADR 0026;
 the intake agent's design (ADRs
 0015, 0018, 0019 and the agent's parts of 0020 to 0022) moved with it to
 morris-agents. Further design arrives with the code, each piece with its
@@ -242,9 +245,7 @@ Load-bearing decisions so far:
   owners), which the standalone host passes; plus planned gaps, each its own issue: a Postgres store whose migrations follow `maestro-llms`'
   `bucket/postgres` (files, no runner, expand-only, a static schema of
   the records `store.Store` and `store.Telemetry` fix, and an optional
-  host blob backend for artifact content); the store's wire form (HTTP handler
-  and a client that is a store, errors keeping their class, the host's
-  authentication and `Authorizer`); run-linked published artifacts; a
+  host blob backend for artifact content); run-linked published artifacts; a
   generic request/response model (kinds `approval`, `choice`, `input`,
   `review`; display blocks, versioned; the response schema the
   authority; answered once as a submitted run whose trigger ID is the
@@ -283,6 +284,33 @@ Load-bearing decisions so far:
   `mcpclient`'s `ErrNotSent`/`ErrServerError`/`ErrOutcomeUnknown` to
   the three classes, and retires a session after any other failure,
   closing it after its last call in flight and dialing again
+- The store's wire form (ADR 0026, Proposed) is the package
+  `store/storehttp`, standard library only: `NewHandler(store, opts)`
+  serves any `store.Store` under `/v1/`, one route per method plus the
+  status routes and an unauthenticated healthz, and `NewClient` returns
+  a `*Client` that is a `store.Store` and `store.Telemetry`, which
+  `storetest` runs against over both reference stores; IDs are path
+  segments with every byte outside ALPHA, DIGIT, `-`, `_`, `~`
+  percent-encoded (`.` too, so no mux cleans them), keys and the run
+  query in the query string; request bodies decoded strictly, responses
+  leniently; a commit with artifacts is one `multipart/mixed` request
+  (JSON first, `put_artifact` without content, one part per artifact in
+  order naming its digest), so the upload is the fenced commit, limits
+  `MaxArtifactBytes` (64 MiB) and `MaxBodyBytes` (128 MiB), and a
+  `put_artifact` with no part is reserved for #28's upload; the
+  required `Authorizer` sees a `Call` (op, instance, run, namespaces,
+  fence, owner, store-wide): a run-only call is authorized on its run's
+  instance and a refusal answers `ErrNotFound`, as does a `Runs` cursor,
+  telemetry for a run with no record and `Claimable` are store-wide, a
+  commit carries every namespace it touches, other refusals are
+  `ErrForbidden` (wraps `ErrInvalid`), an `Authorizer` error wrapping
+  `ErrUnavailable` is indeterminate; errors are
+  `{"class","message","request_id"}`, the message fixed per class and the
+  store's text only in the server's log; the client unwraps each class
+  to the store's error (`*RemoteError`), treats anything unclassified as
+  indeterminate, refuses invalid UTF-8 strings and empty IDs with
+  `ErrInvalid`, verifies artifact content against its metadata, and
+  never retries
 
 ### Related repositories
 
@@ -359,6 +387,7 @@ store/               # Store records, operations, errors and interface (ADR 0005
 store/memstore/      # In-memory reference store
 store/filestore/     # File reference store: JSON files, journal, directory lock
 store/storetest/     # Store conformance suite, TEST-5, TEST-6 and store.Telemetry included
+store/storehttp/     # The store's wire form: HTTP handler over any store, a client that is a store, Authorizer (ADR 0026)
 internal/storecore/  # The engine both reference stores share
 internal/jsonschema/ # The JSON Schema subset validator for configuration schemas (ADR 0011)
 regularfile/         # Opening an operator's file only if regular, never hanging on a FIFO (ADR 0017, 0023); public for agents in other modules

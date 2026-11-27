@@ -62,5 +62,6 @@ template.
 | [0021](0021-review-writes-approval-and-export.md) | Review writes, approval and export | Amended by ADR-0022, ADR-0023; host items here, review and export moved to morris-agents (addepar ADR 0005) |
 | [0022](0022-the-review-ui.md) | The review UI: `addepar serve` | Accepted; `Host.Watch` and items 5 to 8 here, review UI moved to morris-agents (addepar ADR 0006) |
 | [0023](0023-public-strictjson-and-regularfile.md) | Public `strictjson` and `regularfile` for agents in other modules | Accepted |
-| [0024](0024-the-external-contract.md) | The external contract | Proposed |
+| [0024](0024-the-external-contract.md) | The external contract | Proposed; amended by ADR-0026 |
 | [0025](0025-mcp-served-tools.md) | MCP-served tools | Proposed |
+| [0026](0026-the-store-wire-form.md) | The store's wire form | Proposed |

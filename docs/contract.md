@@ -352,48 +352,73 @@ STORE-5). It follows `maestro-llms`' `bucket/postgres` exactly:
 It has its own Postgres schema, beside `maestro-llms`' bucket schema in
 the same database.
 
-### The store's wire form (planned, #29)
+### The store's wire form (exists, `store/storehttp`, ADR 0026)
 
-A library package serves any `store.Store` over HTTP, and provides a
-client that is itself a `store.Store`. Morris runs the handler in its
-web service over the Postgres store, behind its internal API's
+`storehttp.NewHandler(s, opts)` serves any `store.Store` over HTTP, and
+`storehttp.NewClient(baseURL, opts)` returns a `*Client` that is itself
+a `store.Store` (and a `store.Telemetry`). Morris runs the handler in
+its web service over the Postgres store, behind its internal API's
 authentication, and its worker uses the client. `storetest` runs
-against the client.
+against the client over both reference stores.
 
-- **Routes** are under `/v1/`: one per `store.Store` method, plus
-  `GET /v1/runs/{id}/status`, `GET /v1/instances/{id}/status` and an
-  unauthenticated `GET /v1/healthz` (`{"version", "schema_version",
-  "store": "ok" | "unavailable"}`).
+- **Routes** are under `/v1/`, one per `store.Store` method, plus
+  `GET /v1/runs/{id}/status`, `GET /v1/instances/{id}/status` (also
+  `Client.Status` and `Client.InstanceStatus`) and an unauthenticated
+  `GET /v1/healthz` (`{"version", "schema_version", "store": "ok" |
+  "unavailable"}`, 503 when the store does not answer). The full table
+  is in the package documentation. IDs are path segments, every byte
+  outside ALPHA, DIGIT, `-`, `_` and `~` percent-encoded (`.` too);
+  object keys and the run query are query parameters. Bodies are the
+  store's own JSON types.
 - **Errors keep their class.** These arrive as themselves:
   - `ErrOwnership`
   - `ErrInvalid`
-  - `*ConflictError`, with the current version
+  - `*ConflictError`, with the current version (its `Detail` withheld)
   - `ErrNotClaimable`
   - `ErrInstanceBusy`
   - `ErrNotFound`: a read's answer, and from a write (`RequestCancel`
     for an unknown run) a definite one, since nothing was written
 
-  `store.IsDefinite` reports all of these. Anything else is
-  indeterminate, a dropped connection included. Reread before
-  retrying.
-- **Authentication is the host's.** Wrap the handler with your own. Pass
-  an `Authorizer`, which sees each call's operation and the instance,
-  run and namespace it concerns. Morris uses it to confine a run's token
-  to that run's instance and namespace.
+  `store.IsDefinite` reports all of these. A refusal is
+  `storehttp.ErrForbidden`, which wraps `ErrInvalid`: definite, nothing
+  applied. A server whose store failed is `storehttp.ErrUnavailable`,
+  indeterminate. Anything else is indeterminate, a dropped connection
+  included. Reread before retrying; the client never retries.
+- **The store's error text never crosses the wire.** An error body is
+  `{"class", "message", "request_id"}` with a fixed message; the
+  handler logs the real error with the request ID through your logger.
+- **Authentication is yours.** Wrap the handler with your own. Pass an
+  `Authorizer` (required; `storehttp.AllowAll{}` to allow everything),
+  which sees each call's `storehttp.Call`: operation, instance, run,
+  namespaces, a fenced call's fence and a claim's owner. Morris uses it
+  to confine a run's token to that run's instance and namespace.
   - A call that names only a run (`Run`, `Entries`, `CancelRequest`,
     `RequestCancel`, the run status route) is authorized on that run's
     instance: the handler reads the run record first. A refused call
-    answers exactly as a missing run does (`ErrNotFound`).
-  - `Claimable` names no instance. It is the executor's store-wide
-    scan: grant it only to an executing service (Morris's worker),
-    never to a token scoped to a run or an instance.
-  - Every other read names an instance or a namespace, artifact reads
+    answers exactly as a missing run does (`ErrNotFound`). So does a
+    `Runs` cursor naming a run the caller may not see.
+  - `Claimable` names no instance (`Call.StoreWide`). It is the
+    executor's store-wide scan: grant it only to an executing service
+    (Morris's worker), never to a token scoped to a run or an instance.
+    Telemetry for a run with no run record is store-wide too.
+  - A commit is authorized on its fence's instance with every namespace
+    its operations touch.
+  - Run IDs are unique per store, so `CreateRun` with an ID another
+    instance holds answers `ErrInvalid`. If you scope tokens to
+    instances, derive run IDs under the instance and check `Call.Run`.
+  - Every other call names an instance or a namespace, artifact reads
     included (above).
 
-- **Artifact content** travels on its own routes as raw bytes, never
-  inside JSON (their exact shape, naming the instance and fence, comes
-  with #29). Content over the host's maximum (64 MiB
-  unless the host sets another) is refused with `ErrInvalid`.
+- **Artifact content** travels raw, never inside JSON. A commit that
+  stores artifacts is one `multipart/mixed` request: the JSON commit
+  first, each `put_artifact` without content, then one part per
+  artifact in operation order, each naming its digest. So the upload
+  is the fenced commit. An artifact read answers the raw bytes, with
+  the metadata in a header, which the client checks. Content over the
+  host's maximum (64 MiB unless the host sets another) is refused with
+  `ErrInvalid`, and so is a request body over its limit (128 MiB by
+  default). A streaming or signed-URL upload for large content is
+  reserved for the Postgres store's blob backend (#28).
 
 This carries the store only. Running an agent across a process boundary
 is MODE-8, which is not built.
