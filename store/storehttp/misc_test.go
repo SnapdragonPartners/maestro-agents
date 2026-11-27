@@ -143,3 +143,16 @@ func TestTelemetryUnsupported(t *testing.T) {
 		t.Fatalf("Events = %v, want ErrInvalid", err)
 	}
 }
+
+// A refused telemetry call answers the refusal, never the store's lack of
+// telemetry: the Authorizer is asked before the capability is looked at.
+func TestTelemetryRefusedFirst(t *testing.T) {
+	c := serve(t, noTelemetry{memstore.New()}, storehttp.HandlerOptions{Authorizer: refuseAll})
+	ctx := context.Background()
+	if err := c.AppendEvents(ctx, []store.Event{{Run: "r", Seq: 1, Kind: "k"}}); !errors.Is(err, storehttp.ErrForbidden) {
+		t.Fatalf("AppendEvents = %v, want ErrForbidden", err)
+	}
+	if _, err := c.Events(ctx, "r", 0); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Events = %v, want ErrNotFound", err)
+	}
+}

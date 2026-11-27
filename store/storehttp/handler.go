@@ -167,7 +167,9 @@ func buildVersion() string {
 	return "(unknown)"
 }
 
-// newRequestID draws a request's ID.
+// newRequestID draws a request's ID. crypto/rand.Read never returns an
+// error (since Go 1.24 it crashes the program if the system's source
+// fails), so every ID is drawn fresh.
 func newRequestID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
@@ -825,12 +827,9 @@ func (h *handler) appendEvents(r *http.Request) (any, error) {
 	if err := decodeBody(r, &req); err != nil {
 		return nil, err
 	}
-	tel, ok := h.s.(store.Telemetry)
-	if !ok {
-		return nil, errNoTelemetry
-	}
 	// Every event's run is authorized before anything is written, so a
-	// refusal refuses the whole call.
+	// refusal refuses the whole call, and before the store's capability
+	// is looked at, so a refused caller does not learn it.
 	seen := make([]string, 0, len(req.Events))
 	for _, e := range req.Events {
 		if slices.Contains(seen, e.Run) {
@@ -841,6 +840,10 @@ func (h *handler) appendEvents(r *http.Request) (any, error) {
 			return nil, err
 		}
 	}
+	tel, ok := h.s.(store.Telemetry)
+	if !ok {
+		return nil, errNoTelemetry
+	}
 	return ack{Applied: true}, wrapStore(tel.AppendEvents(r.Context(), req.Events))
 }
 
@@ -849,13 +852,13 @@ func (h *handler) events(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	tel, ok := h.s.(store.Telemetry)
-	if !ok {
-		return nil, errNoTelemetry
-	}
 	run := r.PathValue("run")
 	if err = masked(h.authorizeTelemetryRun(r.Context(), OpEvents, run)); err != nil {
 		return nil, err
+	}
+	tel, ok := h.s.(store.Telemetry)
+	if !ok {
+		return nil, errNoTelemetry
 	}
 	return answer(tel.Events(r.Context(), run, after))
 }
@@ -900,6 +903,9 @@ func (h *handler) artifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) readArtifact(r *http.Request) (store.ArtifactMeta, []byte, error) {
+	if err := noQuery(r); err != nil {
+		return store.ArtifactMeta{}, nil, err
+	}
 	inst, err := h.instanceRead(r, OpArtifact)
 	if err != nil {
 		return store.ArtifactMeta{}, nil, err

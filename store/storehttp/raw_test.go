@@ -243,6 +243,7 @@ func TestRawRequests(t *testing.T) {
 		{"bad newest", "GET", "/v1/instances/inst/runs?newest=maybe", "", nil, 400},
 		{"bad checkpoint sequence", "GET", "/v1/instances/inst/checkpoints/x", "", nil, 400},
 		{"object without key", "GET", "/v1/namespaces/ns/object", "", nil, 400},
+		{"artifact with a query parameter", "GET", "/v1/instances/inst/artifacts/sha256-00?x=1", "", nil, 400},
 	} {
 		status, we := e.send(t, tc.method, tc.path, tc.ct, tc.body)
 		if status != tc.status || we.Class != "invalid" {
