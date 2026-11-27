@@ -413,7 +413,7 @@ func (a *activation) restore(ctx context.Context, c *store.Checkpoint) error {
 	a.namespace = a.cs.Namespace
 	a.principal = a.cs.Principal
 	if a.cs.Config != "" {
-		_, cfg, err := a.c.store.Artifact(durable(ctx), a.cs.Config)
+		_, cfg, err := a.c.store.Artifact(durable(ctx), a.run.Instance, a.cs.Config)
 		if err != nil {
 			return storeFailure(fmt.Errorf("agent: read configuration %s: %w", a.cs.Config, err))
 		}

@@ -72,9 +72,12 @@ type RunUpdate struct {
 	ExpectVersion uint64 `json:"expect_version"`
 }
 
-// Artifact stores content-addressed, write-once content with its metadata.
-// Storing a digest already stored is a no-op whatever its metadata: the
-// first metadata stands, and the operation never conflicts.
+// Artifact stores content-addressed, write-once content with its metadata,
+// and links its digest to the fenced instance, which may then read it
+// ([Reader.Artifact]; ADR 0024, item 9). Content is stored once: storing a
+// digest already stored keeps the first content and metadata, whatever
+// this metadata says, and only writes the instance's link if it has none.
+// The operation has no precondition and never conflicts.
 type Artifact struct {
 	// Digest is the lowercase hex SHA-256 of Content; the store verifies
 	// it.

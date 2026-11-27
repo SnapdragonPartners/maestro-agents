@@ -1319,7 +1319,7 @@ func TestModelStateChangedToolsRecorded(t *testing.T) {
 		}
 	}
 	schemaOf := func(digest string) string {
-		_, raw, err := s.Artifact(context.Background(), digest)
+		_, raw, err := s.Artifact(context.Background(), inst, digest)
 		if err != nil {
 			t.Fatal(err)
 		}

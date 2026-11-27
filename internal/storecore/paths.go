@@ -126,7 +126,16 @@ func objectDir(ns string) string            { return "objects/" + ns }
 func objectPath(ns, key string) string      { return objectDir(ns) + "/" + key + ".json" }
 func artifactPath(digest string) string     { return "artifacts/" + digest }
 func artifactMetaPath(d string) string      { return "artifacts/" + d + ".json" }
-func triggerDir(inst string) string         { return "triggers/" + inst }
+func linkDir(inst string) string            { return instanceDir(inst) + "/artifacts" }
+func linkPath(inst, d string) string        { return linkDir(inst) + "/" + d + ".json" }
+
+// linksMarkerPath records that the store holds artifact-to-instance links
+// for every artifact (ADR 0024, item 9): written when a store is first
+// opened by a release that keeps links, after any legacy artifacts were
+// migrated.
+const linksMarkerPath = "format/artifact-links.json"
+
+func triggerDir(inst string) string { return "triggers/" + inst }
 
 // CheckID reports whether id can name a record in either reference store:
 // valid text whose encoded form fits one path component. A host that

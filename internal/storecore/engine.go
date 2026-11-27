@@ -214,9 +214,10 @@ func (e *Engine) Commit(ctx context.Context, f store.Fence, ops []store.Op) erro
 		}
 		release = release || op.Kind == store.OpRelease
 	}
-	// A commit whose operations change nothing (a re-stored artifact, say)
-	// has passed the fence and its preconditions; it lands without touching
-	// the backend, so a no-op cannot fail or journal.
+	// A commit whose operations change nothing (an artifact re-stored by
+	// an instance already linked to it, say) has passed the fence and its
+	// preconditions; it lands without touching the backend, so a no-op
+	// cannot fail or journal.
 	if len(t.order) == 0 {
 		return nil
 	}
@@ -260,7 +261,7 @@ func (e *Engine) applyOp(t *tx, f store.Fence, inst string, own ownershipFile, i
 	case store.OpUpdateRun:
 		err = e.updateRun(t, f, i, op.UpdateRun)
 	case store.OpPutArtifact:
-		err = putArtifact(t, op.PutArtifact)
+		err = putArtifact(t, inst, op.PutArtifact)
 	case store.OpRelease:
 		err = t.putJSON(ownershipPath(inst), ownershipFile{Epoch: own.Epoch})
 	}
@@ -484,7 +485,10 @@ func validDigest(d string) bool {
 	return true
 }
 
-func putArtifact(t *tx, a *store.Artifact) error {
+// putArtifact stores an artifact's content and metadata once, and links its
+// digest to the committing instance whether or not the content was already
+// stored (ADR 0024, item 9). The first metadata stands.
+func putArtifact(t *tx, inst string, a *store.Artifact) error {
 	if !validDigest(a.Digest) {
 		return fmt.Errorf("%w: artifact digest %q is not lowercase hex SHA-256", store.ErrInvalid, a.Digest)
 	}
@@ -496,11 +500,28 @@ func putArtifact(t *tx, a *store.Artifact) error {
 		return fmt.Errorf("%w: artifact %s has no media type", store.ErrInvalid, a.Digest)
 	}
 	_, exists, err := t.Read(artifactMetaPath(a.Digest))
-	if err != nil || exists {
+	if err != nil {
 		return err
 	}
-	t.set(Write{Path: artifactPath(a.Digest), Data: a.Content})
-	return t.putJSON(artifactMetaPath(a.Digest), store.ArtifactMeta{
-		Digest: a.Digest, MediaType: a.MediaType, Size: int64(len(a.Content)),
-	})
+	if !exists {
+		t.set(Write{Path: artifactPath(a.Digest), Data: a.Content})
+		if err := t.putJSON(artifactMetaPath(a.Digest), store.ArtifactMeta{
+			Digest: a.Digest, MediaType: a.MediaType, Size: int64(len(a.Content)),
+		}); err != nil {
+			return err
+		}
+	}
+	return link(t, inst, a.Digest)
+}
+
+// linkFile is an artifact-to-instance link: its existence is the link.
+type linkFile struct{}
+
+// link links digest to the encoded instance, unless it already is.
+func link(t *tx, inst, digest string) error {
+	_, linked, err := t.Read(linkPath(inst, digest))
+	if err != nil || linked {
+		return err
+	}
+	return t.putJSON(linkPath(inst, digest), linkFile{})
 }

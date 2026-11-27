@@ -338,7 +338,25 @@ consumer-facing reference is [docs/contract.md](../contract.md).
      enforces this, not only the wire handler, so knowing a digest
      never reaches another instance's content. The runtime's own reads
      (the recorded configuration, a model state's stored content) name
-     their run's instance.
+     their run's instance. (Built with #29.)
+   - **A file store written before links existed is migrated, never
+     widened.** Its artifacts have no links, so the file store refuses
+     to open it until told how to link them: each stored artifact is
+     linked, once and in one atomic write, to every instance whose own
+     records name it in the runtime's typed digest fields (entries and
+     the checkpoint envelope, never an agent type's data, which is
+     arbitrary JSON and proves nothing; `agent.ArtifactReferences`),
+     and to owners the operator states explicitly, in addition to (never
+     instead of) those references. An artifact nobody
+     claims fails the open with nothing written; it is neither linked
+     to every instance (which would grant one instance another's
+     history) nor left readable by any instance (an isolation
+     exception this contract does not have). The standalone host
+     passes the runtime's references, so a store the runtime wrote
+     migrates on first open. Only the runtime writes artifacts, and the
+     commit that first names one stores it (ADR 0004, item 1), so the
+     runtime's tests check after every commit that its references
+     cover every artifact the instance stored.
    - **Artifact content travels on its own routes**, as raw bytes,
      never inside a JSON body; their exact shape, and how an upload
      names its instance and fence to the `Authorizer` and the store,
@@ -550,8 +568,8 @@ consumer-facing reference is [docs/contract.md](../contract.md).
 
 18. **Gaps, each its own issue:** check before start (item 5, #35, built);
     cancel requests (item 6, #26, built); status (item 7, #27, built); the Postgres
-    store (item 8, #28); the store's wire form and instance-linked
-    artifact reads (item 9, #29); published artifacts (item 10, #30);
+    store (item 8, #28); instance-linked artifact reads (item 9, #29,
+    built); the store's wire form (item 9, #29); published artifacts (item 10, #30);
     requests, blocks and bundles (items 11 to 14, #31); the app host and
     process contract (items 15 and 16, #32); schedule triggers (MODE-4,
     for continuously running agents, #33); and the in-run wait (STM-8,
@@ -603,6 +621,14 @@ Each takes effect with the issue that builds it.
   gains its commit time, which the store stamps, and an ownership
   record the store's clock when it is returned (item 7). ADR 0006
   item 5's single writer of the run record is unchanged.
+- **ADR 0005, item 13:** the file store's layout gains
+  `instances/<instance>/artifacts/<sha256>.json`, one per artifact
+  linked to the instance, whose existence is the link (item 9), and
+  `format/artifact-links.json`, the store-wide marker that its
+  artifacts are linked, written when a store is first opened by a
+  release that keeps links, in the same atomic write as any legacy
+  artifacts' migrated links; a store that has it is never migrated
+  again. Built with #29.
 - **ADR 0017, item 18:** a heartbeat that returns a cancel request
   cancels the activation with the request's cause.
 - **ADR 0021, item 1:** a submission may carry a principal the host

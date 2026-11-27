@@ -269,7 +269,7 @@ func setup(_ context.Context, p *Program, cfg *Config, stderr io.Writer) (h *hos
 			}
 		}
 	}
-	st, err := openStore(&cfg.Store)
+	st, err := openStore(&cfg.Store) //nolint:contextcheck // filestore.Open takes no context; its one-time link migration runs before the store serves anything
 	if err != nil {
 		return nil, nil, fmt.Errorf("store: %w", err)
 	}
@@ -349,7 +349,9 @@ func newLogger(c *LogConfig, w io.Writer) *slog.Logger {
 
 func openStore(c *StoreConfig) (store.Store, error) {
 	if c.Kind == StoreFile {
-		s, err := filestore.Open(c.Dir)
+		// A store written before artifact links existed migrates on
+		// first open from the runtime's own records (ADR 0024, item 9).
+		s, err := filestore.Open(c.Dir, filestore.WithLegacyArtifactLinks(agent.ArtifactReferences))
 		if err != nil {
 			return nil, err //nolint:wrapcheck // the caller says it was the store
 		}

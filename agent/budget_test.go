@@ -560,7 +560,7 @@ func recordedCharges(t *testing.T, es []store.Entry) (turns int, tokens int64) {
 // paramsOf decodes a recorded parameters artifact.
 func paramsOf(t *testing.T, s store.Store, digest string) llms.ChatRequest {
 	t.Helper()
-	_, raw, err := s.Artifact(context.Background(), digest)
+	_, raw, err := s.Artifact(context.Background(), inst, digest)
 	if err != nil {
 		t.Fatalf("Artifact %s: %v", digest, err)
 	}
@@ -669,7 +669,7 @@ func TestBudgetsRefusedStartRecordsInputs(t *testing.T) {
 			if rs.Budgets == nil || *rs.Budgets != b || rs.Config == "" {
 				t.Fatalf("run_started = %+v, want the budgets and configuration", rs)
 			}
-			if _, _, err := s.Artifact(context.Background(), rs.Config); err != nil {
+			if _, _, err := s.Artifact(context.Background(), inst, rs.Config); err != nil {
 				t.Fatalf("configuration artifact: %v", err)
 			}
 		})

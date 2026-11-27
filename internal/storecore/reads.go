@@ -350,22 +350,34 @@ func readSeqDir[T any](e *Engine, dir string, after uint64) ([]T, error) {
 	return out, nil
 }
 
-// Artifact implements store.Reader.
-func (e *Engine) Artifact(ctx context.Context, digest string) (store.ArtifactMeta, []byte, error) {
+// Artifact implements store.Reader. A digest not linked to the instance
+// answers exactly as one never stored (ADR 0024, item 9).
+func (e *Engine) Artifact(ctx context.Context, instance, digest string) (store.ArtifactMeta, []byte, error) {
+	inst, err := component("instance", instance)
+	if err != nil {
+		return store.ArtifactMeta{}, nil, err
+	}
 	if !validDigest(digest) {
 		return store.ArtifactMeta{}, nil, fmt.Errorf("%w: artifact digest %q is not lowercase hex SHA-256", store.ErrInvalid, digest)
 	}
-	if err := e.rlock(ctx); err != nil {
+	if err = e.rlock(ctx); err != nil {
 		return store.ArtifactMeta{}, nil, err
 	}
 	defer e.mu.RUnlock()
+	_, linked, err := e.b.Read(linkPath(inst, digest))
+	if err != nil {
+		return store.ArtifactMeta{}, nil, fmt.Errorf("store: read artifact link: %w", err)
+	}
+	if !linked {
+		return store.ArtifactMeta{}, nil, fmt.Errorf("%w: artifact %s", store.ErrNotFound, digest)
+	}
 	var meta store.ArtifactMeta
 	found, err := readJSON(e.b, artifactMetaPath(digest), &meta)
 	if err != nil {
 		return store.ArtifactMeta{}, nil, err
 	}
 	if !found {
-		return store.ArtifactMeta{}, nil, fmt.Errorf("%w: artifact %s", store.ErrNotFound, digest)
+		return store.ArtifactMeta{}, nil, fmt.Errorf("store: corrupt artifact %s: link without metadata", digest)
 	}
 	content, ok, err := e.b.Read(artifactPath(digest))
 	if err != nil {

@@ -34,6 +34,7 @@ func cases() []testCase {
 		{name: "Checkpoints", fn: testCheckpoints},
 		{name: "UpdateRun", fn: testUpdateRun},
 		{name: "Artifacts", fn: testArtifacts},
+		{name: "ArtifactLinks", fn: testArtifactLinks},
 		{name: "Objects", fn: testObjects},
 		{name: "ObjectVersionsNeverRepeat", fn: testObjectVersionsNeverRepeat},
 		{name: "DeleteAndRecreateInOneCommit", fn: testDeleteAndRecreateInOneCommit},
@@ -428,7 +429,7 @@ func testArtifacts(t testing.TB, h Harness) {
 	ctx := context.Background()
 	content := []byte("%PDF-1.7 statement")
 	d := digest(content)
-	if _, _, err := e.s.Artifact(ctx, d); !errors.Is(err, store.ErrNotFound) {
+	if _, _, err := e.s.Artifact(ctx, instance, d); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Artifact before store = %v, want ErrNotFound", err)
 	}
 	commit(t, e.s, e.own.Fence(), store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "application/pdf", Content: content}),
@@ -438,7 +439,7 @@ func testArtifacts(t testing.TB, h Harness) {
 	commit(t, e.s, e.own.Fence(),
 		store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "text/plain", Content: content}),
 		store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "text/csv", Content: content}))
-	meta, got, err := e.s.Artifact(ctx, d)
+	meta, got, err := e.s.Artifact(ctx, instance, d)
 	if err != nil || !bytes.Equal(got, content) || meta != (store.ArtifactMeta{Digest: d, MediaType: "application/pdf", Size: int64(len(content))}) {
 		t.Fatalf("Artifact = %+v, %q, %v", meta, got, err)
 	}
@@ -448,11 +449,65 @@ func testArtifacts(t testing.TB, h Harness) {
 	wantErr(t, e.s.Commit(ctx, stale, []store.Op{store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "application/pdf", Content: content})}), store.ErrOwnership)
 	empty := digest(nil)
 	commit(t, e.s, e.own.Fence(), store.PutArtifactOp(store.Artifact{Digest: empty, MediaType: "text/plain"}))
-	if meta, got, err := e.s.Artifact(ctx, empty); err != nil || len(got) != 0 || meta.Size != 0 {
+	if meta, got, err := e.s.Artifact(ctx, instance, empty); err != nil || len(got) != 0 || meta.Size != 0 {
 		t.Fatalf("empty Artifact = %+v, %q, %v", meta, got, err)
 	}
-	if _, _, err := e.s.Artifact(ctx, "../etc/passwd"); !errors.Is(err, store.ErrInvalid) {
+	if _, _, err := e.s.Artifact(ctx, instance, "../etc/passwd"); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("Artifact(bad digest) = %v, want ErrInvalid", err)
+	}
+	if _, _, err := e.s.Artifact(ctx, "", d); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("Artifact(empty instance) = %v, want ErrInvalid", err)
+	}
+}
+
+// testArtifactLinks checks ADR 0024 item 9's link rule: a put links the
+// digest to the committing instance, another instance reads it as never
+// stored, and re-storing it from that instance's commit links it there
+// too, keeping the first metadata and the first link.
+func testArtifactLinks(t testing.TB, h Harness) {
+	e := setup(t, h)
+	ctx := context.Background()
+	const other = "inst-2"
+	createRun(t, e.s, other, "run-2", "trigger-1")
+	own2 := claim(t, e.s, other, "owner-b")
+	content := []byte("configuration")
+	d := digest(content)
+	commit(t, e.s, e.own.Fence(), store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "application/json", Content: content}))
+	if _, _, err := e.s.Artifact(ctx, instance, d); err != nil {
+		t.Fatalf("Artifact(committing instance) = %v", err)
+	}
+	never := digest([]byte("never stored"))
+	_, _, errOther := e.s.Artifact(ctx, other, d)
+	_, _, errNever := e.s.Artifact(ctx, other, never)
+	if !errors.Is(errOther, store.ErrNotFound) || !errors.Is(errNever, store.ErrNotFound) {
+		t.Fatalf("Artifact(other instance) = %v, Artifact(never stored) = %v; want ErrNotFound for both", errOther, errNever)
+	}
+	if _, _, err := e.s.Artifact(ctx, "inst-unknown", d); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Artifact(unknown instance) = %v, want ErrNotFound", err)
+	}
+	// Re-storing from the other instance links it there, whatever its
+	// metadata says; the first metadata and the first link stand.
+	commit(t, e.s, own2.Fence(), store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "text/plain", Content: content}))
+	want := store.ArtifactMeta{Digest: d, MediaType: "application/json", Size: int64(len(content))}
+	for _, inst := range []string{instance, other} {
+		meta, got, err := e.s.Artifact(ctx, inst, d)
+		if err != nil || !bytes.Equal(got, content) || meta != want {
+			t.Fatalf("Artifact(%s) after re-store = %+v, %q, %v; want %+v", inst, meta, got, err, want)
+		}
+	}
+	// A rejected commit links nothing: a stale fence, and a commit that
+	// fails a later operation's precondition.
+	third := digest([]byte("third"))
+	stale := own2.Fence()
+	stale.Epoch++
+	wantErr(t, e.s.Commit(ctx, stale, []store.Op{store.PutArtifactOp(store.Artifact{Digest: d, MediaType: "x/y", Content: content})}), store.ErrOwnership)
+	err := e.s.Commit(ctx, e.own.Fence(), []store.Op{
+		store.PutArtifactOp(store.Artifact{Digest: third, MediaType: "text/plain", Content: []byte("third")}),
+		store.PutObjectJSON(ns, "conflict", 7, json.RawMessage(`1`)),
+	})
+	wantConflict(t, err, 1, 0)
+	if _, _, err := e.s.Artifact(ctx, instance, third); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Artifact from a rejected commit = %v, want ErrNotFound", err)
 	}
 }
 
@@ -601,7 +656,7 @@ func testAtomicity(t testing.TB, h Harness) {
 	if _, ok := object(t, e.s, "k"); ok {
 		t.Fatal("object landed from a rejected commit")
 	}
-	if _, _, err := e.s.Artifact(ctx, digest(content)); !errors.Is(err, store.ErrNotFound) {
+	if _, _, err := e.s.Artifact(ctx, instance, digest(content)); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("artifact from a rejected commit: %v", err)
 	}
 	if got := entries(t, e.s, runID, 0); len(got) != 0 {

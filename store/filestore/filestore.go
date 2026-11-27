@@ -17,6 +17,7 @@
 package filestore
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -46,6 +47,7 @@ type config struct {
 	// named point of a write.
 	failpoint func(point string) error
 	core      storecore.Options
+	links     storecore.LinkMigration
 }
 
 // Option configures a file store.
@@ -63,13 +65,50 @@ func WithPauseHook(h store.PauseHook) Option {
 	return func(c *config) { c.core.Pause = h }
 }
 
+// ErrMigrationRequired refuses to open a store holding artifacts stored
+// before artifact-to-instance links existed (ADR 0024, item 9), unless
+// [WithLegacyArtifactLinks] says how to link them. An
+// [*UnclaimedArtifactsError] wraps it.
+var ErrMigrationRequired = storecore.ErrMigrationRequired
+
+// UnclaimedArtifactsError refuses a link migration because some stored
+// artifacts are named by no instance's records and by no owner
+// [WithArtifactOwners] states. Nothing was written; its Digests are the
+// unclaimed artifacts.
+type UnclaimedArtifactsError = storecore.UnclaimedArtifactsError
+
+// WithLegacyArtifactLinks lets Open migrate a store written before
+// artifact-to-instance links existed (ADR 0024, item 9): refs returns the
+// artifact digests an instance's own records name (the runtime's is
+// agent.ArtifactReferences), and Open links each stored artifact to every
+// instance that names it, once, before serving anything. An artifact no
+// instance names fails the open with an [*UnclaimedArtifactsError] unless
+// [WithArtifactOwners] states its owners. Without this option, such a
+// store fails to open with [ErrMigrationRequired]. A store already
+// migrated, or one created by this release, ignores it.
+func WithLegacyArtifactLinks(refs func(ctx context.Context, r store.Reader, instance string) ([]string, error)) Option {
+	return func(c *config) { c.links.References = refs }
+}
+
+// WithArtifactOwners states owners for a legacy migration
+// ([WithLegacyArtifactLinks]) explicitly: each digest, which must be
+// stored, is linked to each instance listed, which must exist. It resolves
+// artifacts the instances' records do not name, in addition to the
+// references: it is no substitute for WithLegacyArtifactLinks, without
+// which a legacy store still fails to open with [ErrMigrationRequired].
+func WithArtifactOwners(owners map[string][]string) Option {
+	return func(c *config) { c.links.Owners = owners }
+}
+
 // errUnsupported refuses to open a file store where this package cannot
 // take an exclusive lock, rather than open one unprotected.
 var errUnsupported = errors.New("the file store's directory lock is not supported on this platform")
 
 // Open opens the store in dir, creating the directory if needed. It takes
-// the directory's lock, finishes every interrupted commit and removes
-// leftover temporary files before returning. Every recorded owner is
+// the directory's lock, finishes every interrupted commit, removes
+// leftover temporary files and, for a store written before
+// artifact-to-instance links existed, migrates it
+// ([WithLegacyArtifactLinks]) before returning. Every recorded owner is
 // treated as having no lease, so every instance is claimable at once and
 // its next claim increments the epoch (ADR 0005, item 16).
 func Open(dir string, opts ...Option) (store.Store, error) {
@@ -102,7 +141,12 @@ func Open(dir string, opts ...Option) (store.Store, error) {
 		_ = b.Close()
 		return nil, fmt.Errorf("filestore: recover %s: %w", dir, err)
 	}
-	return storecore.New(b, c.core), nil
+	e := storecore.New(b, c.core)
+	if err := e.MigrateArtifactLinks(context.Background(), c.links); err != nil {
+		_ = e.Close()
+		return nil, fmt.Errorf("filestore: open %s: %w", dir, err)
+	}
+	return e, nil
 }
 
 // createRoot creates the store directory and any missing ancestors, then

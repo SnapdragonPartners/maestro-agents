@@ -208,7 +208,7 @@ func (b *entries) rawArtifact(raw []byte) string {
 // the record references is a store failure: the commit that referenced it
 // stored it (ADR 0004, item 1).
 func (a *activation) readArtifact(ctx context.Context, digest string, v any) error {
-	_, raw, err := a.c.store.Artifact(durable(ctx), digest)
+	_, raw, err := a.c.store.Artifact(durable(ctx), a.run.Instance, digest)
 	if err != nil {
 		return storeFailure(fmt.Errorf("agent: read artifact %s: %w", digest, err))
 	}

@@ -31,7 +31,9 @@ ADR 0017) with its in-process API, submitted runs and folder watch
 (ADRs 0020 to 0022), the scoring harness (`scoring/`, ADR 0020), and
 MCP-served tools (`agent.ToolSource`, ADR 0025, with the MCP adapter
 `mcptools`, a nested module over `maestro-llms/mcp`), and the derived
-run and instance status (`agent.Status`, ADR 0024 item 7).
+run and instance status (`agent.Status`, ADR 0024 item 7), and
+instance-linked artifact reads (`Reader.Artifact(instance, digest)`,
+ADR 0024 item 9, with the file store's one-time link migration).
 Next are the external contract's gaps (ADR 0024) and a small example
 agent to exercise the standalone host end to end (#39). The
 requirements are in [docs/requirements.md](docs/requirements.md), and
@@ -225,8 +227,19 @@ Load-bearing decisions so far:
   `InstanceReport`, both bounded by a run, not the instance's history,
   over `Reader.Runs(instance, RunQuery)`: paged by `After` run ID,
   `Newest` first or oldest, filtered by `Status`, `Limit` zero the
-  store's default and capped, returning whether more follow), plus
-  planned gaps, each its own issue: a Postgres store whose migrations follow `maestro-llms`'
+  store's default and capped, returning whether more follow); and
+  instance-linked artifacts: each `put_artifact` links its digest to
+  the committing instance, even when the content is already stored,
+  and `Reader.Artifact(ctx, instance, digest)` answers only for a
+  linked digest (`ErrNotFound` otherwise, as for one never stored);
+  a file store written before links refuses to open
+  (`filestore.ErrMigrationRequired`) unless
+  `filestore.WithLegacyArtifactLinks(agent.ArtifactReferences)` links
+  each artifact, once and atomically, to the instances whose typed
+  record fields (entries and the checkpoint envelope, never agent
+  data) name it, an unclaimed one failing the open
+  (`*filestore.UnclaimedArtifactsError`; `WithArtifactOwners` states
+  owners), which the standalone host passes; plus planned gaps, each its own issue: a Postgres store whose migrations follow `maestro-llms`'
   `bucket/postgres` (files, no runner, expand-only, a static schema of
   the records `store.Store` and `store.Telemetry` fix, and an optional
   host blob backend for artifact content); the store's wire form (HTTP handler
